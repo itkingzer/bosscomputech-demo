@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { 
-  UserCheck, TicketPlus, FileSpreadsheet, Send, Wrench, 
+import {
+  UserCheck, TicketPlus, FileSpreadsheet, Send, Wrench,
   Download, Printer, CheckCircle, PlusCircle, AlertCircle, Clock, XCircle,
   MapPin, Navigation, Truck, Package, RotateCcw
 } from 'lucide-react';
-import { 
-  IntakeChannel, RepairStatus, ROUTE_DEFINITIONS, RouteCode, getRouteByDistrict 
+import {
+  IntakeChannel, RepairStatus, ROUTE_DEFINITIONS, RouteCode, getRouteByDistrict
 } from '../types';
 
 const DISTRICT_OPTIONS = [
@@ -35,13 +35,13 @@ const DISTRICT_OPTIONS = [
 ];
 
 export const FrontdeskView: React.FC = () => {
-  const { 
-    items, orders, repairTickets, assignOnsite, 
-    assignRepairTicketOnsite, createRepairTicket, closeRepairTicket, users 
+  const {
+    items, orders, repairTickets, assignOnsite,
+    assignRepairTicketOnsite, createRepairTicket, closeRepairTicket, users
   } = useApp();
 
   const [activeTab, setActiveTab] = useState<'dispatch' | 'intake' | 'reports'>('dispatch');
-  
+
   // Route Filter in Dispatch tab
   const [selectedRoute, setSelectedRoute] = useState<'all' | RouteCode>('all');
 
@@ -54,7 +54,7 @@ export const FrontdeskView: React.FC = () => {
   const [provinceCustom, setProvinceCustom] = useState('');
   const [deliveryLocation, setDeliveryLocation] = useState('');
   const [symptom, setSymptom] = useState('');
-  
+
   // Dispatch State
   const [selectedTech, setSelectedTech] = useState<Record<string, string>>({});
   const [selectedRepairTech, setSelectedRepairTech] = useState<Record<string, string>>({});
@@ -93,7 +93,8 @@ export const FrontdeskView: React.FC = () => {
     const defaultTech = onsiteTechs[0]?.name || 'ช่างเอ (สายส่งด่วน Onsite)';
     const techName = selectedTech[itemId] || defaultTech;
 
-    assignOnsite(itemId, techName);
+    // FIX: assignOnsite expects string[] for assigned_techs
+    assignOnsite(itemId, [techName]);
     setToast(`จ่ายงานสำเร็จ! มอบหมายส่งสินค้าให้ ${techName} เรียบร้อยแล้ว`);
     setTimeout(() => setToast(''), 3500);
   };
@@ -102,7 +103,8 @@ export const FrontdeskView: React.FC = () => {
     const defaultTech = onsiteTechs[0]?.name || 'ช่างเอ (สายส่งด่วน Onsite)';
     const techName = selectedRepairTech[ticketId] || defaultTech;
 
-    assignRepairTicketOnsite(ticketId, techName);
+    // FIX: assignRepairTicketOnsite expects string[] for assigned_techs
+    assignRepairTicketOnsite(ticketId, [techName]);
     setToast(`จ่ายงานสำเร็จ! มอบหมายส่งคืนเครื่องซ่อมให้ ${techName} เรียบร้อยแล้ว`);
     setTimeout(() => setToast(''), 3500);
   };
@@ -111,7 +113,8 @@ export const FrontdeskView: React.FC = () => {
     const defaultTech = onsiteTechs[0]?.name || 'ช่างเอ (สายส่งด่วน Onsite)';
     const techName = selectedRepairTech[ticketId] || defaultTech;
 
-    assignRepairTicketOnsite(ticketId, techName);
+    // FIX: assignRepairTicketOnsite expects string[] for assigned_techs
+    assignRepairTicketOnsite(ticketId, [techName]);
     setToast(`จ่ายงานสำเร็จ! มอบหมายออกไปรับเครื่องให้ ${techName} เรียบร้อยแล้ว`);
     setTimeout(() => setToast(''), 3500);
   };
@@ -126,17 +129,20 @@ export const FrontdeskView: React.FC = () => {
 
     // 1. Dispatch outbound items of this route
     filteredReadyItems.forEach(item => {
-      assignOnsite(item.id, techName);
+      // FIX: wrap in array
+      assignOnsite(item.id, [techName]);
     });
 
     // 2. Dispatch repaired return tickets of this route
     filteredReturnTickets.forEach(ticket => {
-      assignRepairTicketOnsite(ticket.id, techName);
+      // FIX: wrap in array
+      assignRepairTicketOnsite(ticket.id, [techName]);
     });
 
     // 3. Dispatch onsite pickup tickets of this route
     filteredPickupTickets.forEach(ticket => {
-      assignRepairTicketOnsite(ticket.id, techName);
+      // FIX: wrap in array
+      assignRepairTicketOnsite(ticket.id, [techName]);
     });
 
     const totalCount = filteredReadyItems.length + filteredReturnTickets.length + filteredPickupTickets.length;
@@ -162,6 +168,8 @@ export const FrontdeskView: React.FC = () => {
       repair_detail: null,
       parts_used: null,
       repair_outcome: null,
+      // FIX: add required assigned_techs array
+      assigned_techs: [],
       assigned_onsite_tech: null,
       finished_at: null
     });
@@ -267,31 +275,28 @@ export const FrontdeskView: React.FC = () => {
       <div className="flex gap-2 pb-1 overflow-x-auto">
         <button
           onClick={() => setActiveTab('dispatch')}
-          className={`px-4 py-2.5 text-xs font-semibold rounded-2xl transition-all cursor-pointer whitespace-nowrap ${
-            activeTab === 'dispatch' 
-              ? 'liquid-glass-active font-extrabold shadow-lg shadow-[#FF6B00]/25' 
-              : 'liquid-glass-card text-slate-400 hover:text-white'
-          }`}
+          className={`px-4 py-2.5 text-xs font-semibold rounded-2xl transition-all cursor-pointer whitespace-nowrap ${activeTab === 'dispatch'
+            ? 'liquid-glass-active font-extrabold shadow-lg shadow-[#FF6B00]/25'
+            : 'liquid-glass-card text-slate-400 hover:text-white'
+            }`}
         >
           จัดคิวงานให้ช่าง Onsite ({readyItems.length})
         </button>
         <button
           onClick={() => setActiveTab('intake')}
-          className={`px-4 py-2.5 text-xs font-semibold rounded-2xl transition-all cursor-pointer whitespace-nowrap ${
-            activeTab === 'intake' 
-              ? 'liquid-glass-active font-extrabold shadow-lg shadow-[#FF6B00]/25' 
-              : 'liquid-glass-card text-slate-400 hover:text-white'
-          }`}
+          className={`px-4 py-2.5 text-xs font-semibold rounded-2xl transition-all cursor-pointer whitespace-nowrap ${activeTab === 'intake'
+            ? 'liquid-glass-active font-extrabold shadow-lg shadow-[#FF6B00]/25'
+            : 'liquid-glass-card text-slate-400 hover:text-white'
+            }`}
         >
           รับเครื่องซ่อมหน้าร้าน / เปิด Job ({repairTickets.length})
         </button>
         <button
           onClick={() => setActiveTab('reports')}
-          className={`px-4 py-2.5 text-xs font-semibold rounded-2xl transition-all cursor-pointer whitespace-nowrap ${
-            activeTab === 'reports' 
-              ? 'liquid-glass-active font-extrabold shadow-lg shadow-[#FF6B00]/25' 
-              : 'liquid-glass-card text-slate-400 hover:text-white'
-          }`}
+          className={`px-4 py-2.5 text-xs font-semibold rounded-2xl transition-all cursor-pointer whitespace-nowrap ${activeTab === 'reports'
+            ? 'liquid-glass-active font-extrabold shadow-lg shadow-[#FF6B00]/25'
+            : 'liquid-glass-card text-slate-400 hover:text-white'
+            }`}
         >
           รายงานประจำวันอัตโนมัติ (Auto Reports)
         </button>
@@ -343,11 +348,10 @@ export const FrontdeskView: React.FC = () => {
             <div className="flex items-center gap-2 overflow-x-auto pb-1">
               <button
                 onClick={() => setSelectedRoute('all')}
-                className={`px-3.5 py-2 rounded-xl text-xs font-semibold transition cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
-                  selectedRoute === 'all'
-                    ? 'bg-white/20 text-white border border-white/40 shadow-sm font-bold'
-                    : 'bg-white/[0.04] text-slate-400 hover:text-white border border-white/[0.06]'
-                }`}
+                className={`px-3.5 py-2 rounded-xl text-xs font-semibold transition cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${selectedRoute === 'all'
+                  ? 'bg-white/20 text-white border border-white/40 shadow-sm font-bold'
+                  : 'bg-white/[0.04] text-slate-400 hover:text-white border border-white/[0.06]'
+                  }`}
               >
                 <span>ทั้งหมด</span>
                 <span className="px-1.5 py-0.2 rounded-full bg-white/20 text-[10px]">
@@ -366,11 +370,10 @@ export const FrontdeskView: React.FC = () => {
                   <button
                     key={rCode}
                     onClick={() => setSelectedRoute(rCode)}
-                    className={`px-3.5 py-2 rounded-xl text-xs font-semibold transition cursor-pointer whitespace-nowrap flex items-center gap-2 ${
-                      selectedRoute === rCode
-                        ? `${r.badgeBg} ${r.badgeText} ${r.badgeBorder} border shadow-lg font-bold`
-                        : 'bg-white/[0.04] text-slate-400 hover:text-slate-200 border border-white/[0.06]'
-                    }`}
+                    className={`px-3.5 py-2 rounded-xl text-xs font-semibold transition cursor-pointer whitespace-nowrap flex items-center gap-2 ${selectedRoute === rCode
+                      ? `${r.badgeBg} ${r.badgeText} ${r.badgeBorder} border shadow-lg font-bold`
+                      : 'bg-white/[0.04] text-slate-400 hover:text-slate-200 border border-white/[0.06]'
+                      }`}
                   >
                     <span className="w-2 h-2 rounded-full" style={{ backgroundColor: r.color }}></span>
                     <span>{r.name}</span>
