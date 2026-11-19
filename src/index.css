@@ -1,0 +1,135 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Sarabun', 'Inter', sans-serif;
+    background-color: #08090C;
+    color: #F8FAFC;
+    overflow-x: hidden;
+  }
+}
+
+/* Liquid Glass Elements & Subtle Gradients */
+.liquid-glass {
+  background: rgba(18, 20, 26, 0.65);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.45), inset 0 1px 0 0 rgba(255, 255, 255, 0.1);
+}
+
+.liquid-glass-sidebar {
+  background: rgba(12, 14, 18, 0.75);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-right: 1px solid rgba(255, 255, 255, 0.07);
+  box-shadow: 4px 0 24px rgba(0, 0, 0, 0.5), inset -1px 0 0 0 rgba(255, 255, 255, 0.04);
+}
+
+.liquid-glass-card {
+  background: rgba(16, 18, 24, 0.55);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35), inset 0 1px 0 0 rgba(255, 255, 255, 0.08);
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.liquid-glass-card:hover {
+  background: rgba(22, 25, 34, 0.75);
+  border-color: rgba(255, 107, 0, 0.35);
+  box-shadow: 0 8px 30px rgba(255, 107, 0, 0.12), inset 0 1px 0 0 rgba(255, 255, 255, 0.15);
+  transform: translateY(-1px);
+}
+
+.liquid-glass-input {
+  background: rgba(8, 10, 14, 0.6);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  transition: all 0.2s ease;
+}
+
+.liquid-glass-input:focus {
+  border-color: #FF6B00;
+  box-shadow: 0 0 0 2px rgba(255, 107, 0, 0.25);
+  background: rgba(12, 14, 20, 0.8);
+}
+
+.liquid-glass-active {
+  background: linear-gradient(135deg, rgba(255, 107, 0, 0.95), rgba(230, 90, 0, 0.9));
+  box-shadow: 0 4px 20px rgba(255, 107, 0, 0.35), inset 0 1px 0 0 rgba(255, 255, 255, 0.3);
+  color: #000000 !important;
+}
+
+/* Ambient Liquid Glowing Orbs */
+.liquid-blob-1 {
+  position: fixed;
+  top: -10%;
+  left: 15%;
+  width: 500px;
+  height: 500px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 107, 0, 0.12) 0%, rgba(255, 107, 0, 0) 70%);
+  filter: blur(60px);
+  pointer-events: none;
+  z-index: 0;
+  animation: floatOrb 20s ease-in-out infinite alternate;
+}
+
+.liquid-blob-2 {
+  position: fixed;
+  bottom: 5%;
+  right: 5%;
+  width: 600px;
+  height: 600px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 107, 0, 0.08) 0%, rgba(184, 67, 0, 0) 70%);
+  filter: blur(80px);
+  pointer-events: none;
+  z-index: 0;
+  animation: floatOrb 25s ease-in-out infinite alternate-reverse;
+}
+
+@keyframes floatOrb {
+  0% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(40px, -30px) scale(1.08); }
+  100% { transform: translate(-30px, 40px) scale(0.95); }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(8, 9, 12, 0.8);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #FF6B00;
+}
+
+/* Print Styles */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #print-section, #print-section * {
+    visibility: visible;
+  }
+  #print-section {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    background: white !important;
+    color: black !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+}
