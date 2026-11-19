@@ -34,7 +34,9 @@ CREATE TABLE IF NOT EXISTS public.items (
         'repaired_ready_return'
     )),
     prep_type TEXT DEFAULT 'outbound_dispatch',
-    assigned_onsite_tech TEXT,
+    job_category TEXT DEFAULT 'delivery' CHECK (job_category IN ('delivery', 'repair_pickup', 'installation')),
+    assigned_techs TEXT[] NOT NULL DEFAULT '{}',   -- ทีมช่าง (เลือกได้หลายคน)
+    assigned_onsite_tech TEXT,                      -- backward-compat: ช่างหลัก = assigned_techs[0]
     prepped_at TIMESTAMPTZ,
     void_date DATE,                         -- วันที่ช่างเตรียมสินค้าติดวอยรับประกัน
     notes TEXT,
@@ -59,7 +61,9 @@ CREATE TABLE IF NOT EXISTS public.repair_tickets (
     route_code TEXT,                        -- รหัสสายรถ route_1 ถึง route_6
     delivery_location TEXT,
     province_custom TEXT,
-    assigned_onsite_tech TEXT,
+    job_category TEXT DEFAULT 'repair_pickup' CHECK (job_category IN ('delivery', 'repair_pickup', 'installation')),
+    assigned_techs TEXT[] NOT NULL DEFAULT '{}',   -- ทีมช่าง (เลือกได้หลายคน)
+    assigned_onsite_tech TEXT,                      -- backward-compat: ช่างหลัก = assigned_techs[0]
     status TEXT NOT NULL DEFAULT 'open' CHECK (status IN (
         'open',
         'in_progress',
@@ -82,9 +86,11 @@ CREATE INDEX IF NOT EXISTS idx_orders_bill_no ON public.orders(bill_no);
 CREATE INDEX IF NOT EXISTS idx_items_sn ON public.items(serial_number);
 CREATE INDEX IF NOT EXISTS idx_items_status ON public.items(status);
 CREATE INDEX IF NOT EXISTS idx_items_order_id ON public.items(order_id);
+CREATE INDEX IF NOT EXISTS idx_items_assigned_techs ON public.items USING GIN (assigned_techs);
 CREATE INDEX IF NOT EXISTS idx_repair_tickets_status ON public.repair_tickets(status);
 CREATE INDEX IF NOT EXISTS idx_repair_tickets_route_code ON public.repair_tickets(route_code);
 CREATE INDEX IF NOT EXISTS idx_repair_tickets_sn ON public.repair_tickets(walkin_sn);
+CREATE INDEX IF NOT EXISTS idx_repair_tickets_assigned_techs ON public.repair_tickets USING GIN (assigned_techs);
 
 -- Disable Row Level Security (RLS) for internal operations system deployment
 ALTER TABLE public.orders DISABLE ROW LEVEL SECURITY;
@@ -92,9 +98,24 @@ ALTER TABLE public.items DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.repair_tickets DISABLE ROW LEVEL SECURITY;
 
 -- Enable Realtime publication on all three core operational tables
-ALTER PUBLICATION supabase_realtime ADD TABLE public.orders;
-ALTER PUBLICATION supabase_realtime ADD TABLE public.items;
-ALTER PUBLICATION supabase_realtime ADD TABLE public.repair_tickets;
+-- (wrapped in DO blocks so re-running this script does not error if already added)
+DO $$
+BEGIN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.orders;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$
+BEGIN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.items;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$
+BEGIN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.repair_tickets;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Automatic timestamp triggers
 CREATE OR REPLACE FUNCTION public.set_updated_at()
