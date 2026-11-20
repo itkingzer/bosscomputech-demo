@@ -8,6 +8,8 @@ import {
 import {
   IntakeChannel, RepairStatus, ROUTE_DEFINITIONS, RouteCode, getRouteByDistrict
 } from '../types';
+import { ListControls, useListControls } from './ListControls';
+import { ActivityTimeline, LatestUpdateBadge } from './ActivityTimeline';
 
 const DISTRICT_OPTIONS = [
   // สาย 1 (โซนเหนือ)
@@ -37,7 +39,8 @@ const DISTRICT_OPTIONS = [
 export const FrontdeskView: React.FC = () => {
   const {
     items, orders, repairTickets, assignOnsite,
-    assignRepairTicketOnsite, createRepairTicket, closeRepairTicket, users
+    assignRepairTicketOnsite, createRepairTicket, closeRepairTicket, users,
+    applyVoidAndDispatch
   } = useApp();
 
   const [activeTab, setActiveTab] = useState<'dispatch' | 'intake' | 'reports'>('dispatch');
@@ -56,12 +59,38 @@ export const FrontdeskView: React.FC = () => {
   const [symptom, setSymptom] = useState('');
 
   // Dispatch State
-  const [selectedTech, setSelectedTech] = useState<Record<string, string>>({});
+  // Multi-technician assignment: each item maps to an array of assigned tech names.
+  const [selectedTechs, setSelectedTechs] = useState<Record<string, string[]>>({});
   const [selectedRepairTech, setSelectedRepairTech] = useState<Record<string, string>>({});
   const [batchTechName, setBatchTechName] = useState('');
   const [toast, setToast] = useState('');
 
-  const readyItems = items.filter(i => i.status === 'ready_for_dispatch' || i.status === 'prepped_in_stock');
+  // Toggle a technician in/out of an item's assignment list (multi-select).
+  const toggleItemTech = (itemId: string, techName: string) => {
+    setSelectedTechs(prev => {
+      const current = prev[itemId] || [];
+      const next = current.includes(techName)
+        ? current.filter(n => n !== techName)
+        : [...current, techName];
+      return { ...prev, [itemId]: next };
+    });
+  };
+
+  // Only items that are genuinely linked to a Sales Order with customer + route/area info
+  // are dispatchable. General stock items prepped into inventory (no order_id / no customer /
+  // no district-route) must never enter the Front-Desk dispatch queue.
+  const isDispatchableItem = (item: typeof items[number]) => {
+    if (!item.order_id) return false;
+    const order = orders.find(o => o.id === item.order_id);
+    if (!order) return false;
+    const hasCustomer = !!order.customer_name && order.customer_name.trim() !== '';
+    const hasArea = (!!order.district && order.district.trim() !== '') || !!order.route_code;
+    return hasCustomer && hasArea;
+  };
+
+  const readyItems = items.filter(
+    i => (i.status === 'ready_for_dispatch' || i.status === 'prepped_in_stock') && isDispatchableItem(i)
+  );
   const returnReadyTickets = repairTickets.filter(r => r.status === 'repaired' && !r.assigned_onsite_tech && (!r.assigned_techs || r.assigned_techs.length === 0));
   const onsiteIntakeTickets = repairTickets.filter(r => r.intake_channel === 'onsite_pickup' && r.status === 'open' && !r.assigned_onsite_tech && (!r.assigned_techs || r.assigned_techs.length === 0));
   const onsiteTechs = users.filter(u => u.role === 'onsite');
@@ -85,17 +114,45 @@ export const FrontdeskView: React.FC = () => {
 
   const totalRouteJobs = filteredReadyItems.length + filteredReturnTickets.length + filteredPickupTickets.length;
 
+  // Sort + pagination สำหรับตารางจัดส่ง / รับซ่อม
+  const readyList = useListControls(filteredReadyItems, {
+    getDate: (i) => i.prepped_at,
+    initialSort: 'newest',
+  });
+  const returnList = useListControls(filteredReturnTickets, {
+    getDate: (t) => t.finished_at,
+    initialSort: 'newest',
+  });
+  const pickupList = useListControls(filteredPickupTickets, {
+    getDate: (t) => t.created_at,
+    initialSort: 'newest',
+  });
+  const repairIntakeList = useListControls(repairTickets, {
+    getDate: (t) => t.created_at,
+    initialSort: 'newest',
+  });
+
   // Computed Route for repair intake form
   const currentIntakeRoute = getRouteByDistrict(district);
   const intakeRouteMeta = ROUTE_DEFINITIONS[currentIntakeRoute];
 
   const handleDispatch = (itemId: string) => {
     const defaultTech = onsiteTechs[0]?.name || 'ช่างเอ (สายส่งด่วน Onsite)';
-    const techName = selectedTech[itemId] || defaultTech;
+    const picked = selectedTechs[itemId] && selectedTechs[itemId].length > 0
+      ? selectedTechs[itemId]
+      : [defaultTech];
 
-    // FIX: assignOnsite expects string[] for assigned_techs
-    assignOnsite(itemId, [techName]);
-    setToast(`จ่ายงานสำเร็จ! มอบหมายส่งสินค้าให้ ${techName} เรียบร้อยแล้ว`);
+    // Warranty sticker: if the item was prepped into stock awaiting dispatch
+    // (prepped_in_stock) and has no void_date yet, stamp today's date on dispatch.
+    const target = items.find(i => i.id === itemId);
+    if (target && target.status === 'prepped_in_stock' && !target.void_date) {
+      const todayStr = new Date().toISOString().split('T')[0];
+      applyVoidAndDispatch(itemId, todayStr);
+    }
+
+    // Multi-technician assignment via assigned_techs: string[]
+    assignOnsite(itemId, picked);
+    setToast(`จ่ายงานสำเร็จ! มอบหมายส่งสินค้าให้ ${picked.join(', ')} เรียบร้อยแล้ว`);
     setTimeout(() => setToast(''), 3500);
   };
 
@@ -129,6 +186,11 @@ export const FrontdeskView: React.FC = () => {
 
     // 1. Dispatch outbound items of this route
     filteredReadyItems.forEach(item => {
+      // Apply warranty sticker for prepped_in_stock items awaiting dispatch
+      if (item.status === 'prepped_in_stock' && !item.void_date) {
+        const todayStr = new Date().toISOString().split('T')[0];
+        applyVoidAndDispatch(item.id, todayStr);
+      }
       // FIX: wrap in array
       assignOnsite(item.id, [techName]);
     });
@@ -405,77 +467,132 @@ export const FrontdeskView: React.FC = () => {
                   ไม่มีสินค้าใหม่รอจัดส่งในสายรถนี้
                 </div>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
-                    <thead className="bg-white/[0.03] text-slate-400 border-b border-white/[0.06]">
-                      <tr>
-                        <th className="py-2.5 px-3 whitespace-nowrap">สายรถ</th>
-                        <th className="py-2.5 px-3 whitespace-nowrap">S/N สินค้า</th>
-                        <th className="py-2.5 px-3 whitespace-nowrap">รุ่นสินค้า</th>
-                        <th className="py-2.5 px-3 whitespace-nowrap">ลูกค้า & พื้นที่</th>
-                        <th className="py-2.5 px-3 whitespace-nowrap">ช่าง Onsite รับงาน</th>
-                        <th className="py-2.5 px-3 text-right whitespace-nowrap">ดำเนินการ</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-white/[0.05]">
-                      {filteredReadyItems.map((item) => {
-                        const order = orders.find(o => o.id === item.order_id);
-                        const rMeta = order?.route_code ? ROUTE_DEFINITIONS[order.route_code] : null;
+                <div>
+                  <ListControls
+                    from={readyList.from}
+                    to={readyList.to}
+                    total={readyList.total}
+                    page={readyList.page}
+                    totalPages={readyList.totalPages}
+                    pageSize={readyList.pageSize}
+                    sort={readyList.sort}
+                    onSortChange={readyList.setSort}
+                    onPageSizeChange={readyList.setPageSize}
+                    onPageChange={readyList.setPage}
+                    unit="รายการ"
+                    hideSort
+                    className="mb-3"
+                  />
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-white/[0.03] text-slate-400 border-b border-white/[0.06]">
+                        <tr>
+                          <th className="py-2.5 px-3 whitespace-nowrap">สายรถ</th>
+                          <th className="py-2.5 px-3 whitespace-nowrap">S/N สินค้า</th>
+                          <th className="py-2.5 px-3 whitespace-nowrap">รุ่นสินค้า</th>
+                          <th className="py-2.5 px-3 whitespace-nowrap">ลูกค้า & พื้นที่</th>
+                          <th className="py-2.5 px-3 whitespace-nowrap">ช่าง Onsite รับงาน</th>
+                          <th className="py-2.5 px-3 text-right whitespace-nowrap">ดำเนินการ</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-white/[0.05]">
+                        {readyList.pageItems.map((item) => {
+                          const order = orders.find(o => o.id === item.order_id);
+                          const rMeta = order?.route_code ? ROUTE_DEFINITIONS[order.route_code] : null;
+                          // Safeguard: block dispatch when customer or area/route data is missing
+                          const hasCustomer = !!order?.customer_name && order.customer_name.trim() !== '';
+                          const hasArea = (!!order?.district && order.district.trim() !== '') || !!order?.route_code;
+                          const canDispatch = !!order && hasCustomer && hasArea;
 
-                        return (
-                          <tr key={item.id} className="hover:bg-white/[0.03] transition">
-                            <td className="py-3 px-3 whitespace-nowrap">
-                              {rMeta ? (
-                                <span className={`px-2 py-0.5 rounded-lg text-[11px] font-bold border ${rMeta.badgeBg} ${rMeta.badgeBorder} ${rMeta.badgeText}`}>
-                                  {rMeta.shortName} ({order?.district || '-'})
-                                </span>
-                              ) : '-'}
-                            </td>
-                            <td className="py-3 px-3 font-mono font-bold text-[#FF6B00] whitespace-nowrap">
-                              {item.serial_number}
-                            </td>
-                            <td className="py-3 px-3 text-white font-medium whitespace-nowrap">
-                              {item.model_name}
-                            </td>
-                            <td className="py-3 px-3">
-                              <div className="flex items-center gap-2">
-                                <span className="text-slate-200 font-medium whitespace-nowrap">{order?.customer_name || '-'}</span>
-                                {order?.delivery_mode === 'project' && (
-                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-gradient-to-r from-purple-500/25 to-orange-500/25 text-purple-300 border border-purple-500/40 shadow-sm animate-pulse whitespace-nowrap">
-                                    ⚡ งานโครงการ (Project)
-                                  </span>
-                                )}
-                              </div>
-                              <div className="text-[11px] text-slate-500 truncate max-w-xs">{order?.delivery_location || '-'}</div>
-                            </td>
-                            <td className="py-3 px-3 whitespace-nowrap">
-                              <select
-                                value={selectedTech[item.id] || (onsiteTechs[0]?.name || 'ช่างเอ (สายส่งด่วน Onsite)')}
-                                onChange={(e) => setSelectedTech({ ...selectedTech, [item.id]: e.target.value })}
-                                className="liquid-glass-input rounded-xl px-2.5 py-1 text-xs text-white focus:outline-none"
-                              >
-                                {onsiteTechs.map(t => (
-                                  <option key={t.id} value={t.name} className="bg-[#12141A]">{t.name}</option>
-                                ))}
-                                {onsiteTechs.length === 0 && (
-                                  <option value="ช่างเอ (สายส่งด่วน Onsite)" className="bg-[#12141A]">ช่างเอ (สายส่งด่วน Onsite)</option>
-                                )}
-                              </select>
-                            </td>
-                            <td className="py-3 px-3 text-right whitespace-nowrap">
-                              <button
-                                onClick={() => handleDispatch(item.id)}
-                                className="px-3 py-1 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-400 text-white font-semibold rounded-xl text-xs transition cursor-pointer shadow-md shadow-blue-500/20 whitespace-nowrap inline-flex items-center gap-1"
-                              >
-                                <Send className="w-3 h-3" />
-                                <span>จ่ายงาน</span>
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                          return (
+                            <React.Fragment key={item.id}>
+                              <tr className="hover:bg-white/[0.03] transition">
+                                <td className="py-3 px-3 whitespace-nowrap">
+                                  {rMeta ? (
+                                    <span className={`px-2 py-0.5 rounded-lg text-[11px] font-bold border ${rMeta.badgeBg} ${rMeta.badgeBorder} ${rMeta.badgeText}`}>
+                                      {rMeta.shortName} ({order?.district || '-'})
+                                    </span>
+                                  ) : '-'}
+                                </td>
+                                <td className="py-3 px-3 font-mono font-extrabold text-[#FF6B00] whitespace-nowrap text-sm data-key">
+                                  {item.serial_number}
+                                </td>
+                                <td className="py-3 px-3 text-white font-bold text-base whitespace-nowrap">
+                                  {item.model_name}
+                                </td>
+                                <td className="py-3 px-3">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-slate-200 font-bold text-base whitespace-nowrap">{order?.customer_name || '-'}</span>
+                                    {order?.delivery_mode === 'project' && (
+                                      <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-gradient-to-r from-purple-500/25 to-orange-500/25 text-purple-300 border border-purple-500/40 shadow-sm animate-pulse whitespace-nowrap">
+                                        ⚡ งานโครงการ (Project)
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="text-[11px] text-slate-500 truncate max-w-xs data-meta">{order?.delivery_location || '-'}</div>
+                                </td>
+                                <td className="py-3 px-3">
+                                  {/* Multi-technician assignment: toggle chips (assigned_techs: string[]) */}
+                                  <div className="flex flex-wrap gap-1 max-w-[14rem]">
+                                    {(onsiteTechs.length > 0
+                                      ? onsiteTechs.map(t => t.name)
+                                      : ['ช่างเอ (สายส่งด่วน Onsite)']
+                                    ).map((techName) => {
+                                      const isPicked = (selectedTechs[item.id] || []).includes(techName);
+                                      return (
+                                        <button
+                                          key={techName}
+                                          type="button"
+                                          onClick={() => toggleItemTech(item.id, techName)}
+                                          className={`px-2 py-0.5 rounded-lg text-[11px] font-semibold border transition cursor-pointer whitespace-nowrap ${isPicked
+                                            ? 'bg-blue-500/20 text-blue-300 border-blue-500/40'
+                                            : 'bg-white/[0.04] text-slate-400 border-white/[0.08] hover:text-white'
+                                            }`}
+                                        >
+                                          {isPicked ? '✓ ' : ''}{techName}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                  {(selectedTechs[item.id] || []).length > 1 && (
+                                    <div className="text-[10px] text-blue-300 mt-1">
+                                      ทีม {selectedTechs[item.id].length} คน
+                                    </div>
+                                  )}
+                                </td>
+                                <td className="py-3 px-3 text-right whitespace-nowrap">
+                                  {canDispatch ? (
+                                    <button
+                                      onClick={() => handleDispatch(item.id)}
+                                      className="px-3 py-1 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-400 text-white font-semibold rounded-xl text-xs transition cursor-pointer shadow-md shadow-blue-500/20 whitespace-nowrap inline-flex items-center gap-1"
+                                    >
+                                      <Send className="w-3 h-3" />
+                                      <span>จ่ายงาน</span>
+                                    </button>
+                                  ) : (
+                                    <span className="px-2.5 py-1 rounded-xl bg-white/[0.05] text-slate-400 border border-white/[0.08] text-[11px] font-medium whitespace-nowrap inline-flex items-center gap-1">
+                                      <AlertCircle className="w-3 h-3" />
+                                      <span>รอข้อมูลลูกค้าจากฝ่ายขาย</span>
+                                    </span>
+                                  )}
+                                </td>
+                              </tr>
+                              <tr className="bg-white/[0.01]">
+                                <td colSpan={6} className="px-3 pb-3 pt-0">
+                                  <LatestUpdateBadge
+                                    logs={item.activity_logs}
+                                    fallbackTimestamp={item.dispatched_at || item.assigned_at || item.updated_at || item.created_at}
+                                    fallbackActor={item.assigned_prep_tech}
+                                  />
+                                  <ActivityTimeline logs={item.activity_logs} />
+                                </td>
+                              </tr>
+                            </React.Fragment>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               )}
             </div>
@@ -497,72 +614,101 @@ export const FrontdeskView: React.FC = () => {
                   ไม่มีเครื่องซ่อมเสร็จรอส่งคืนในสายรถนี้
                 </div>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
-                    <thead className="bg-white/[0.03] text-slate-400 border-b border-white/[0.06]">
-                      <tr>
-                        <th className="py-2.5 px-3 whitespace-nowrap">สายรถ</th>
-                        <th className="py-2.5 px-3 whitespace-nowrap">Ticket / S/N</th>
-                        <th className="py-2.5 px-3 whitespace-nowrap">ลูกค้า & ที่อยู่</th>
-                        <th className="py-2.5 px-3 whitespace-nowrap">ผลการซ่อม</th>
-                        <th className="py-2.5 px-3 whitespace-nowrap">ช่าง Onsite รับงาน</th>
-                        <th className="py-2.5 px-3 text-right whitespace-nowrap">ดำเนินการ</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-white/[0.05]">
-                      {filteredReturnTickets.map((ticket) => {
-                        const rMeta = ticket.route_code ? ROUTE_DEFINITIONS[ticket.route_code] : null;
+                <div>
+                  <ListControls
+                    from={returnList.from}
+                    to={returnList.to}
+                    total={returnList.total}
+                    page={returnList.page}
+                    totalPages={returnList.totalPages}
+                    pageSize={returnList.pageSize}
+                    sort={returnList.sort}
+                    onSortChange={returnList.setSort}
+                    onPageSizeChange={returnList.setPageSize}
+                    onPageChange={returnList.setPage}
+                    unit="รายการ"
+                    hideSort
+                    className="mb-3"
+                  />
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-white/[0.03] text-slate-400 border-b border-white/[0.06]">
+                        <tr>
+                          <th className="py-2.5 px-3 whitespace-nowrap">สายรถ</th>
+                          <th className="py-2.5 px-3 whitespace-nowrap">Ticket / S/N</th>
+                          <th className="py-2.5 px-3 whitespace-nowrap">ลูกค้า & ที่อยู่</th>
+                          <th className="py-2.5 px-3 whitespace-nowrap">ผลการซ่อม</th>
+                          <th className="py-2.5 px-3 whitespace-nowrap">ช่าง Onsite รับงาน</th>
+                          <th className="py-2.5 px-3 text-right whitespace-nowrap">ดำเนินการ</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-white/[0.05]">
+                        {returnList.pageItems.map((ticket) => {
+                          const rMeta = ticket.route_code ? ROUTE_DEFINITIONS[ticket.route_code] : null;
 
-                        return (
-                          <tr key={ticket.id} className="hover:bg-white/[0.03] transition">
-                            <td className="py-3 px-3 whitespace-nowrap">
-                              {rMeta ? (
-                                <span className={`px-2 py-0.5 rounded-lg text-[11px] font-bold border ${rMeta.badgeBg} ${rMeta.badgeBorder} ${rMeta.badgeText}`}>
-                                  {rMeta.shortName} ({ticket.district || '-'})
-                                </span>
-                              ) : '-'}
-                            </td>
-                            <td className="py-3 px-3 whitespace-nowrap">
-                              <div className="font-mono font-bold text-white">{ticket.ticket_no}</div>
-                              <div className="font-mono text-[#FF6B00] text-[11px]">{ticket.walkin_sn}</div>
-                            </td>
-                            <td className="py-3 px-3">
-                              <div className="text-slate-200 font-medium whitespace-nowrap">{ticket.customer_name}</div>
-                              <div className="text-[11px] text-slate-500 truncate max-w-xs">{ticket.delivery_location || ticket.customer_phone || '-'}</div>
-                            </td>
-                            <td className="py-3 px-3 whitespace-nowrap">
-                              <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[11px] font-semibold">
-                                ซ่อมเสร็จแล้ว ({ticket.parts_used || 'พร้อมใช้งาน'})
-                              </span>
-                            </td>
-                            <td className="py-3 px-3 whitespace-nowrap">
-                              <select
-                                value={selectedRepairTech[ticket.id] || (onsiteTechs[0]?.name || 'ช่างเอ (สายส่งด่วน Onsite)')}
-                                onChange={(e) => setSelectedRepairTech({ ...selectedRepairTech, [ticket.id]: e.target.value })}
-                                className="liquid-glass-input rounded-xl px-2.5 py-1 text-xs text-white focus:outline-none"
-                              >
-                                {onsiteTechs.map(t => (
-                                  <option key={t.id} value={t.name} className="bg-[#12141A]">{t.name}</option>
-                                ))}
-                                {onsiteTechs.length === 0 && (
-                                  <option value="ช่างเอ (สายส่งด่วน Onsite)" className="bg-[#12141A]">ช่างเอ (สายส่งด่วน Onsite)</option>
-                                )}
-                              </select>
-                            </td>
-                            <td className="py-3 px-3 text-right whitespace-nowrap">
-                              <button
-                                onClick={() => handleDispatchRepair(ticket.id)}
-                                className="px-3 py-1 bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-400 text-white font-semibold rounded-xl text-xs transition cursor-pointer shadow-md shadow-purple-500/20 whitespace-nowrap inline-flex items-center gap-1"
-                              >
-                                <Send className="w-3 h-3" />
-                                <span>จ่ายงานส่งคืน</span>
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                          return (
+                            <React.Fragment key={ticket.id}>
+                              <tr className="hover:bg-white/[0.03] transition">
+                                <td className="py-3 px-3 whitespace-nowrap">
+                                  {rMeta ? (
+                                    <span className={`px-2 py-0.5 rounded-lg text-[11px] font-bold border ${rMeta.badgeBg} ${rMeta.badgeBorder} ${rMeta.badgeText}`}>
+                                      {rMeta.shortName} ({ticket.district || '-'})
+                                    </span>
+                                  ) : '-'}
+                                </td>
+                                <td className="py-3 px-3 whitespace-nowrap">
+                                  <div className="font-mono font-extrabold text-white text-sm data-key">{ticket.ticket_no}</div>
+                                  <div className="font-mono text-[#FF6B00] text-[11px] data-key">{ticket.walkin_sn}</div>
+                                </td>
+                                <td className="py-3 px-3">
+                                  <div className="text-slate-200 font-bold text-base whitespace-nowrap">{ticket.customer_name}</div>
+                                  <div className="text-[11px] text-slate-500 truncate max-w-xs data-meta">{ticket.delivery_location || ticket.customer_phone || '-'}</div>
+                                </td>
+                                <td className="py-3 px-3 whitespace-nowrap">
+                                  <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[11px] font-semibold">
+                                    ซ่อมเสร็จแล้ว ({ticket.parts_used || 'พร้อมใช้งาน'})
+                                  </span>
+                                </td>
+                                <td className="py-3 px-3 whitespace-nowrap">
+                                  <select
+                                    value={selectedRepairTech[ticket.id] || (onsiteTechs[0]?.name || 'ช่างเอ (สายส่งด่วน Onsite)')}
+                                    onChange={(e) => setSelectedRepairTech({ ...selectedRepairTech, [ticket.id]: e.target.value })}
+                                    className="liquid-glass-input rounded-xl px-2.5 py-1 text-xs text-white focus:outline-none"
+                                  >
+                                    {onsiteTechs.map(t => (
+                                      <option key={t.id} value={t.name} className="bg-[#12141A]">{t.name}</option>
+                                    ))}
+                                    {onsiteTechs.length === 0 && (
+                                      <option value="ช่างเอ (สายส่งด่วน Onsite)" className="bg-[#12141A]">ช่างเอ (สายส่งด่วน Onsite)</option>
+                                    )}
+                                  </select>
+                                </td>
+                                <td className="py-3 px-3 text-right whitespace-nowrap">
+                                  <button
+                                    onClick={() => handleDispatchRepair(ticket.id)}
+                                    className="px-3 py-1 bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-400 text-white font-semibold rounded-xl text-xs transition cursor-pointer shadow-md shadow-purple-500/20 whitespace-nowrap inline-flex items-center gap-1"
+                                  >
+                                    <Send className="w-3 h-3" />
+                                    <span>จ่ายงานส่งคืน</span>
+                                  </button>
+                                </td>
+                              </tr>
+                              <tr className="bg-white/[0.01]">
+                                <td colSpan={6} className="px-3 pb-3 pt-0">
+                                  <LatestUpdateBadge
+                                    logs={ticket.activity_logs}
+                                    fallbackTimestamp={ticket.delivered_at || ticket.assigned_at || ticket.updated_at || ticket.created_at}
+                                    fallbackActor={ticket.received_by}
+                                  />
+                                  <ActivityTimeline logs={ticket.activity_logs} />
+                                </td>
+                              </tr>
+                            </React.Fragment>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               )}
             </div>
@@ -584,69 +730,98 @@ export const FrontdeskView: React.FC = () => {
                   ไม่มีคิวงานวิ่งไปรับเครื่องซ่อมในสายรถนี้
                 </div>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
-                    <thead className="bg-white/[0.03] text-slate-400 border-b border-white/[0.06]">
-                      <tr>
-                        <th className="py-2.5 px-3 whitespace-nowrap">สายรถ</th>
-                        <th className="py-2.5 px-3 whitespace-nowrap">Ticket ID</th>
-                        <th className="py-2.5 px-3 whitespace-nowrap">ลูกค้า & ไซต์งาน</th>
-                        <th className="py-2.5 px-3 whitespace-nowrap">อาการเสียที่แจ้ง</th>
-                        <th className="py-2.5 px-3 whitespace-nowrap">ช่าง Onsite รับงาน</th>
-                        <th className="py-2.5 px-3 text-right whitespace-nowrap">ดำเนินการ</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-white/[0.05]">
-                      {filteredPickupTickets.map((ticket) => {
-                        const rMeta = ticket.route_code ? ROUTE_DEFINITIONS[ticket.route_code] : null;
+                <div>
+                  <ListControls
+                    from={pickupList.from}
+                    to={pickupList.to}
+                    total={pickupList.total}
+                    page={pickupList.page}
+                    totalPages={pickupList.totalPages}
+                    pageSize={pickupList.pageSize}
+                    sort={pickupList.sort}
+                    onSortChange={pickupList.setSort}
+                    onPageSizeChange={pickupList.setPageSize}
+                    onPageChange={pickupList.setPage}
+                    unit="รายการ"
+                    hideSort
+                    className="mb-3"
+                  />
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-white/[0.03] text-slate-400 border-b border-white/[0.06]">
+                        <tr>
+                          <th className="py-2.5 px-3 whitespace-nowrap">สายรถ</th>
+                          <th className="py-2.5 px-3 whitespace-nowrap">Ticket ID</th>
+                          <th className="py-2.5 px-3 whitespace-nowrap">ลูกค้า & ไซต์งาน</th>
+                          <th className="py-2.5 px-3 whitespace-nowrap">อาการเสียที่แจ้ง</th>
+                          <th className="py-2.5 px-3 whitespace-nowrap">ช่าง Onsite รับงาน</th>
+                          <th className="py-2.5 px-3 text-right whitespace-nowrap">ดำเนินการ</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-white/[0.05]">
+                        {pickupList.pageItems.map((ticket) => {
+                          const rMeta = ticket.route_code ? ROUTE_DEFINITIONS[ticket.route_code] : null;
 
-                        return (
-                          <tr key={ticket.id} className="hover:bg-white/[0.03] transition">
-                            <td className="py-3 px-3 whitespace-nowrap">
-                              {rMeta ? (
-                                <span className={`px-2 py-0.5 rounded-lg text-[11px] font-bold border ${rMeta.badgeBg} ${rMeta.badgeBorder} ${rMeta.badgeText}`}>
-                                  {rMeta.shortName} ({ticket.district || '-'})
-                                </span>
-                              ) : '-'}
-                            </td>
-                            <td className="py-3 px-3 font-mono font-bold text-amber-400 whitespace-nowrap">
-                              {ticket.ticket_no}
-                            </td>
-                            <td className="py-3 px-3">
-                              <div className="text-slate-200 font-medium whitespace-nowrap">{ticket.customer_name}</div>
-                              <div className="text-[11px] text-slate-500 truncate max-w-xs">{ticket.delivery_location || ticket.customer_phone || '-'}</div>
-                            </td>
-                            <td className="py-3 px-3 text-slate-300 max-w-xs truncate">
-                              {ticket.fault_symptom}
-                            </td>
-                            <td className="py-3 px-3 whitespace-nowrap">
-                              <select
-                                value={selectedRepairTech[ticket.id] || (onsiteTechs[0]?.name || 'ช่างเอ (สายส่งด่วน Onsite)')}
-                                onChange={(e) => setSelectedRepairTech({ ...selectedRepairTech, [ticket.id]: e.target.value })}
-                                className="liquid-glass-input rounded-xl px-2.5 py-1 text-xs text-white focus:outline-none"
-                              >
-                                {onsiteTechs.map(t => (
-                                  <option key={t.id} value={t.name} className="bg-[#12141A]">{t.name}</option>
-                                ))}
-                                {onsiteTechs.length === 0 && (
-                                  <option value="ช่างเอ (สายส่งด่วน Onsite)" className="bg-[#12141A]">ช่างเอ (สายส่งด่วน Onsite)</option>
-                                )}
-                              </select>
-                            </td>
-                            <td className="py-3 px-3 text-right whitespace-nowrap">
-                              <button
-                                onClick={() => handleDispatchOnsitePickup(ticket.id)}
-                                className="px-3 py-1 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 text-black font-semibold rounded-xl text-xs transition cursor-pointer shadow-md shadow-amber-500/20 whitespace-nowrap inline-flex items-center gap-1"
-                              >
-                                <Send className="w-3 h-3" />
-                                <span>จ่ายงานรับเครื่อง</span>
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                          return (
+                            <React.Fragment key={ticket.id}>
+                              <tr className="hover:bg-white/[0.03] transition">
+                                <td className="py-3 px-3 whitespace-nowrap">
+                                  {rMeta ? (
+                                    <span className={`px-2 py-0.5 rounded-lg text-[11px] font-bold border ${rMeta.badgeBg} ${rMeta.badgeBorder} ${rMeta.badgeText}`}>
+                                      {rMeta.shortName} ({ticket.district || '-'})
+                                    </span>
+                                  ) : '-'}
+                                </td>
+                                <td className="py-3 px-3 font-mono font-extrabold text-amber-400 whitespace-nowrap text-sm data-key">
+                                  {ticket.ticket_no}
+                                </td>
+                                <td className="py-3 px-3">
+                                  <div className="text-slate-200 font-bold text-base whitespace-nowrap">{ticket.customer_name}</div>
+                                  <div className="text-[11px] text-slate-500 truncate max-w-xs data-meta">{ticket.delivery_location || ticket.customer_phone || '-'}</div>
+                                </td>
+                                <td className="py-3 px-3 text-slate-300 max-w-xs truncate data-meta">
+                                  {ticket.fault_symptom}
+                                </td>
+                                <td className="py-3 px-3 whitespace-nowrap">
+                                  <select
+                                    value={selectedRepairTech[ticket.id] || (onsiteTechs[0]?.name || 'ช่างเอ (สายส่งด่วน Onsite)')}
+                                    onChange={(e) => setSelectedRepairTech({ ...selectedRepairTech, [ticket.id]: e.target.value })}
+                                    className="liquid-glass-input rounded-xl px-2.5 py-1 text-xs text-white focus:outline-none"
+                                  >
+                                    {onsiteTechs.map(t => (
+                                      <option key={t.id} value={t.name} className="bg-[#12141A]">{t.name}</option>
+                                    ))}
+                                    {onsiteTechs.length === 0 && (
+                                      <option value="ช่างเอ (สายส่งด่วน Onsite)" className="bg-[#12141A]">ช่างเอ (สายส่งด่วน Onsite)</option>
+                                    )}
+                                  </select>
+                                </td>
+                                <td className="py-3 px-3 text-right whitespace-nowrap">
+                                  <button
+                                    onClick={() => handleDispatchOnsitePickup(ticket.id)}
+                                    className="px-3 py-1 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 text-black font-semibold rounded-xl text-xs transition cursor-pointer shadow-md shadow-amber-500/20 whitespace-nowrap inline-flex items-center gap-1"
+                                  >
+                                    <Send className="w-3 h-3" />
+                                    <span>จ่ายงานรับเครื่อง</span>
+                                  </button>
+                                </td>
+                              </tr>
+                              <tr className="bg-white/[0.01]">
+                                <td colSpan={6} className="px-3 pb-3 pt-0">
+                                  <LatestUpdateBadge
+                                    logs={ticket.activity_logs}
+                                    fallbackTimestamp={ticket.assigned_at || ticket.updated_at || ticket.created_at}
+                                    fallbackActor={ticket.received_by}
+                                  />
+                                  <ActivityTimeline logs={ticket.activity_logs} />
+                                </td>
+                              </tr>
+                            </React.Fragment>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               )}
             </div>
@@ -812,51 +987,63 @@ export const FrontdeskView: React.FC = () => {
                     const rMeta = t.route_code ? ROUTE_DEFINITIONS[t.route_code] : null;
 
                     return (
-                      <tr key={t.id} className="hover:bg-white/[0.03] transition">
-                        <td className="py-3.5 px-3 font-mono font-bold text-slate-300 whitespace-nowrap">{t.ticket_no}</td>
-                        <td className="py-3.5 px-3 whitespace-nowrap">
-                          {rMeta ? (
-                            <span className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border ${rMeta.badgeBg} ${rMeta.badgeBorder} ${rMeta.badgeText}`}>
-                              {rMeta.shortName}
-                            </span>
-                          ) : (
-                            <span className="text-slate-500 text-[10px]">-</span>
-                          )}
-                        </td>
-                        <td className="py-3.5 px-3 font-mono text-[#FF6B00] whitespace-nowrap">{t.walkin_sn}</td>
-                        <td className="py-3.5 px-3 whitespace-nowrap">
-                          <div className="text-white font-medium">{t.customer_name}</div>
-                          <div className="text-[10px] text-slate-500">{t.district || t.customer_phone || '-'}</div>
-                        </td>
-                        <td className="py-3.5 px-3 text-slate-300 max-w-xs">
-                          <div className="truncate font-medium">{t.fault_symptom}</div>
-                          {t.device_model && <div className="text-[10px] text-slate-400">รุ่น: {t.device_model}</div>}
-                          {t.picked_up_by && <div className="text-[10px] text-amber-400">รับโดย: {t.picked_up_by}</div>}
-                          {t.accessories && t.accessories.length > 0 && (
-                            <div className="text-[10px] text-slate-500 truncate">
-                              อุปกรณ์: {t.accessories.join(', ')}
-                            </div>
-                          )}
-                        </td>
-                        <td className="py-3.5 px-3 whitespace-nowrap">
-                          {renderRepairStatusBadge(t.status, t.repair_outcome)}
-                        </td>
-                        <td className="py-3.5 px-3 text-right whitespace-nowrap">
-                          {t.status !== 'open' && t.status !== 'in_progress' && t.status !== 'returned_closed' ? (
-                            <button
-                              onClick={() => {
-                                closeRepairTicket(t.id);
-                                setToast('ปิดงานและส่งคืนเครื่องให้ลูกค้าเรียบร้อยแล้ว');
-                              }}
-                              className="px-3 py-1 bg-emerald-500 hover:bg-emerald-600 text-black font-semibold rounded-xl text-[11px] transition cursor-pointer shadow-md shadow-emerald-500/20 whitespace-nowrap"
-                            >
-                              ส่งคืนลูกค้า / ปิดงาน
-                            </button>
-                          ) : (
-                            <span className="text-[11px] text-slate-500">-</span>
-                          )}
-                        </td>
-                      </tr>
+                      <React.Fragment key={t.id}>
+                        <tr className="hover:bg-white/[0.03] transition">
+                          <td className="py-3.5 px-3 font-mono font-extrabold text-slate-300 whitespace-nowrap text-sm data-key">{t.ticket_no}</td>
+                          <td className="py-3.5 px-3 whitespace-nowrap">
+                            {rMeta ? (
+                              <span className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border ${rMeta.badgeBg} ${rMeta.badgeBorder} ${rMeta.badgeText}`}>
+                                {rMeta.shortName}
+                              </span>
+                            ) : (
+                              <span className="text-slate-500 text-[10px]">-</span>
+                            )}
+                          </td>
+                          <td className="py-3.5 px-3 font-mono font-bold text-[#FF6B00] whitespace-nowrap data-key">{t.walkin_sn}</td>
+                          <td className="py-3.5 px-3 whitespace-nowrap">
+                            <div className="text-white font-bold text-base">{t.customer_name}</div>
+                            <div className="text-[10px] text-slate-500 data-meta">{t.district || t.customer_phone || '-'}</div>
+                          </td>
+                          <td className="py-3.5 px-3 text-slate-300 max-w-xs">
+                            <div className="truncate font-medium data-meta">{t.fault_symptom}</div>
+                            {t.device_model && <div className="text-[10px] text-slate-400">รุ่น: {t.device_model}</div>}
+                            {t.picked_up_by && <div className="text-[10px] text-amber-400">รับโดย: {t.picked_up_by}</div>}
+                            {t.accessories && t.accessories.length > 0 && (
+                              <div className="text-[10px] text-slate-500 truncate">
+                                อุปกรณ์: {t.accessories.join(', ')}
+                              </div>
+                            )}
+                          </td>
+                          <td className="py-3.5 px-3 whitespace-nowrap">
+                            {renderRepairStatusBadge(t.status, t.repair_outcome)}
+                          </td>
+                          <td className="py-3.5 px-3 text-right whitespace-nowrap">
+                            {t.status !== 'open' && t.status !== 'in_progress' && t.status !== 'returned_closed' ? (
+                              <button
+                                onClick={() => {
+                                  closeRepairTicket(t.id);
+                                  setToast('ปิดงานและส่งคืนเครื่องให้ลูกค้าเรียบร้อยแล้ว');
+                                }}
+                                className="px-3 py-1 bg-emerald-500 hover:bg-emerald-600 text-black font-semibold rounded-xl text-[11px] transition cursor-pointer shadow-md shadow-emerald-500/20 whitespace-nowrap"
+                              >
+                                ส่งคืนลูกค้า / ปิดงาน
+                              </button>
+                            ) : (
+                              <span className="text-[11px] text-slate-500">-</span>
+                            )}
+                          </td>
+                        </tr>
+                        <tr className="bg-white/[0.01]">
+                          <td colSpan={7} className="px-3 pb-3 pt-0">
+                            <LatestUpdateBadge
+                              logs={t.activity_logs}
+                              fallbackTimestamp={t.delivered_at || t.started_at || t.updated_at || t.created_at}
+                              fallbackActor={t.received_by}
+                            />
+                            <ActivityTimeline logs={t.activity_logs} />
+                          </td>
+                        </tr>
+                      </React.Fragment>
                     );
                   })}
                 </tbody>

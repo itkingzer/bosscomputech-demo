@@ -1,3 +1,36 @@
+// ==============================================================================
+// Activity & Audit Log (Timestamped Activity Trail)
+// ทุกเหตุการณ์สำคัญจะถูกบันทึกเป็น ISO timestamp + ชื่อพนักงานผู้กระทำ + บทบาท + หมายเหตุ
+// ==============================================================================
+export interface ActivityLog {
+  timestamp: string;   // ISO 8601 timestamp (เช่น 2026-11-20T17:01:36.952Z)
+  action: string;      // ชื่อเหตุการณ์ เช่น 'เปิดบิลขาย', 'รับของเข้าห้องสต๊อก'
+  actor: string;       // ชื่อพนักงานผู้กระทำ (currentUser.name)
+  role?: UserRole;     // บทบาทผู้กระทำ
+  note?: string;       // รายละเอียดเพิ่มเติม
+}
+
+// แปลง ISO timestamp -> รูปแบบไทยสะอาดตา (พ.ศ. 2 หลัก / 24 ชม.) เช่น "20 พ.ย. 69 14:30"
+const THAI_MONTHS_SHORT = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+
+export function formatThaiDateTime(iso?: string | null): string {
+  if (!iso) return '-';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '-';
+  const day = d.getDate();
+  const month = THAI_MONTHS_SHORT[d.getMonth()];
+  const buddhistYear = String((d.getFullYear() + 543) % 100).padStart(2, '0');
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${day} ${month} ${buddhistYear} ${hh}:${mm}`;
+}
+
+// ดึง log รายการล่าสุด (เรียงตามเวลาล่าสุดก่อน)
+export function getLatestLog(logs?: ActivityLog[] | null): ActivityLog | null {
+  if (!logs || logs.length === 0) return null;
+  return [...logs].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0];
+}
+
 export type UserRole =
   | 'admin'         // Full system access, all tabs, user management, config
   | 'sales'         // 1. ฝ่ายขาย
@@ -200,11 +233,22 @@ export interface Order {
   updated_at?: string;
   _planned_model?: string;
   _planned_quantity?: number;
+  // --- Activity & Audit Log ---
+  activity_logs?: ActivityLog[];
+  created_by?: string;                // ชื่อพนักงานผู้เปิดบิล
+  created_at_log?: string;            // ISO timestamp เปิดบิลขาย
+  po_created_at?: string | null;      // ISO timestamp สั่งซื้อ PO
+  po_received_at?: string | null;     // ISO timestamp รับของเข้าสต๊อก
+  stock_cut_at?: string | null;       // ISO timestamp ตัดสต๊อกส่งช่างเตรียม
+  dispatched_at?: string | null;      // ISO timestamp ปล่อยรถส่งของ / ลูกค้ารับ
+  fulfilled_at?: string | null;       // ISO timestamp ส่งมอบสมบูรณ์
 }
 
 export type ItemStatus =
+  | 'raw_stock'            // เก็บในห้องสต๊อก - ยังไม่เตรียม (รับจาก Stock PO เข้าสต๊อกตรงๆ นับถอยหลังเทส 7 วัน DOA)
   | 'in_stock'             // สินค้าเตรียมเข้าสต๊อกเรียบร้อย (มี S/N ยังไม่ติดวอย รอขาย)
-  | 'pending_prep'         // เบิกจากสต๊อก รอช่างเตรียมสินค้า
+  | 'pending_prep_stock'   // (legacy) ของจาก Stock PO เข้ามาแล้ว รอช่างเตรียมเช็ก/ติดโลโก้/ยิง S/N เข้าสต๊อกพร้อมขาย
+  | 'pending_prep'         // เบิกจากสต๊อก รอช่างเตรียมสินค้า (เทส/ติดโลโก้/ยิง S/N)
   | 'prepped_in_stock'     // ช่างเตรียมเสร็จ / เก็บเข้าสต๊อกรอส่ง - รอแปะวอย
   | 'ready_for_dispatch'   // แปะวอยประกันแล้ว พร้อมปล่อยของออก
   | 'assigned_onsite'      // หน้าร้านจ่ายงานให้ช่าง Onsite นำไปส่ง
@@ -212,7 +256,33 @@ export type ItemStatus =
   | 'in_repair'            // เครื่องอยู่ในกระบวนการซ่อม
   | 'repaired_ready_return'; // ซ่อมเสร็จ รอส่งมอบคืน
 
-export type PrepType = 'inbound_stock' | 'outbound_dispatch';
+export type PrepType = 'inbound_stock' | 'outbound_dispatch' | 'stock_po';
+
+// สถานะของใบสั่งซื้อเข้าสต๊อก (Proactive Stock PO - ไม่ผูกกับออเดอร์ลูกค้า)
+export type StockPOStatus =
+  | 'ordered'    // สั่งซื้อแล้ว รอของเข้า
+  | 'received'   // รับของเข้าแล้ว เก็บเข้าห้องสต๊อกตรงๆ (สร้าง raw_stock - ยังไม่เตรียม)
+  | 'cancelled'; // ยกเลิก
+
+// ใบสั่งซื้อเข้าสต๊อก (Stock PO) - จัดซื้อสั่งของล่วงหน้าเพื่อสต๊อกพร้อมขาย
+export interface StockPO {
+  id: string;
+  po_number: string;
+  product_name: string;
+  category: ProductCategory;
+  qty: number;
+  unit_cost: number;
+  supplier: string;
+  status: StockPOStatus;
+  received_at?: string | null;
+  notes?: string | null;
+  created_at: string;
+  updated_at?: string;
+  // --- Activity & Audit Log ---
+  activity_logs?: ActivityLog[];
+  created_by?: string;                // ชื่อพนักงานผู้สั่งซื้อ
+  ordered_at?: string | null;         // ISO timestamp สั่งซื้อ PO
+}
 
 // ประเภทงาน Onsite (Job Category)
 export type JobCategory =
@@ -233,6 +303,10 @@ export interface Item {
   serial_number: string | null;
   status: ItemStatus;
   prep_type?: PrepType;
+  category?: ProductCategory;         // หมวดหมู่สินค้า (จาก Stock PO)
+  stock_po_id?: string | null;        // อ้างอิงใบ Stock PO ต้นทาง
+  received_at?: string | null;        // วันที่รับของเข้าห้องสต๊อก (ใช้คำนวณประกัน DOA 7 วัน)
+  unit_cost?: number;                 // ราคาทุนต่อหน่วย (INTERNAL ONLY)
   supplier?: string;                  // แหล่งที่มา เช่น สต๊อกร้าน, SIS, Synnex, Abshop, PKT
   po_no?: string;                     // เลขที่ PO / ใบสั่งซื้อ เช่น PKT/2569-083
   prep_note?: string;                 // หมายเหตุถึงช่างเตรียม เช่น มีกล่องพร้อมลง Driver
@@ -248,6 +322,16 @@ export interface Item {
   notes?: string | null;
   created_at: string;
   updated_at?: string;
+  // --- Activity & Audit Log ---
+  activity_logs?: ActivityLog[];
+  received_into_storage_at?: string | null; // ISO timestamp รับของเข้าห้องสต๊อก (เริ่มนับ DOA 7 วัน)
+  prep_accepted_log_at?: string | null;     // ISO timestamp ช่างกดรับงาน
+  logo_scanned_at?: string | null;          // ISO timestamp ติดโลโก้ & สแกน S/N
+  moved_to_ready_at?: string | null;        // ISO timestamp เก็บเข้าคลังพร้อมขาย / รอส่งมอบ
+  warranty_applied_at?: string | null;      // ISO timestamp แปะวอยประกัน
+  assigned_at?: string | null;              // ISO timestamp จัดสายรถ & มอบหมายช่าง
+  dispatched_at?: string | null;            // ISO timestamp ปล่อยรถส่งของ / ลูกค้ารับ
+  delivered_at?: string | null;             // ISO timestamp ส่งมอบติดตั้งเสร็จสิ้น
 }
 
 export type RepairStatus =
@@ -290,4 +374,10 @@ export interface RepairTicket {
   finished_at: string | null;
   created_at: string;
   updated_at?: string;
+  // --- Activity & Audit Log ---
+  activity_logs?: ActivityLog[];
+  received_by?: string;               // ชื่อพนักงานผู้รับเครื่องซ่อม
+  started_at?: string | null;         // ISO timestamp เริ่มปฏิบัติงาน / รับเครื่องซ่อม
+  assigned_at?: string | null;        // ISO timestamp จัดสายรถ & มอบหมายช่าง
+  delivered_at?: string | null;       // ISO timestamp ส่งมอบ / ปิดงานซ่อม
 }

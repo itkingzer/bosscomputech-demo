@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS public.items (
     serial_number TEXT UNIQUE,
     status TEXT NOT NULL DEFAULT 'pending_prep' CHECK (status IN (
         'in_stock',
+        'pending_prep_stock',
         'pending_prep',
         'prepped_in_stock',
         'ready_for_dispatch',
@@ -43,7 +44,10 @@ CREATE TABLE IF NOT EXISTS public.items (
         'in_repair',
         'repaired_ready_return'
     )),
-    prep_type TEXT DEFAULT 'outbound_dispatch',
+    prep_type TEXT DEFAULT 'outbound_dispatch',   -- inbound_stock | outbound_dispatch | stock_po
+    category TEXT,                          -- หมวดหมู่สินค้า (จาก Stock PO)
+    stock_po_id UUID,                       -- อ้างอิงใบ Stock PO ต้นทาง
+    unit_cost NUMERIC(12,2) DEFAULT 0,      -- ราคาทุนต่อหน่วย (INTERNAL ONLY)
     supplier TEXT,                          -- แหล่งที่มา เช่น สต๊อกร้าน, SIS, Synnex, Abshop, PKT
     po_no TEXT,                             -- เลขที่ PO / ใบสั่งซื้อ เช่น PKT/2569-083
     prep_note TEXT,                         -- หมายเหตุถึงช่างเตรียม เช่น มีกล่องพร้อมลง Driver
@@ -112,9 +116,75 @@ CREATE TABLE IF NOT EXISTS public.products (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- 5. Stock POs Table (Proactive Stock Replenishment - สั่งของเข้าสต๊อกล่วงหน้า ไม่ผูกกับออเดอร์ลูกค้า)
+CREATE TABLE IF NOT EXISTS public.stock_pos (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    po_number TEXT NOT NULL,                -- เลขที่ใบสั่งซื้อ เช่น PKT/2569-083
+    product_name TEXT NOT NULL,             -- ชื่อสินค้า/รุ่นที่สั่ง (All-in-One, Notebook, อุปกรณ์)
+    category TEXT NOT NULL DEFAULT 'general' CHECK (category IN ('pc_notebook', 'printer', 'cctv_network', 'service', 'general')),
+    qty INTEGER NOT NULL DEFAULT 1 CHECK (qty > 0),
+    unit_cost NUMERIC(12,2) NOT NULL DEFAULT 0,  -- ราคาทุนต่อหน่วย (INTERNAL ONLY)
+    supplier TEXT,
+    status TEXT NOT NULL DEFAULT 'ordered' CHECK (status IN ('ordered', 'received', 'cancelled')),
+    received_at TIMESTAMPTZ,
+    notes TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- Migration: add GP analytics columns to existing deployments (safe to re-run)
 ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS salesperson TEXT;
 ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS extra_cost NUMERIC(12,2) DEFAULT 0;
+
+-- ==============================================================================
+-- Migration: Timestamped Activity & Audit Log (safe to re-run)
+-- activity_logs = JSONB array ของ { timestamp, action, actor, role, note }
+-- ==============================================================================
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS activity_logs JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS created_by TEXT;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS created_at_log TIMESTAMPTZ;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS po_created_at TIMESTAMPTZ;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS po_received_at TIMESTAMPTZ;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS stock_cut_at TIMESTAMPTZ;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS dispatched_at TIMESTAMPTZ;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS fulfilled_at TIMESTAMPTZ;
+
+ALTER TABLE public.items ADD COLUMN IF NOT EXISTS activity_logs JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE public.items ADD COLUMN IF NOT EXISTS received_into_storage_at TIMESTAMPTZ;
+ALTER TABLE public.items ADD COLUMN IF NOT EXISTS prep_accepted_log_at TIMESTAMPTZ;
+ALTER TABLE public.items ADD COLUMN IF NOT EXISTS logo_scanned_at TIMESTAMPTZ;
+ALTER TABLE public.items ADD COLUMN IF NOT EXISTS moved_to_ready_at TIMESTAMPTZ;
+ALTER TABLE public.items ADD COLUMN IF NOT EXISTS warranty_applied_at TIMESTAMPTZ;
+ALTER TABLE public.items ADD COLUMN IF NOT EXISTS assigned_at TIMESTAMPTZ;
+ALTER TABLE public.items ADD COLUMN IF NOT EXISTS dispatched_at TIMESTAMPTZ;
+ALTER TABLE public.items ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ;
+
+ALTER TABLE public.repair_tickets ADD COLUMN IF NOT EXISTS activity_logs JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE public.repair_tickets ADD COLUMN IF NOT EXISTS received_by TEXT;
+ALTER TABLE public.repair_tickets ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ;
+ALTER TABLE public.repair_tickets ADD COLUMN IF NOT EXISTS assigned_at TIMESTAMPTZ;
+ALTER TABLE public.repair_tickets ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ;
+
+ALTER TABLE public.stock_pos ADD COLUMN IF NOT EXISTS activity_logs JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE public.stock_pos ADD COLUMN IF NOT EXISTS created_by TEXT;
+ALTER TABLE public.stock_pos ADD COLUMN IF NOT EXISTS ordered_at TIMESTAMPTZ;
+
+-- Migration: Stock PO / Proactive Replenishment columns on items (safe to re-run)
+ALTER TABLE public.items ADD COLUMN IF NOT EXISTS category TEXT;
+ALTER TABLE public.items ADD COLUMN IF NOT EXISTS stock_po_id UUID;
+ALTER TABLE public.items ADD COLUMN IF NOT EXISTS unit_cost NUMERIC(12,2) DEFAULT 0;
+ALTER TABLE public.items DROP CONSTRAINT IF EXISTS items_status_check;
+ALTER TABLE public.items ADD CONSTRAINT items_status_check CHECK (status IN (
+    'in_stock',
+    'pending_prep_stock',
+    'pending_prep',
+    'prepped_in_stock',
+    'ready_for_dispatch',
+    'assigned_onsite',
+    'delivered',
+    'in_repair',
+    'repaired_ready_return'
+));
 
 -- Indexes for lightning fast lookups, S/N traceability & Route filtering
 CREATE INDEX IF NOT EXISTS idx_orders_status ON public.orders(order_status);
@@ -131,12 +201,16 @@ CREATE INDEX IF NOT EXISTS idx_repair_tickets_sn ON public.repair_tickets(walkin
 CREATE INDEX IF NOT EXISTS idx_repair_tickets_assigned_techs ON public.repair_tickets USING GIN (assigned_techs);
 CREATE INDEX IF NOT EXISTS idx_products_category ON public.products(category);
 CREATE INDEX IF NOT EXISTS idx_products_name ON public.products(name);
+CREATE INDEX IF NOT EXISTS idx_items_stock_po_id ON public.items(stock_po_id);
+CREATE INDEX IF NOT EXISTS idx_stock_pos_status ON public.stock_pos(status);
+CREATE INDEX IF NOT EXISTS idx_stock_pos_po_number ON public.stock_pos(po_number);
 
 -- Disable Row Level Security (RLS) for internal operations system deployment
 ALTER TABLE public.orders DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.items DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.repair_tickets DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.products DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.stock_pos DISABLE ROW LEVEL SECURITY;
 
 -- Enable Realtime publication on all three core operational tables
 -- (wrapped in DO blocks so re-running this script does not error if already added)
@@ -161,6 +235,12 @@ END $$;
 DO $$
 BEGIN
     ALTER PUBLICATION supabase_realtime ADD TABLE public.products;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$
+BEGIN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.stock_pos;
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
@@ -191,4 +271,9 @@ FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 DROP TRIGGER IF EXISTS trg_products_updated_at ON public.products;
 CREATE TRIGGER trg_products_updated_at
 BEFORE UPDATE ON public.products
+FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_stock_pos_updated_at ON public.stock_pos;
+CREATE TRIGGER trg_stock_pos_updated_at
+BEFORE UPDATE ON public.stock_pos
 FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();

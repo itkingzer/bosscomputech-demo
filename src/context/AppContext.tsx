@@ -1,7 +1,30 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
-import { UserAccount, Order, Item, RepairTicket, RepairStatus, RouteCode, JobCategory, Product, getRouteByDistrict } from '../types';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
+import { UserAccount, Order, Item, RepairTicket, RepairStatus, RouteCode, JobCategory, Product, StockPO, ProductCategory, getRouteByDistrict, ActivityLog } from '../types';
 import { INITIAL_USERS, INITIAL_ORDERS, INITIAL_ITEMS, INITIAL_REPAIR_TICKETS, INITIAL_PRODUCTS } from '../data/initialData';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+
+// ==============================================================================
+// Activity & Audit Log helpers
+// สร้าง log entry ใหม่ (ISO timestamp + ชื่อพนักงานผู้กระทำ + บทบาท + หมายเหตุ)
+// ==============================================================================
+const makeLog = (
+  action: string,
+  actor: string,
+  role: string | undefined,
+  note?: string
+): ActivityLog => ({
+  timestamp: new Date().toISOString(),
+  action,
+  actor: actor || 'ระบบ',
+  role: role as ActivityLog['role'],
+  note
+});
+
+// ต่อ log ใหม่เข้ากับ array เดิม (immutable)
+const appendLog = (logs: ActivityLog[] | undefined | null, entry: ActivityLog): ActivityLog[] => [
+  ...(logs || []),
+  entry
+];
 
 interface AppContextType {
   currentUser: UserAccount | null;
@@ -15,6 +38,7 @@ interface AppContextType {
   items: Item[];
   repairTickets: RepairTicket[];
   products: Product[];
+  stockPOs: StockPO[];
 
   // Product Catalog CRUD (สินค้า/บริการที่ใช้ซ้ำได้)
   addProduct: (product: Omit<Product, 'id' | 'created_at' | 'updated_at'>) => void;
@@ -31,15 +55,26 @@ interface AppContextType {
     itemsToCut: { model_name: string; quantity: number; supplier?: string; po_no?: string; prep_note?: string; unit_cost?: number; stockItemId?: string }[]
   ) => void;
 
+  // Proactive Stock Replenishment (Stock PO -> Storage Room raw_stock -> Prep -> In-Stock Ready -> Sales)
+  createStockPO: (po: Omit<StockPO, 'id' | 'status' | 'created_at' | 'received_at'>) => void;
+  receiveStockPOToStorage: (stockPoId: string) => void;
+  cancelStockPO: (stockPoId: string) => void;
+  sendRawStockToPrep: (itemId: string) => void;
+  movePrepStockToReady: (itemId: string, serialNumber: string, notes?: string) => boolean;
+  allocateStockToOrder: (orderId: string, billNo: string, stockItemIds: string[]) => void;
+
   // Prep operations
   acceptPrepTask: (itemId: string, techName: string) => void;
   prepFinishToStock: (itemId: string, serialNumber: string, prepNote?: string) => boolean;
+  prepFinishToReadyStock: (itemId: string, serialNumber: string, prepNote?: string) => boolean;
+  prepFinishAndDispatch: (itemId: string, serialNumber: string, voidDate: string, prepNote?: string) => boolean;
   applyVoidAndDispatch: (itemId: string, voidDate: string) => void;
   prepInboundStock: (modelName: string, serialNumber: string, notes?: string) => boolean;
   prepOutboundDispatch: (itemId: string, serialNumber: string, voidDate: string) => boolean;
 
   assignOnsite: (itemId: string, techs: string[], jobCategory?: JobCategory) => void;
   assignRepairTicketOnsite: (ticketId: string, techs: string[], jobCategory?: JobCategory) => void;
+  acceptOnsiteJob: (itemId: string, techName: string) => void;
   confirmOnsiteDelivery: (itemId: string, deliveryNotes?: string) => void;
 
   createRepairTicket: (ticket: Omit<RepairTicket, 'id' | 'ticket_no' | 'created_at' | 'received_at' | 'status'>) => void;
@@ -68,6 +103,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return saved ? JSON.parse(saved) : null;
   });
 
+  // Ref เก็บผู้ใช้ปัจจุบัน เพื่อให้ async action บันทึกชื่อผู้กระทำได้ถูกต้องเสมอ
+  const currentUserRef = useRef<UserAccount | null>(currentUser);
+  useEffect(() => {
+    currentUserRef.current = currentUser;
+  }, [currentUser]);
+
   // Users state
   const [users, setUsers] = useState<UserAccount[]>(() => {
     const saved = localStorage.getItem('boss_users');
@@ -94,6 +135,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [products, setProducts] = useState<Product[]>(() => {
     const saved = localStorage.getItem('boss_products');
     return saved ? JSON.parse(saved) : INITIAL_PRODUCTS;
+  });
+
+  // Stock POs (Proactive Stock Replenishment - localStorage Demo Mode + Supabase `stock_pos` sync)
+  const [stockPOs, setStockPOs] = useState<StockPO[]>(() => {
+    const saved = localStorage.getItem('boss_stock_pos');
+    return saved ? JSON.parse(saved) : [];
   });
 
   // Supabase state
@@ -153,6 +200,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.setItem('boss_products', JSON.stringify(products));
   }, [products]);
 
+  useEffect(() => {
+    localStorage.setItem('boss_stock_pos', JSON.stringify(stockPOs));
+  }, [stockPOs]);
+
   // Connect Supabase if configured
   useEffect(() => {
     if (supabaseUrl && supabaseKey) {
@@ -162,16 +213,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setIsSupabaseLive(true);
 
         const loadRemote = async () => {
-          const [o, i, r, p] = await Promise.all([
+          const [o, i, r, p, sp] = await Promise.all([
             client.from('orders').select('*').order('created_at', { ascending: false }),
             client.from('items').select('*').order('created_at', { ascending: false }),
             client.from('repair_tickets').select('*').order('created_at', { ascending: false }),
-            client.from('products').select('*').order('created_at', { ascending: false })
+            client.from('products').select('*').order('created_at', { ascending: false }),
+            client.from('stock_pos').select('*').order('created_at', { ascending: false })
           ]);
           if (o.data) setOrders(o.data);
           if (i.data) setItems(i.data);
           if (r.data) setRepairTickets(r.data);
           if (p.data) setProducts(p.data as Product[]);
+          if (sp.data) setStockPOs(sp.data as StockPO[]);
         };
         loadRemote();
 
@@ -180,6 +233,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           .on('postgres_changes', { event: '*', schema: 'public', table: 'items' }, () => loadRemote())
           .on('postgres_changes', { event: '*', schema: 'public', table: 'repair_tickets' }, () => loadRemote())
           .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => loadRemote())
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'stock_pos' }, () => loadRemote())
           .subscribe();
 
         return () => {
@@ -263,6 +317,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Actions
   const createOrder = async (orderData: Omit<Order, 'id' | 'created_at' | 'order_status'> & { planned_model?: string; planned_quantity?: number }) => {
     const routeCode = orderData.district ? getRouteByDistrict(orderData.district) : ('route_5' as RouteCode);
+    const actor = currentUserRef.current;
+    const now = new Date().toISOString();
+    const createdLog = makeLog(
+      'เปิดบิลขาย',
+      actor?.name || orderData.salesperson || 'ระบบ',
+      actor?.role,
+      `ลูกค้า: ${orderData.customer_name}${orderData.district ? ` | พื้นที่: ${orderData.district}` : ''}`
+    );
 
     const newOrder: Order = {
       id: 'ord-' + Date.now(),
@@ -283,9 +345,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       extra_cost: orderData.extra_cost || 0,
       bill_no: null,
       order_status: 'pending_purchasing',
-      created_at: new Date().toISOString(),
+      created_at: now,
       _planned_model: orderData.planned_model || (orderData.items_list && orderData.items_list[0]?.model_name),
-      _planned_quantity: orderData.planned_quantity || (orderData.items_list && orderData.items_list.reduce((sum, item) => sum + (item.quantity || 1), 0)) || 1
+      _planned_quantity: orderData.planned_quantity || (orderData.items_list && orderData.items_list.reduce((sum, item) => sum + (item.quantity || 1), 0)) || 1,
+      activity_logs: [createdLog],
+      created_by: createdLog.actor,
+      created_at_log: now
     };
 
     if (isSupabaseLive && supabaseClient) {
@@ -296,25 +361,53 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const updateOrderPOStatus = async (orderId: string, status: 'waiting_po' | 'pending_purchasing' | 'po_received_in_stock') => {
+    const actor = currentUserRef.current;
+    const now = new Date().toISOString();
+    const actionLabel = status === 'waiting_po' ? 'สั่งซื้อ PO' : status === 'po_received_in_stock' ? 'รับของเข้าสต๊อก' : 'อัปเดตสถานะจัดซื้อ';
+    const entry = makeLog(actionLabel, actor?.name || 'ระบบ', actor?.role);
     if (isSupabaseLive && supabaseClient) {
-      await supabaseClient.from('orders').update({ order_status: status }).eq('id', orderId);
+      const target = orders.find(o => o.id === orderId);
+      await supabaseClient.from('orders').update({
+        order_status: status,
+        activity_logs: appendLog(target?.activity_logs, entry),
+        ...(status === 'waiting_po' ? { po_created_at: now } : {}),
+        ...(status === 'po_received_in_stock' ? { po_received_at: now } : {})
+      }).eq('id', orderId);
     } else {
-      setOrders(prev => prev.map(o => o.id === orderId ? { ...o, order_status: status } : o));
+      setOrders(prev => prev.map(o => o.id === orderId ? {
+        ...o,
+        order_status: status,
+        activity_logs: appendLog(o.activity_logs, entry),
+        ...(status === 'waiting_po' ? { po_created_at: now } : {}),
+        ...(status === 'po_received_in_stock' ? { po_received_at: now } : {})
+      } : o));
     }
   };
 
   const receivePOIntoStock = async (orderId: string, supplier?: string, poNo?: string) => {
     const receivedAt = new Date().toISOString();
+    const actor = currentUserRef.current;
+    const entry = makeLog(
+      'รับของเข้าสต๊อก',
+      actor?.name || 'ระบบ',
+      actor?.role,
+      [supplier ? `Supplier: ${supplier}` : '', poNo ? `PO: ${poNo}` : ''].filter(Boolean).join(' | ') || undefined
+    );
     if (isSupabaseLive && supabaseClient) {
+      const target = orders.find(o => o.id === orderId);
       await supabaseClient.from('orders').update({
         order_status: 'po_received_in_stock',
-        updated_at: receivedAt
+        updated_at: receivedAt,
+        po_received_at: receivedAt,
+        activity_logs: appendLog(target?.activity_logs, entry)
       }).eq('id', orderId);
     } else {
       setOrders(prev => prev.map(o => o.id === orderId ? {
         ...o,
         order_status: 'po_received_in_stock',
         updated_at: receivedAt,
+        po_received_at: receivedAt,
+        activity_logs: appendLog(o.activity_logs, entry),
         items_list: o.items_list?.map(it => ({
           ...it,
           supplier: supplier || it.supplier,
@@ -327,6 +420,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // บันทึกราคาทุน (INTERNAL ONLY) - ต้นทุนต่อหน่วยของแต่ละรายการ + ต้นทุนค่าแรง/ค่าดำเนินการอื่นต่อออเดอร์
   const updateOrderCosts = async (orderId: string, extraCost: number, itemCosts: Record<number, number>) => {
     const updatedAt = new Date().toISOString();
+    const actor = currentUserRef.current;
+    const entry = makeLog(
+      'แก้ไขราคา/ต้นทุน',
+      actor?.name || 'ระบบ',
+      actor?.role,
+      `ต้นทุนค่าแรง/ดำเนินการ: ${extraCost.toLocaleString('th-TH')} บาท`
+    );
     if (isSupabaseLive && supabaseClient) {
       const target = orders.find(o => o.id === orderId);
       const nextItems = (target?.items_list || []).map((it, idx) => ({
@@ -336,13 +436,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       await supabaseClient.from('orders').update({
         extra_cost: extraCost,
         items_list: nextItems,
-        updated_at: updatedAt
+        updated_at: updatedAt,
+        activity_logs: appendLog(target?.activity_logs, entry)
       }).eq('id', orderId);
     } else {
       setOrders(prev => prev.map(o => o.id === orderId ? {
         ...o,
         extra_cost: extraCost,
         updated_at: updatedAt,
+        activity_logs: appendLog(o.activity_logs, entry),
         items_list: o.items_list?.map((it, idx) => ({
           ...it,
           unit_cost: itemCosts[idx] !== undefined ? itemCosts[idx] : it.unit_cost
@@ -360,6 +462,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const newItems: Item[] = [];
     // รายการที่ดึงจากสต๊อก in_stock ที่มีอยู่แล้ว (ไม่สร้างใหม่ แต่แปลงสถานะ)
     const consumedStockIds: string[] = [];
+    const actor = currentUserRef.current;
+    const cutAt = new Date().toISOString();
+    const cutLog = makeLog(
+      'ตัดสต๊อกส่งช่างเตรียม',
+      actor?.name || 'ระบบ',
+      actor?.role,
+      `บิล: ${billNo} | จำนวนรายการ: ${itemsToCut.reduce((s, p) => s + (p.quantity || 1), 0)} ชิ้น`
+    );
 
     itemsToCut.forEach((plan, planIdx) => {
       for (let i = 0; i < plan.quantity; i++) {
@@ -386,13 +496,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           prepped_at: null,
           void_date: null,
           notes: `เบิกตัดสต๊อกตามบิล ${billNo} | PO: ${plan.po_no || '-'} | แหล่ง: ${plan.supplier || 'สต๊อก'}`,
-          created_at: new Date().toISOString()
+          created_at: cutAt,
+          activity_logs: [makeLog('ตัดสต๊อกส่งช่างเตรียม', actor?.name || 'ระบบ', actor?.role, `บิล: ${billNo}`)]
         });
       }
     });
 
     if (isSupabaseLive && supabaseClient) {
-      await supabaseClient.from('orders').update({ bill_no: billNo, order_status: 'approved_for_prep' }).eq('id', orderId);
+      await supabaseClient.from('orders').update({
+        bill_no: billNo,
+        order_status: 'approved_for_prep',
+        stock_cut_at: cutAt,
+        activity_logs: appendLog(targetOrder?.activity_logs, cutLog)
+      }).eq('id', orderId);
       if (newItems.length > 0) {
         await supabaseClient.from('items').insert(newItems);
       }
@@ -415,7 +531,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }).eq('id', stockId);
       }
     } else {
-      setOrders(prev => prev.map(o => o.id === orderId ? { ...o, bill_no: billNo, order_status: 'approved_for_prep' } : o));
+      setOrders(prev => prev.map(o => o.id === orderId ? {
+        ...o,
+        bill_no: billNo,
+        order_status: 'approved_for_prep',
+        stock_cut_at: cutAt,
+        activity_logs: appendLog(o.activity_logs, cutLog)
+      } : o));
       setItems(prev => {
         const consumedSet = new Set(consumedStockIds);
         const updated = prev.map(it => {
@@ -434,7 +556,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             prep_accepted_at: null,
             prepped_at: null,
             void_date: null,
-            notes: `ดึงจากสต๊อกคลังตามบิล ${billNo} | PO: ${plan?.po_no || '-'}`
+            notes: `ดึงจากสต๊อกคลังตามบิล ${billNo} | PO: ${plan?.po_no || '-'}`,
+            activity_logs: appendLog(it.activity_logs, makeLog('ตัดสต๊อกส่งช่างเตรียม', actor?.name || 'ระบบ', actor?.role, `บิล: ${billNo}`))
           };
         });
         return [...updated, ...newItems];
@@ -442,19 +565,289 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  // ==========================================================================
+  // Proactive Stock Replenishment: Stock PO -> Prep Staging -> In-Stock Ready
+  // ==========================================================================
+
+  // 1. จัดซื้อเปิดใบสั่งซื้อเข้าสต๊อก (Stock PO) ล่วงหน้า ไม่ผูกกับออเดอร์ลูกค้า
+  const createStockPO = async (poData: Omit<StockPO, 'id' | 'status' | 'created_at' | 'received_at'>) => {
+    const actor = currentUserRef.current;
+    const now = new Date().toISOString();
+    const poLog = makeLog(
+      'สั่งซื้อ PO',
+      actor?.name || 'ระบบ',
+      actor?.role,
+      `PO: ${poData.po_number} | ${poData.product_name} x${poData.qty} | Supplier: ${poData.supplier || '-'}`
+    );
+    const newPO: StockPO = {
+      ...poData,
+      id: 'spo-' + Date.now(),
+      status: 'ordered',
+      received_at: null,
+      created_at: now,
+      activity_logs: [poLog],
+      created_by: poLog.actor,
+      ordered_at: now
+    };
+    if (isSupabaseLive && supabaseClient) {
+      await supabaseClient.from('stock_pos').insert([{
+        po_number: newPO.po_number,
+        product_name: newPO.product_name,
+        category: newPO.category,
+        qty: newPO.qty,
+        unit_cost: newPO.unit_cost,
+        supplier: newPO.supplier,
+        status: newPO.status,
+        notes: newPO.notes || null,
+        activity_logs: newPO.activity_logs,
+        created_by: newPO.created_by,
+        ordered_at: newPO.ordered_at
+      }]);
+    } else {
+      setStockPOs(prev => [newPO, ...prev]);
+    }
+  };
+
+  // 2. รับของ Stock PO เข้าห้องสต๊อกตรงๆ -> สร้าง item จำนวน qty ชิ้น สถานะ raw_stock (ยังไม่เตรียม)
+  //    ไม่ส่งเข้า PrepView อัตโนมัติ - นับถอยหลังเทส 7 วัน (DOA) ก่อน
+  const receiveStockPOToStorage = async (stockPoId: string) => {
+    const po = stockPOs.find(p => p.id === stockPoId);
+    if (!po || po.status !== 'ordered') return;
+
+    const receivedAt = new Date().toISOString();
+    const actor = currentUserRef.current;
+    const receiveLog = makeLog(
+      'รับของเข้าห้องสต๊อก / เริ่มนับ DOA 7 วัน',
+      actor?.name || 'ระบบ',
+      actor?.role,
+      `PO: ${po.po_number} | ${po.product_name} x${po.qty}`
+    );
+    const newItems: Item[] = Array.from({ length: Math.max(1, po.qty) }).map((_, i) => ({
+      id: 'itm-spo-' + Date.now() + '-' + i,
+      order_id: null,
+      model_name: po.product_name,
+      serial_number: null,
+      status: 'raw_stock',
+      prep_type: 'stock_po',
+      category: po.category,
+      stock_po_id: po.id,
+      unit_cost: po.unit_cost,
+      supplier: po.supplier,
+      po_no: po.po_number,
+      received_at: receivedAt,
+      prep_note: 'เก็บในห้องสต๊อก - ยังไม่เตรียม (นับถอยหลังเทส 7 วัน DOA)',
+      assigned_prep_tech: null,
+      prep_accepted_at: null,
+      assigned_techs: [],
+      prepped_at: null,
+      void_date: null,
+      notes: `รับของจาก Stock PO ${po.po_number} (${po.supplier || '-'}) เข้าห้องสต๊อก`,
+      created_at: receivedAt,
+      activity_logs: [receiveLog],
+      received_into_storage_at: receivedAt
+    }));
+
+    if (isSupabaseLive && supabaseClient) {
+      await supabaseClient.from('stock_pos').update({
+        status: 'received',
+        received_at: receivedAt,
+        activity_logs: appendLog(po.activity_logs, receiveLog)
+      }).eq('id', stockPoId);
+      await supabaseClient.from('items').insert(newItems.map(it => ({
+        model_name: it.model_name,
+        status: it.status,
+        prep_type: it.prep_type,
+        category: it.category,
+        stock_po_id: it.stock_po_id,
+        unit_cost: it.unit_cost,
+        supplier: it.supplier,
+        po_no: it.po_no,
+        received_at: it.received_at,
+        prep_note: it.prep_note,
+        notes: it.notes,
+        activity_logs: it.activity_logs,
+        received_into_storage_at: it.received_into_storage_at
+      })));
+    } else {
+      setStockPOs(prev => prev.map(p => p.id === stockPoId ? {
+        ...p,
+        status: 'received' as const,
+        received_at: receivedAt,
+        activity_logs: appendLog(p.activity_logs, receiveLog)
+      } : p));
+      setItems(prev => [...newItems, ...prev]);
+    }
+  };
+
+  // 2.1 จัดซื้อสั่งส่งช่างเทส & ติดโลโก้ล่วงหน้า (ก่อนครบ 7 วัน) -> raw_stock => pending_prep
+  const sendRawStockToPrep = async (itemId: string) => {
+    const actor = currentUserRef.current;
+    const entry = makeLog('ส่งช่างเตรียม (ก่อนครบ DOA)', actor?.name || 'ระบบ', actor?.role, 'จัดซื้อส่งช่างเทส & ติดโลโก้ล่วงหน้า');
+    if (isSupabaseLive && supabaseClient) {
+      const target = items.find(i => i.id === itemId);
+      await supabaseClient.from('items').update({
+        status: 'pending_prep',
+        prep_type: 'stock_po',
+        prep_note: 'จัดซื้อส่งช่างเทส & ติดโลโก้ล่วงหน้า (ก่อนครบ 7 วัน DOA)',
+        assigned_prep_tech: null,
+        prep_accepted_at: null,
+        activity_logs: appendLog(target?.activity_logs, entry)
+      }).eq('id', itemId);
+    } else {
+      setItems(prev => prev.map(i => i.id === itemId ? {
+        ...i,
+        status: 'pending_prep' as const,
+        prep_type: 'stock_po' as const,
+        prep_note: 'จัดซื้อส่งช่างเทส & ติดโลโก้ล่วงหน้า (ก่อนครบ 7 วัน DOA)',
+        assigned_prep_tech: null,
+        prep_accepted_at: null,
+        activity_logs: appendLog(i.activity_logs, entry)
+      } : i));
+    }
+  };
+
+  const cancelStockPO = async (stockPoId: string) => {
+    const actor = currentUserRef.current;
+    const entry = makeLog('ยกเลิก PO', actor?.name || 'ระบบ', actor?.role);
+    if (isSupabaseLive && supabaseClient) {
+      const target = stockPOs.find(p => p.id === stockPoId);
+      await supabaseClient.from('stock_pos').update({
+        status: 'cancelled',
+        activity_logs: appendLog(target?.activity_logs, entry)
+      }).eq('id', stockPoId);
+    } else {
+      setStockPOs(prev => prev.map(p => p.id === stockPoId ? {
+        ...p,
+        status: 'cancelled' as const,
+        activity_logs: appendLog(p.activity_logs, entry)
+      } : p));
+    }
+  };
+
+  // 3. ช่างเตรียมตรวจเช็ก + ติดโลโก้ + ยิง S/N -> ย้ายเข้าสต๊อกพร้อมขาย (in_stock, ยังไม่ติดวอย)
+  const movePrepStockToReady = (itemId: string, serialNumber: string, notes?: string): boolean => {
+    const sn = serialNumber.trim();
+    if (!sn) return false;
+    const existing = items.find(i => i.id !== itemId && i.serial_number && i.serial_number.toLowerCase() === sn.toLowerCase());
+    if (existing) return false;
+
+    const preppedAt = new Date().toISOString();
+    const actor = currentUserRef.current;
+    const entry = makeLog('ติดโลโก้ & สแกน S/N', actor?.name || 'ระบบ', actor?.role, `S/N: ${sn} | เก็บเข้าคลังพร้อมขาย`);
+    if (isSupabaseLive && supabaseClient) {
+      const target = items.find(i => i.id === itemId);
+      supabaseClient.from('items').update({
+        serial_number: sn,
+        status: 'in_stock',
+        prepped_at: preppedAt,
+        logo_scanned_at: preppedAt,
+        moved_to_ready_at: preppedAt,
+        notes: notes || 'ตรวจเช็ก/ติดโลโก้/ยิง S/N ผ่าน เก็บเข้าสต๊อกพร้อมขาย (ยังไม่ติดวอย)',
+        activity_logs: appendLog(target?.activity_logs, entry)
+      }).eq('id', itemId);
+    } else {
+      setItems(prev => prev.map(i => i.id === itemId ? {
+        ...i,
+        serial_number: sn,
+        status: 'in_stock' as const,
+        prepped_at: preppedAt,
+        logo_scanned_at: preppedAt,
+        moved_to_ready_at: preppedAt,
+        notes: notes || 'ตรวจเช็ก/ติดโลโก้/ยิง S/N ผ่าน เก็บเข้าสต๊อกพร้อมขาย (ยังไม่ติดวอย)',
+        activity_logs: appendLog(i.activity_logs, entry)
+      } : i));
+    }
+    return true;
+  };
+
+  // 4. จัดสรรสต๊อกให้ออเดอร์ลูกค้า (Allocation)
+  //    - raw_stock (ยังไม่เตรียม) => pending_prep (ส่งเข้า PrepView ให้ช่างเทส/ติดโลโก้/ยิง S/N)
+  //    - in_stock / prepped_in_stock (เตรียมแล้ว) => prepped_in_stock (รอแปะวอย & ปล่อยของ)
+  const allocateStockToOrder = async (orderId: string, billNo: string, stockItemIds: string[]) => {
+    if (stockItemIds.length === 0) return;
+    const targetOrder = orders.find(o => o.id === orderId);
+    const idSet = new Set(stockItemIds);
+    const rawIds = new Set(
+      items.filter(i => idSet.has(i.id) && i.status === 'raw_stock').map(i => i.id)
+    );
+
+    const actor = currentUserRef.current;
+    const allocAt = new Date().toISOString();
+    const allocLog = makeLog('ตัดสต๊อกส่งช่างเตรียม', actor?.name || 'ระบบ', actor?.role, `จัดสรรสต๊อกตามบิล ${billNo} | ${stockItemIds.length} ชิ้น`);
+
+    if (isSupabaseLive && supabaseClient) {
+      await supabaseClient.from('orders').update({
+        bill_no: billNo,
+        order_status: 'approved_for_prep',
+        stock_cut_at: allocAt,
+        activity_logs: appendLog(targetOrder?.activity_logs, allocLog)
+      }).eq('id', orderId);
+      for (const stockId of stockItemIds) {
+        const isRaw = rawIds.has(stockId);
+        const target = items.find(i => i.id === stockId);
+        await supabaseClient.from('items').update({
+          order_id: orderId,
+          status: isRaw ? 'pending_prep' : 'prepped_in_stock',
+          prep_type: 'outbound_dispatch',
+          delivery_mode: targetOrder?.delivery_mode || 'install',
+          assigned_prep_tech: null,
+          prep_accepted_at: null,
+          void_date: null,
+          notes: isRaw
+            ? `จัดสรรจากห้องสต๊อกตามบิล ${billNo} -> ส่งช่างเทส/ติดโลโก้/ยิง S/N`
+            : `ตัดสต๊อกพร้อมส่งตามบิล ${billNo} (เครื่องเตรียมแล้ว - รอแปะวอย)`,
+          activity_logs: appendLog(target?.activity_logs, makeLog('ตัดสต๊อกส่งช่างเตรียม', actor?.name || 'ระบบ', actor?.role, `บิล: ${billNo}`))
+        }).eq('id', stockId);
+      }
+    } else {
+      setOrders(prev => prev.map(o => o.id === orderId ? {
+        ...o,
+        bill_no: billNo,
+        order_status: 'approved_for_prep',
+        stock_cut_at: allocAt,
+        activity_logs: appendLog(o.activity_logs, allocLog)
+      } : o));
+      setItems(prev => prev.map(it => {
+        if (!idSet.has(it.id)) return it;
+        const isRaw = it.status === 'raw_stock';
+        return {
+          ...it,
+          order_id: orderId,
+          status: (isRaw ? 'pending_prep' : 'prepped_in_stock') as Item['status'],
+          prep_type: 'outbound_dispatch' as const,
+          delivery_mode: targetOrder?.delivery_mode || 'install',
+          assigned_prep_tech: null,
+          prep_accepted_at: null,
+          void_date: null,
+          notes: isRaw
+            ? `จัดสรรจากห้องสต๊อกตามบิล ${billNo} -> ส่งช่างเทส/ติดโลโก้/ยิง S/N`
+            : `ตัดสต๊อกพร้อมส่งตามบิล ${billNo} (เครื่องเตรียมแล้ว - รอแปะวอย)`,
+          activity_logs: appendLog(it.activity_logs, makeLog('ตัดสต๊อกส่งช่างเตรียม', actor?.name || 'ระบบ', actor?.role, `บิล: ${billNo}`))
+        };
+      }));
+    }
+  };
+
   // ช่างเตรียมรับงาน
   const acceptPrepTask = async (itemId: string, techName: string) => {
     const acceptedAt = new Date().toISOString();
+    const actor = currentUserRef.current;
+    const entry = makeLog('ช่างกดรับงาน', actor?.name || techName || 'ระบบ', actor?.role, `ช่างผู้รับงาน: ${techName}`);
     if (isSupabaseLive && supabaseClient) {
+      const target = items.find(i => i.id === itemId);
       await supabaseClient.from('items').update({
         assigned_prep_tech: techName,
-        prep_accepted_at: acceptedAt
+        prep_accepted_at: acceptedAt,
+        prep_accepted_log_at: acceptedAt,
+        activity_logs: appendLog(target?.activity_logs, entry)
       }).eq('id', itemId);
     } else {
       setItems(prev => prev.map(i => i.id === itemId ? {
         ...i,
         assigned_prep_tech: techName,
-        prep_accepted_at: acceptedAt
+        prep_accepted_at: acceptedAt,
+        prep_accepted_log_at: acceptedAt,
+        activity_logs: appendLog(i.activity_logs, entry)
       } : i));
     }
   };
@@ -467,12 +860,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     const preppedAt = new Date().toISOString();
+    const actor = currentUserRef.current;
+    const entry = makeLog('ติดโลโก้ & สแกน S/N', actor?.name || 'ระบบ', actor?.role, `S/N: ${serialNumber} | เก็บรอส่งมอบ`);
     if (isSupabaseLive && supabaseClient) {
+      const target = items.find(i => i.id === itemId);
       supabaseClient.from('items').update({
         serial_number: serialNumber,
         status: 'prepped_in_stock',
         prepped_at: preppedAt,
-        notes: prepNote || 'ประกอบ/ลงโปรแกรม/ยิง S/N เสร็จ เก็บเข้าสต๊อกรอแปะวอยปล่อยของ'
+        logo_scanned_at: preppedAt,
+        moved_to_ready_at: preppedAt,
+        notes: prepNote || 'ประกอบ/ลงโปรแกรม/ยิง S/N เสร็จ เก็บเข้าสต๊อกรอแปะวอยปล่อยของ',
+        activity_logs: appendLog(target?.activity_logs, entry)
       }).eq('id', itemId);
     } else {
       setItems(prev => prev.map(i => i.id === itemId ? {
@@ -480,7 +879,88 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         serial_number: serialNumber,
         status: 'prepped_in_stock',
         prepped_at: preppedAt,
-        notes: prepNote || 'ประกอบ/ลงโปรแกรม/ยิง S/N เสร็จ เก็บเข้าสต๊อกรอแปะวอยปล่อยของ'
+        logo_scanned_at: preppedAt,
+        moved_to_ready_at: preppedAt,
+        notes: prepNote || 'ประกอบ/ลงโปรแกรม/ยิง S/N เสร็จ เก็บเข้าสต๊อกรอแปะวอยปล่อยของ',
+        activity_logs: appendLog(i.activity_logs, entry)
+      } : i));
+    }
+    return true;
+  };
+
+  // จังหวะที่ 1 (ทางเลือกสำหรับของสต๊อก): ติดโลโก้ + ยิง S/N เสร็จ -> เก็บเข้าคลังพร้อมขาย (in_stock, ยังไม่ติดวอย)
+  // ปลดผูกออเดอร์ออก (order_id = null) เพื่อให้เครื่องไปโผล่ในสต๊อกพร้อมขายให้ฝ่ายขาย/จัดซื้อดึงไปขายภายหลัง
+  const prepFinishToReadyStock = (itemId: string, serialNumber: string, prepNote?: string): boolean => {
+    const sn = serialNumber.trim();
+    if (!sn) return false;
+    const existing = items.find(i => i.id !== itemId && i.serial_number && i.serial_number.toLowerCase() === sn.toLowerCase());
+    if (existing) return false;
+
+    const preppedAt = new Date().toISOString();
+    const defaultNote = 'ติดโลโก้ & ยิง S/N เสร็จ เก็บเข้าคลังพร้อมขาย (ยังไม่ติดวอย)';
+    const actor = currentUserRef.current;
+    const entry = makeLog('เก็บเข้าคลังพร้อมขาย / เก็บรอส่งมอบ', actor?.name || 'ระบบ', actor?.role, `S/N: ${sn} | ติดโลโก้ & สแกน S/N เสร็จ`);
+    if (isSupabaseLive && supabaseClient) {
+      const target = items.find(i => i.id === itemId);
+      supabaseClient.from('items').update({
+        serial_number: sn,
+        status: 'in_stock',
+        order_id: null,
+        prepped_at: preppedAt,
+        logo_scanned_at: preppedAt,
+        moved_to_ready_at: preppedAt,
+        notes: prepNote || defaultNote,
+        activity_logs: appendLog(target?.activity_logs, entry)
+      }).eq('id', itemId);
+    } else {
+      setItems(prev => prev.map(i => i.id === itemId ? {
+        ...i,
+        serial_number: sn,
+        status: 'in_stock' as const,
+        order_id: null,
+        prepped_at: preppedAt,
+        logo_scanned_at: preppedAt,
+        moved_to_ready_at: preppedAt,
+        notes: prepNote || defaultNote,
+        activity_logs: appendLog(i.activity_logs, entry)
+      } : i));
+    }
+    return true;
+  };
+
+  // ช่างเตรียมเสร็จ + ติดโลโก้ + แปะวอยทันที -> ส่งตรงไปหน้าร้าน/จัดส่ง (ready_for_dispatch)
+  const prepFinishAndDispatch = (itemId: string, serialNumber: string, voidDate: string, prepNote?: string): boolean => {
+    const sn = serialNumber.trim();
+    if (!sn) return false;
+    const existing = items.find(i => i.id !== itemId && i.serial_number && i.serial_number.toLowerCase() === sn.toLowerCase());
+    if (existing) return false;
+
+    const preppedAt = new Date().toISOString();
+    const actor = currentUserRef.current;
+    const entry = makeLog('แปะวอยประกัน', actor?.name || 'ระบบ', actor?.role, `S/N: ${sn} | วอยประกัน: ${voidDate}`);
+    if (isSupabaseLive && supabaseClient) {
+      const target = items.find(i => i.id === itemId);
+      supabaseClient.from('items').update({
+        serial_number: sn,
+        status: 'ready_for_dispatch',
+        void_date: voidDate,
+        prepped_at: preppedAt,
+        logo_scanned_at: preppedAt,
+        warranty_applied_at: preppedAt,
+        notes: prepNote || 'ติดโลโก้ & แปะวอยพร้อมส่งออกเลย (ส่งตรงหน้าร้าน/จัดส่ง)',
+        activity_logs: appendLog(target?.activity_logs, entry)
+      }).eq('id', itemId);
+    } else {
+      setItems(prev => prev.map(i => i.id === itemId ? {
+        ...i,
+        serial_number: sn,
+        status: 'ready_for_dispatch' as const,
+        void_date: voidDate,
+        prepped_at: preppedAt,
+        logo_scanned_at: preppedAt,
+        warranty_applied_at: preppedAt,
+        notes: prepNote || 'ติดโลโก้ & แปะวอยพร้อมส่งออกเลย (ส่งตรงหน้าร้าน/จัดส่ง)',
+        activity_logs: appendLog(i.activity_logs, entry)
       } : i));
     }
     return true;
@@ -488,16 +968,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // จังหวะที่ 2: แปะวอยประกัน & ยืนยันปล่อยของออก (ready_for_dispatch)
   const applyVoidAndDispatch = async (itemId: string, voidDate: string) => {
+    const actor = currentUserRef.current;
+    const now = new Date().toISOString();
+    const entry = makeLog('แปะวอยประกัน', actor?.name || 'ระบบ', actor?.role, `วอยประกัน: ${voidDate}`);
     if (isSupabaseLive && supabaseClient) {
+      const target = items.find(i => i.id === itemId);
       await supabaseClient.from('items').update({
         status: 'ready_for_dispatch',
-        void_date: voidDate
+        void_date: voidDate,
+        warranty_applied_at: now,
+        activity_logs: appendLog(target?.activity_logs, entry)
       }).eq('id', itemId);
     } else {
       setItems(prev => prev.map(i => i.id === itemId ? {
         ...i,
         status: 'ready_for_dispatch',
-        void_date: voidDate
+        void_date: voidDate,
+        warranty_applied_at: now,
+        activity_logs: appendLog(i.activity_logs, entry)
       } : i));
     }
   };
@@ -509,6 +997,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return false;
     }
 
+    const actor = currentUserRef.current;
+    const now = new Date().toISOString();
     const newItem: Item = {
       id: 'itm-' + Date.now(),
       order_id: null,
@@ -517,10 +1007,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       status: 'in_stock',
       prep_type: 'inbound_stock',
       assigned_techs: [],
-      prepped_at: new Date().toISOString(),
+      prepped_at: now,
       void_date: null,
       notes: notes || 'ประกอบเทสผ่าน ติดโลโก้ เก็บเข้าสต๊อกพร้อมขาย',
-      created_at: new Date().toISOString()
+      created_at: now,
+      logo_scanned_at: now,
+      moved_to_ready_at: now,
+      activity_logs: [makeLog('ติดโลโก้ & สแกน S/N', actor?.name || 'ระบบ', actor?.role, `S/N: ${serialNumber} | เก็บเข้าคลังพร้อมขาย`)]
     };
 
     if (isSupabaseLive && supabaseClient) {
@@ -539,12 +1032,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     const preppedAt = new Date().toISOString();
+    const actor = currentUserRef.current;
+    const entry = makeLog('แปะวอยประกัน', actor?.name || 'ระบบ', actor?.role, `S/N: ${serialNumber} | วอยประกัน: ${voidDate}`);
     if (isSupabaseLive && supabaseClient) {
+      const target = items.find(i => i.id === itemId);
       supabaseClient.from('items').update({
         serial_number: serialNumber,
         status: 'ready_for_dispatch',
         void_date: voidDate,
-        prepped_at: preppedAt
+        prepped_at: preppedAt,
+        warranty_applied_at: preppedAt,
+        activity_logs: appendLog(target?.activity_logs, entry)
       }).eq('id', itemId);
     } else {
       setItems(prev => prev.map(i => i.id === itemId ? {
@@ -552,7 +1050,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         serial_number: serialNumber,
         status: 'ready_for_dispatch',
         void_date: voidDate,
-        prepped_at: preppedAt
+        prepped_at: preppedAt,
+        warranty_applied_at: preppedAt,
+        activity_logs: appendLog(i.activity_logs, entry)
       } : i));
     }
     return true;
@@ -561,12 +1061,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const assignOnsite = async (itemId: string, techs: string[], jobCategory?: JobCategory) => {
     const techsArr = Array.isArray(techs) ? techs : [techs];
     const primaryTech = techsArr[0] || '';
+    const actor = currentUserRef.current;
+    const now = new Date().toISOString();
+    const entry = makeLog('จัดสายรถ & มอบหมายช่าง', actor?.name || 'ระบบ', actor?.role, `ทีมช่าง: ${techsArr.join(', ') || '-'}`);
     if (isSupabaseLive && supabaseClient) {
+      const target = items.find(i => i.id === itemId);
       await supabaseClient.from('items').update({
         status: 'assigned_onsite',
         assigned_techs: techsArr,
         job_category: jobCategory || 'delivery',
-        assigned_onsite_tech: primaryTech // backward compat
+        assigned_onsite_tech: primaryTech, // backward compat
+        assigned_at: now,
+        activity_logs: appendLog(target?.activity_logs, entry)
       }).eq('id', itemId);
     } else {
       setItems(prev => prev.map(i => i.id === itemId ? {
@@ -574,7 +1080,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         status: 'assigned_onsite',
         assigned_techs: techsArr,
         job_category: jobCategory || 'delivery',
-        assigned_onsite_tech: primaryTech
+        assigned_onsite_tech: primaryTech,
+        assigned_at: now,
+        activity_logs: appendLog(i.activity_logs, entry)
+      } : i));
+    }
+  };
+
+  // ช่าง Onsite กดรับงานก่อนเริ่มทำ (บันทึกชื่อช่างผู้รับงาน + เวลา)
+  const acceptOnsiteJob = async (itemId: string, techName: string) => {
+    const acceptedAt = new Date().toISOString();
+    const actor = currentUserRef.current;
+    const entry = makeLog('เริ่มปฏิบัติงาน / รับเครื่องซ่อม', actor?.name || techName || 'ระบบ', actor?.role, `ช่างผู้รับงาน: ${techName}`);
+    if (isSupabaseLive && supabaseClient) {
+      const target = items.find(i => i.id === itemId);
+      await supabaseClient.from('items').update({
+        assigned_prep_tech: techName,
+        prep_accepted_at: acceptedAt,
+        prep_accepted_log_at: acceptedAt,
+        activity_logs: appendLog(target?.activity_logs, entry)
+      }).eq('id', itemId);
+    } else {
+      setItems(prev => prev.map(i => i.id === itemId ? {
+        ...i,
+        assigned_prep_tech: techName,
+        prep_accepted_at: acceptedAt,
+        prep_accepted_log_at: acceptedAt,
+        activity_logs: appendLog(i.activity_logs, entry)
       } : i));
     }
   };
@@ -582,18 +1114,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const assignRepairTicketOnsite = async (ticketId: string, techs: string[], jobCategory?: JobCategory) => {
     const techsArr = Array.isArray(techs) ? techs : [techs];
     const primaryTech = techsArr[0] || '';
+    const actor = currentUserRef.current;
+    const now = new Date().toISOString();
+    const entry = makeLog('จัดสายรถ & มอบหมายช่าง', actor?.name || 'ระบบ', actor?.role, `ทีมช่าง: ${techsArr.join(', ') || '-'}`);
     if (isSupabaseLive && supabaseClient) {
+      const target = repairTickets.find(t => t.id === ticketId);
       await supabaseClient.from('repair_tickets').update({
         assigned_techs: techsArr,
         job_category: jobCategory || 'repair_pickup',
-        assigned_onsite_tech: primaryTech
+        assigned_onsite_tech: primaryTech,
+        assigned_at: now,
+        activity_logs: appendLog(target?.activity_logs, entry)
       }).eq('id', ticketId);
     } else {
       setRepairTickets(prev => prev.map(t => t.id === ticketId ? {
         ...t,
         assigned_techs: techsArr,
         job_category: jobCategory || 'repair_pickup',
-        assigned_onsite_tech: primaryTech
+        assigned_onsite_tech: primaryTech,
+        assigned_at: now,
+        activity_logs: appendLog(t.activity_logs, entry)
       } : t));
     }
   };
@@ -602,28 +1142,46 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const confirmOnsiteDelivery = async (itemId: string, deliveryNotes?: string) => {
     const targetItem = items.find(i => i.id === itemId);
     const orderId = targetItem?.order_id;
+    const actor = currentUserRef.current;
+    const now = new Date().toISOString();
+    const itemEntry = makeLog('ส่งมอบติดตั้งเสร็จสิ้น', actor?.name || 'ระบบ', actor?.role, deliveryNotes || undefined);
 
     const updatedItems = items.map(i => i.id === itemId ? {
       ...i,
       status: 'delivered' as const,
-      notes: deliveryNotes ? `${i.notes || ''} | ${deliveryNotes}` : i.notes
+      delivered_at: now,
+      notes: deliveryNotes ? `${i.notes || ''} | ${deliveryNotes}` : i.notes,
+      activity_logs: appendLog(i.activity_logs, itemEntry)
     } : i);
 
     const relatedOrderItems = updatedItems.filter(i => i.order_id === orderId);
     const allDelivered = relatedOrderItems.length > 0 && relatedOrderItems.every(i => i.status === 'delivered');
+    const orderEntry = makeLog('ส่งมอบติดตั้งเสร็จสิ้น', actor?.name || 'ระบบ', actor?.role, 'ออเดอร์ส่งมอบครบทุกชิ้น');
 
     if (isSupabaseLive && supabaseClient) {
       await supabaseClient.from('items').update({
-        status: 'delivered'
+        status: 'delivered',
+        delivered_at: now,
+        activity_logs: appendLog(targetItem?.activity_logs, itemEntry)
       }).eq('id', itemId);
 
       if (orderId && allDelivered) {
-        await supabaseClient.from('orders').update({ order_status: 'fulfilled' }).eq('id', orderId);
+        const targetOrder = orders.find(o => o.id === orderId);
+        await supabaseClient.from('orders').update({
+          order_status: 'fulfilled',
+          fulfilled_at: now,
+          activity_logs: appendLog(targetOrder?.activity_logs, orderEntry)
+        }).eq('id', orderId);
       }
     } else {
       setItems(updatedItems);
       if (orderId && allDelivered) {
-        setOrders(prev => prev.map(o => o.id === orderId ? { ...o, order_status: 'fulfilled' } : o));
+        setOrders(prev => prev.map(o => o.id === orderId ? {
+          ...o,
+          order_status: 'fulfilled',
+          fulfilled_at: now,
+          activity_logs: appendLog(o.activity_logs, orderEntry)
+        } : o));
       }
     }
   };
@@ -634,15 +1192,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const randomNum = Math.floor(100 + Math.random() * 900);
     const generatedTicketNo = `REP-${thaiYear}-${randomNum}`;
 
+    const actor = currentUserRef.current;
+    const now = new Date().toISOString();
+    const intakeLog = makeLog(
+      'เริ่มปฏิบัติงาน / รับเครื่องซ่อม',
+      actor?.name || 'ระบบ',
+      actor?.role,
+      `ใบงาน: ${generatedTicketNo} | ลูกค้า: ${ticketData.customer_name}`
+    );
     const newTicket: RepairTicket = {
       ...ticketData,
       id: 'rep-' + Date.now(),
       ticket_no: generatedTicketNo,
       route_code: routeCode,
       status: 'open',
-      received_at: new Date().toISOString(),
+      received_at: now,
       finished_at: null,
-      created_at: new Date().toISOString()
+      created_at: now,
+      activity_logs: [intakeLog],
+      received_by: intakeLog.actor,
+      started_at: now
     };
 
     if (isSupabaseLive && supabaseClient) {
@@ -660,13 +1229,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     parts: string
   ) => {
     const finishedAt = new Date().toISOString();
+    const actor = currentUserRef.current;
+    const entry = makeLog('ปิดงานซ่อม', actor?.name || 'ระบบ', actor?.role, `ผล: ${outcome}${parts ? ` | อะไหล่: ${parts}` : ''}`);
     if (isSupabaseLive && supabaseClient) {
+      const target = repairTickets.find(t => t.id === ticketId);
       await supabaseClient.from('repair_tickets').update({
         status,
         repair_outcome: outcome,
         repair_detail: detail,
         parts_used: parts,
-        finished_at: finishedAt
+        finished_at: finishedAt,
+        activity_logs: appendLog(target?.activity_logs, entry)
       }).eq('id', ticketId);
     } else {
       setRepairTickets(prev => prev.map(t => t.id === ticketId ? {
@@ -675,16 +1248,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         repair_outcome: outcome,
         repair_detail: detail,
         parts_used: parts,
-        finished_at: finishedAt
+        finished_at: finishedAt,
+        activity_logs: appendLog(t.activity_logs, entry)
       } : t));
     }
   };
 
   const closeRepairTicket = async (ticketId: string) => {
+    const actor = currentUserRef.current;
+    const now = new Date().toISOString();
+    const entry = makeLog('ส่งมอบติดตั้งเสร็จสิ้น / ปิดงานซ่อม', actor?.name || 'ระบบ', actor?.role, 'ส่งมอบคืนลูกค้าเรียบร้อย');
     if (isSupabaseLive && supabaseClient) {
-      await supabaseClient.from('repair_tickets').update({ status: 'returned_closed' }).eq('id', ticketId);
+      const target = repairTickets.find(t => t.id === ticketId);
+      await supabaseClient.from('repair_tickets').update({
+        status: 'returned_closed',
+        delivered_at: now,
+        activity_logs: appendLog(target?.activity_logs, entry)
+      }).eq('id', ticketId);
     } else {
-      setRepairTickets(prev => prev.map(t => t.id === ticketId ? { ...t, status: 'returned_closed' } : t));
+      setRepairTickets(prev => prev.map(t => t.id === ticketId ? {
+        ...t,
+        status: 'returned_closed',
+        delivered_at: now,
+        activity_logs: appendLog(t.activity_logs, entry)
+      } : t));
     }
   };
 
@@ -710,11 +1297,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.removeItem('boss_repair_tickets');
     localStorage.removeItem('boss_users');
     localStorage.removeItem('boss_products');
+    localStorage.removeItem('boss_stock_pos');
     setOrders(INITIAL_ORDERS);
     setItems(INITIAL_ITEMS);
     setRepairTickets(INITIAL_REPAIR_TICKETS);
     setUsers(INITIAL_USERS);
     setProducts(INITIAL_PRODUCTS);
+    setStockPOs([]);
   };
 
   return (
@@ -729,6 +1318,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       items,
       repairTickets,
       products,
+      stockPOs,
       addProduct,
       updateProduct,
       deleteProduct,
@@ -737,13 +1327,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       receivePOIntoStock,
       updateOrderCosts,
       cutStock,
+      createStockPO,
+      receiveStockPOToStorage,
+      cancelStockPO,
+      sendRawStockToPrep,
+      movePrepStockToReady,
+      allocateStockToOrder,
       acceptPrepTask,
       prepFinishToStock,
+      prepFinishToReadyStock,
+      prepFinishAndDispatch,
       applyVoidAndDispatch,
       prepInboundStock,
       prepOutboundDispatch,
       assignOnsite,
       assignRepairTicketOnsite,
+      acceptOnsiteJob,
       confirmOnsiteDelivery,
       createRepairTicket,
       completeRepairTicket,

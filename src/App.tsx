@@ -11,10 +11,11 @@ import { RepairView } from './components/RepairView';
 import { AdminUserManagement } from './components/AdminUserManagement';
 import { SettingsModal } from './components/SettingsModal';
 import { ProfitDashboardView } from './components/ProfitDashboardView';
+import { CompletedLogsView } from './components/CompletedLogsView';
 import {
   Cpu, LayoutDashboard, FilePlus2, Boxes, PackageCheck,
   Store, Truck, Wrench, Shield, LogOut, Settings, RotateCcw,
-  ChevronRight, Menu, X, Sparkles, Sun, Moon, TrendingUp
+  ChevronRight, Menu, X, Sparkles, Sun, Moon, TrendingUp, History
 } from 'lucide-react';
 
 export const App: React.FC = () => {
@@ -84,6 +85,7 @@ export const App: React.FC = () => {
     { id: 'frontdesk', role: 'frontdesk', label: 'หน้าร้าน / จัดคิว', icon: Store, badge: readyDispatch, desc: 'จ่ายงาน & รับเครื่องซ่อม' },
     { id: 'onsite', role: 'onsite', label: 'ช่าง Onsite', icon: Truck, badge: assignedOnsite, desc: 'ส่งมอบ & รับเครื่องกลับ' },
     { id: 'repair', role: 'repair', label: 'ช่างซ่อมในร้าน', icon: Wrench, badge: inRepair, desc: 'ตรวจเช็ค & ออกใบรับซ่อม' },
+    { id: 'completed-logs', role: 'all', label: 'ประวัติงาน & Log', icon: History, badge: null, desc: 'งานที่ปิดแล้ว & ไทม์ไลน์ย้อนหลัง' },
     { id: 'admin', role: 'admin', label: 'จัดการผู้ใช้ & สิทธิ์', icon: Shield, badge: null, desc: 'แอดมินระบบส่วนกลาง' },
   ];
 
@@ -94,6 +96,8 @@ export const App: React.FC = () => {
   const visibleNavItems = allNavItems.filter((nav) => {
     if (currentUser.role === 'admin') return true;
     if (nav.id === 'dashboard') return true;
+    // แท็บประวัติงาน & Log เปิดให้ทุกบทบาทปฏิบัติการเข้าถึงได้
+    if (nav.id === 'completed-logs') return true;
     // พนักงานขายเห็นทั้งแท็บ Sales และแท็บสรุปยอด & กำไร (ของตัวเอง)
     if (nav.id === 'profit' && currentUser.role === 'sales') return true;
     // ผู้บริหาร/ผู้จัดการ (manager) เห็นแท็บสรุปยอด & กำไร ภาพรวมทั้งบริษัท
@@ -390,6 +394,7 @@ export const App: React.FC = () => {
           {activeTab === 'frontdesk' && <FrontdeskView />}
           {activeTab === 'onsite' && <OnsiteView />}
           {activeTab === 'repair' && <RepairView />}
+          {activeTab === 'completed-logs' && <CompletedLogsView />}
           {activeTab === 'admin' && currentUser.role === 'admin' && <AdminUserManagement />}
         </main>
 

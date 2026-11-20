@@ -77,7 +77,7 @@ export const LoginPage: React.FC = () => {
 
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-xl px-4 relative z-10">
         <div className="liquid-glass rounded-3xl p-6 sm:p-9 shadow-2xl border border-white/[0.1] relative">
-          
+
           <div className="mb-6 pb-4 border-b border-white/[0.08] flex items-center justify-between">
             <div className="flex items-center gap-2">
               <div className="p-1.5 rounded-lg bg-[#FF6B00]/15 text-[#FF6B00]">
@@ -115,23 +115,21 @@ export const LoginPage: React.FC = () => {
                         setSelectedUsername(u.username);
                         setCustomUsername('');
                       }}
-                      className={`text-left p-3.5 rounded-2xl transition-all duration-200 cursor-pointer flex flex-col justify-between ${
-                        isSelected
+                      className={`text-left p-3.5 rounded-2xl transition-all duration-200 cursor-pointer flex flex-col justify-between ${isSelected
                           ? 'bg-[#FF6B00]/20 border border-[#FF6B00] shadow-lg shadow-[#FF6B00]/20 ring-1 ring-[#FF6B00]'
                           : 'liquid-glass-card hover:border-white/20'
-                      }`}
+                        }`}
                     >
                       <div className="flex items-center justify-between mb-1.5">
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                          isSelected ? 'bg-[#FF6B00] text-black border-transparent' : 'bg-white/[0.05] text-[#FF6B00] border-[#FF6B00]/30'
-                        }`}>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${isSelected ? 'bg-[#FF6B00] text-black border-transparent' : 'bg-white/[0.05] text-[#FF6B00] border-[#FF6B00]/30'
+                          }`}>
                           {meta.label}
                         </span>
                         {isSelected && <span className="w-2 h-2 rounded-full bg-[#FF6B00] animate-pulse"></span>}
                       </div>
-                      <div className="text-xs font-bold text-white">{u.name}</div>
-                      <div className="text-[10px] text-slate-400 mt-0.5">{meta.desc}</div>
-                      <div className="text-[10px] font-mono text-slate-500 mt-1">Username: {u.username}</div>
+                      <div className="text-sm font-bold text-white">{u.name}</div>
+                      <div className="text-[10px] text-slate-400 mt-0.5 data-meta">{meta.desc}</div>
+                      <div className="text-[10px] font-mono text-slate-500 mt-1 data-meta">Username: {u.username}</div>
                     </button>
                   );
                 })}

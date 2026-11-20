@@ -5,6 +5,7 @@ import {
     AlertTriangle, Receipt, Coins, BarChart3, Lock, Crown
 } from 'lucide-react';
 import { Order, ROUTE_DEFINITIONS } from '../types';
+import { ListControls, useListControls } from './ListControls';
 
 const COMMISSION_RATE = 0.05; // ค่าคอมมิชชั่นเริ่มต้น 5% ของ GP
 const LOW_MARGIN_THRESHOLD = 10; // GP ต่ำกว่า 10% = เสี่ยง/กำไรต่ำ
@@ -83,6 +84,12 @@ export const ProfitDashboardView: React.FC = () => {
     }, [metrics]);
 
     const visibleMetrics = showOnlyLowMargin ? metrics.filter(m => m.isLowMargin) : metrics;
+
+    const metricsList = useListControls(visibleMetrics, {
+        getDate: (m) => m.order.created_at,
+        getValue: (m) => m.gp,
+        initialSort: 'newest',
+    });
 
     const kpiCards = [
         {
@@ -164,10 +171,10 @@ export const ProfitDashboardView: React.FC = () => {
                     return (
                         <div key={card.label} className={`rounded-2xl p-4 border ${card.bg} ${card.border} liquid-glass-card`}>
                             <div className="flex items-center justify-between mb-2">
-                                <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">{card.label}</span>
+                                <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide data-meta">{card.label}</span>
                                 <Icon className={`w-4 h-4 ${card.color}`} />
                             </div>
-                            <div className={`text-lg font-extrabold font-mono ${card.color}`}>{card.value}</div>
+                            <div className={`text-lg sm:text-xl font-extrabold font-mono data-key ${card.color}`}>{card.value}</div>
                         </div>
                     );
                 })}
@@ -216,7 +223,7 @@ export const ProfitDashboardView: React.FC = () => {
                                     return (
                                         <tr key={row.name} className="hover:bg-white/[0.02]">
                                             <td className="py-2.5 px-3 font-mono text-slate-500">{idx + 1}</td>
-                                            <td className="py-2.5 px-3 font-semibold text-white whitespace-nowrap">
+                                            <td className="py-2.5 px-3 text-base font-bold text-white whitespace-nowrap">
                                                 {row.name}
                                                 {row.lowMargin > 0 && (
                                                     <span className="ml-2 px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
@@ -224,16 +231,16 @@ export const ProfitDashboardView: React.FC = () => {
                                                     </span>
                                                 )}
                                             </td>
-                                            <td className="py-2.5 px-3 text-right font-mono text-slate-300">{row.orders}</td>
-                                            <td className="py-2.5 px-3 text-right font-mono text-emerald-400">{fmt(row.revenue)}</td>
-                                            <td className="py-2.5 px-3 text-right font-mono text-rose-400">{fmt(row.cost)}</td>
-                                            <td className={`py-2.5 px-3 text-right font-mono font-bold ${row.gp >= 0 ? 'text-[#FF6B00]' : 'text-rose-400'}`}>
+                                            <td className="py-2.5 px-3 text-right font-mono text-slate-300 data-key">{row.orders}</td>
+                                            <td className="py-2.5 px-3 text-right font-mono text-emerald-400 text-sm font-extrabold data-key">{fmt(row.revenue)}</td>
+                                            <td className="py-2.5 px-3 text-right font-mono text-rose-400 text-sm font-extrabold data-key">{fmt(row.cost)}</td>
+                                            <td className={`py-2.5 px-3 text-right font-mono text-sm font-extrabold data-key ${row.gp >= 0 ? 'text-[#FF6B00]' : 'text-rose-400'}`}>
                                                 {fmt(row.gp)}
                                             </td>
-                                            <td className={`py-2.5 px-3 text-right font-mono font-bold ${gpPct < LOW_MARGIN_THRESHOLD ? 'text-amber-400' : 'text-sky-400'}`}>
+                                            <td className={`py-2.5 px-3 text-right font-mono text-sm font-extrabold data-key ${gpPct < LOW_MARGIN_THRESHOLD ? 'text-amber-400' : 'text-sky-400'}`}>
                                                 {gpPct.toFixed(1)}%
                                             </td>
-                                            <td className="py-2.5 px-3 text-right font-mono text-purple-400">{fmt(row.commission)}</td>
+                                            <td className="py-2.5 px-3 text-right font-mono text-purple-400 text-sm font-extrabold data-key">{fmt(row.commission)}</td>
                                         </tr>
                                     );
                                 })}
@@ -258,68 +265,84 @@ export const ProfitDashboardView: React.FC = () => {
                         ยังไม่มีข้อมูลออเดอร์สำหรับแสดงผล
                     </div>
                 ) : (
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-left text-xs">
-                            <thead className="bg-white/[0.04] text-slate-400 border-b border-white/[0.06]">
-                                <tr>
-                                    <th className="py-2.5 px-3 whitespace-nowrap">เลขที่ SO</th>
-                                    {!isSalesperson && <th className="py-2.5 px-3 whitespace-nowrap">ผู้ขาย</th>}
-                                    <th className="py-2.5 px-3 whitespace-nowrap">ลูกค้า</th>
-                                    <th className="py-2.5 px-3 whitespace-nowrap">สายรถ</th>
-                                    <th className="py-2.5 px-3 text-right whitespace-nowrap">ยอดขาย</th>
-                                    <th className="py-2.5 px-3 text-right whitespace-nowrap">ต้นทุน</th>
-                                    <th className="py-2.5 px-3 text-right whitespace-nowrap">GP</th>
-                                    <th className="py-2.5 px-3 text-right whitespace-nowrap">GP %</th>
-                                    <th className="py-2.5 px-3 text-right whitespace-nowrap">ค่าคอม (5%)</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-white/[0.04]">
-                                {visibleMetrics.map((m) => {
-                                    const rMeta = m.order.route_code ? ROUTE_DEFINITIONS[m.order.route_code] : null;
-                                    const commission = m.gp > 0 ? m.gp * COMMISSION_RATE : 0;
-                                    return (
-                                        <tr
-                                            key={m.order.id}
-                                            className={`transition ${m.isLowMargin ? 'bg-rose-500/[0.06] hover:bg-rose-500/[0.1]' : 'hover:bg-white/[0.02]'}`}
-                                        >
-                                            <td className="py-2.5 px-3 font-mono font-bold text-[#FF6B00] whitespace-nowrap">
-                                                {m.order.sales_ref || 'SO-AUTO'}
-                                            </td>
-                                            {!isSalesperson && (
+                    <>
+                        <ListControls
+                            from={metricsList.from}
+                            to={metricsList.to}
+                            total={metricsList.total}
+                            page={metricsList.page}
+                            totalPages={metricsList.totalPages}
+                            pageSize={metricsList.pageSize}
+                            sort={metricsList.sort}
+                            onSortChange={metricsList.setSort}
+                            onPageSizeChange={metricsList.setPageSize}
+                            onPageChange={metricsList.setPage}
+                            unit="ออเดอร์"
+                            className="mb-3"
+                        />
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-left text-xs">
+                                <thead className="bg-white/[0.04] text-slate-400 border-b border-white/[0.06]">
+                                    <tr>
+                                        <th className="py-2.5 px-3 whitespace-nowrap">เลขที่ SO</th>
+                                        {!isSalesperson && <th className="py-2.5 px-3 whitespace-nowrap">ผู้ขาย</th>}
+                                        <th className="py-2.5 px-3 whitespace-nowrap">ลูกค้า</th>
+                                        <th className="py-2.5 px-3 whitespace-nowrap">สายรถ</th>
+                                        <th className="py-2.5 px-3 text-right whitespace-nowrap">ยอดขาย</th>
+                                        <th className="py-2.5 px-3 text-right whitespace-nowrap">ต้นทุน</th>
+                                        <th className="py-2.5 px-3 text-right whitespace-nowrap">GP</th>
+                                        <th className="py-2.5 px-3 text-right whitespace-nowrap">GP %</th>
+                                        <th className="py-2.5 px-3 text-right whitespace-nowrap">ค่าคอม (5%)</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-white/[0.04]">
+                                    {metricsList.pageItems.map((m) => {
+                                        const rMeta = m.order.route_code ? ROUTE_DEFINITIONS[m.order.route_code] : null;
+                                        const commission = m.gp > 0 ? m.gp * COMMISSION_RATE : 0;
+                                        return (
+                                            <tr
+                                                key={m.order.id}
+                                                className={`transition ${m.isLowMargin ? 'bg-rose-500/[0.06] hover:bg-rose-500/[0.1]' : 'hover:bg-white/[0.02]'}`}
+                                            >
+                                                <td className="py-2.5 px-3 font-mono font-extrabold text-[#FF6B00] whitespace-nowrap text-sm data-key">
+                                                    {m.order.sales_ref || 'SO-AUTO'}
+                                                </td>
+                                                {!isSalesperson && (
+                                                    <td className="py-2.5 px-3 whitespace-nowrap">
+                                                        <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                                                            {m.order.salesperson || '-'}
+                                                        </span>
+                                                    </td>
+                                                )}
+                                                <td className="py-2.5 px-3 text-white font-bold text-base whitespace-nowrap">{m.order.customer_name}</td>
                                                 <td className="py-2.5 px-3 whitespace-nowrap">
-                                                    <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-                                                        {m.order.salesperson || '-'}
+                                                    {rMeta ? (
+                                                        <span className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border ${rMeta.badgeBg} ${rMeta.badgeBorder} ${rMeta.badgeText}`}>
+                                                            {rMeta.shortName}
+                                                        </span>
+                                                    ) : '-'}
+                                                </td>
+                                                <td className="py-2.5 px-3 text-right font-mono text-emerald-400 text-sm font-extrabold data-key">{fmt(m.revenue)}</td>
+                                                <td className="py-2.5 px-3 text-right font-mono text-rose-400 text-sm font-extrabold data-key">{fmt(m.cost)}</td>
+                                                <td className={`py-2.5 px-3 text-right font-mono text-sm font-extrabold data-key ${m.gp >= 0 ? 'text-[#FF6B00]' : 'text-rose-400'}`}>
+                                                    {fmt(m.gp)}
+                                                </td>
+                                                <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                                                    <span className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border ${m.isLowMargin
+                                                        ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                                                        : 'bg-sky-500/15 text-sky-300 border-sky-500/30'
+                                                        }`}>
+                                                        {m.gpPct.toFixed(1)}%
                                                     </span>
                                                 </td>
-                                            )}
-                                            <td className="py-2.5 px-3 text-white font-semibold whitespace-nowrap">{m.order.customer_name}</td>
-                                            <td className="py-2.5 px-3 whitespace-nowrap">
-                                                {rMeta ? (
-                                                    <span className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border ${rMeta.badgeBg} ${rMeta.badgeBorder} ${rMeta.badgeText}`}>
-                                                        {rMeta.shortName}
-                                                    </span>
-                                                ) : '-'}
-                                            </td>
-                                            <td className="py-2.5 px-3 text-right font-mono text-emerald-400">{fmt(m.revenue)}</td>
-                                            <td className="py-2.5 px-3 text-right font-mono text-rose-400">{fmt(m.cost)}</td>
-                                            <td className={`py-2.5 px-3 text-right font-mono font-bold ${m.gp >= 0 ? 'text-[#FF6B00]' : 'text-rose-400'}`}>
-                                                {fmt(m.gp)}
-                                            </td>
-                                            <td className="py-2.5 px-3 text-right whitespace-nowrap">
-                                                <span className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border ${m.isLowMargin
-                                                    ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
-                                                    : 'bg-sky-500/15 text-sky-300 border-sky-500/30'
-                                                    }`}>
-                                                    {m.gpPct.toFixed(1)}%
-                                                </span>
-                                            </td>
-                                            <td className="py-2.5 px-3 text-right font-mono text-purple-400">{fmt(commission)}</td>
-                                        </tr>
-                                    );
-                                })}
-                            </tbody>
-                        </table>
-                    </div>
+                                                <td className="py-2.5 px-3 text-right font-mono text-purple-400 text-sm font-extrabold data-key">{fmt(commission)}</td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
+                    </>
                 )}
 
                 <div className="mt-4 flex items-center gap-2 text-[10px] text-slate-500">

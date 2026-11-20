@@ -3,9 +3,12 @@ import { useApp } from '../context/AppContext';
 import {
   Wrench, CheckCircle, ShieldAlert, Send, AlertTriangle,
   XCircle, Clock, Printer, Plus, X, CheckSquare, Square,
-  ShieldCheck, FileText, User
+  ShieldCheck, FileText, User, Camera
 } from 'lucide-react';
 import { RepairStatus, RepairTicket, ROUTE_DEFINITIONS, getRouteByDistrict } from '../types';
+import { ListControls, useListControls } from './ListControls';
+import { ActivityTimeline, LatestUpdateBadge } from './ActivityTimeline';
+import { BarcodeScannerModal } from './BarcodeScannerModal';
 
 const ACCESSORY_PRESETS = [
   'Adapter / หม้อแปลง',
@@ -28,6 +31,7 @@ export const RepairView: React.FC = () => {
   const [costInputs, setCostInputs] = useState<Record<string, string>>({});
   const [selectedOutcome, setSelectedOutcome] = useState<Record<string, RepairStatus>>({});
   const [toast, setToast] = useState('');
+  const [isScannerOpen, setIsScannerOpen] = useState(false);
 
   // Modal 1: New Repair Ticket Form
   const [isNewTicketOpen, setIsNewTicketOpen] = useState(false);
@@ -44,6 +48,11 @@ export const RepairView: React.FC = () => {
   const [receiptTicket, setReceiptTicket] = useState<RepairTicket | null>(null);
 
   const activeRepairs = repairTickets.filter(r => r.status === 'open' || r.status === 'in_progress');
+
+  const repairsList = useListControls(activeRepairs, {
+    getDate: (t) => t.created_at,
+    initialSort: 'newest',
+  });
 
   const outcomeOptions: {
     status: RepairStatus;
@@ -234,7 +243,21 @@ export const RepairView: React.FC = () => {
           </div>
         ) : (
           <div className="space-y-5">
-            {activeRepairs.map((ticket) => {
+            <ListControls
+              from={repairsList.from}
+              to={repairsList.to}
+              total={repairsList.total}
+              page={repairsList.page}
+              totalPages={repairsList.totalPages}
+              pageSize={repairsList.pageSize}
+              sort={repairsList.sort}
+              onSortChange={repairsList.setSort}
+              onPageSizeChange={repairsList.setPageSize}
+              onPageChange={repairsList.setPage}
+              unit="งาน"
+              hideSort
+            />
+            {repairsList.pageItems.map((ticket) => {
               const matchedItem = items.find(
                 i => i.serial_number && ticket.walkin_sn && i.serial_number.toLowerCase() === ticket.walkin_sn.toLowerCase()
               );
@@ -265,8 +288,8 @@ export const RepairView: React.FC = () => {
                   <div className="flex flex-col md:flex-row md:items-center justify-between pb-3 border-b border-white/[0.08] gap-2">
                     <div>
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-mono font-bold text-sm text-white">{ticket.ticket_no}</span>
-                        <span className="font-mono font-bold text-[#FF6B00] px-2.5 py-0.5 rounded-full bg-[#FF6B00]/15 border border-[#FF6B00]/30 text-xs">
+                        <span className="font-mono font-extrabold text-base text-white data-key">{ticket.ticket_no}</span>
+                        <span className="font-mono font-extrabold text-[#FF6B00] px-2.5 py-0.5 rounded-full bg-[#FF6B00]/15 border border-[#FF6B00]/30 text-sm data-key">
                           S/N: {ticket.walkin_sn || 'ไม่ระบุ'}
                         </span>
                         {ticket.device_model && (
@@ -280,9 +303,16 @@ export const RepairView: React.FC = () => {
                           </span>
                         )}
                       </div>
-                      <p className="text-xs text-slate-300 mt-1">
-                        ลูกค้า: <strong className="text-white">{ticket.customer_name}</strong> ({ticket.customer_phone || '-'}) • {ticket.district || '-'}
+                      <p className="text-xs text-slate-300 mt-1 data-meta">
+                        ลูกค้า: <strong className="text-white text-base font-bold">{ticket.customer_name}</strong> ({ticket.customer_phone || '-'}) • {ticket.district || '-'}
                       </p>
+                      <div className="mt-2">
+                        <LatestUpdateBadge
+                          logs={ticket.activity_logs}
+                          fallbackTimestamp={ticket.delivered_at || ticket.started_at || ticket.updated_at || ticket.created_at}
+                          fallbackActor={ticket.received_by}
+                        />
+                      </div>
                     </div>
 
                     <div className="flex items-center gap-2">
@@ -310,8 +340,8 @@ export const RepairView: React.FC = () => {
                   {/* Customer Reported Symptom & Accessories */}
                   <div className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/[0.06] text-xs space-y-2">
                     <div>
-                      <span className="text-slate-400 font-medium">อาการเสียที่ได้รับแจ้ง:</span>
-                      <p className="text-rose-300 font-medium mt-0.5">{ticket.fault_symptom}</p>
+                      <span className="text-slate-400 font-medium data-meta">อาการเสียที่ได้รับแจ้ง:</span>
+                      <p className="text-rose-300 font-semibold text-sm mt-0.5">{ticket.fault_symptom}</p>
                     </div>
 
                     {(ticket.picked_up_by || (ticket.accessories && ticket.accessories.length > 0)) && (
@@ -417,6 +447,11 @@ export const RepairView: React.FC = () => {
                       <span>บันทึกผลการซ่อม & ส่งต่อหน้าร้าน</span>
                     </button>
                   </div>
+
+                  {/* Activity Timeline */}
+                  <div className="pt-3 border-t border-white/[0.08]">
+                    <ActivityTimeline logs={ticket.activity_logs} />
+                  </div>
                 </div>
               );
             })}
@@ -506,13 +541,24 @@ export const RepairView: React.FC = () => {
                 <label className="block text-slate-300 font-medium mb-1">
                   Serial Number (S/N)
                 </label>
-                <input
-                  type="text"
-                  placeholder="เช่น BC-2026-002 (ตรวจสถานะประกันอัตโนมัติ)"
-                  value={sn}
-                  onChange={(e) => setSn(e.target.value)}
-                  className="w-full liquid-glass-input rounded-xl px-3 py-2 text-xs text-[#FF6B00] font-mono focus:outline-none"
-                />
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    placeholder="เช่น BC-2026-002 (ตรวจสถานะประกันอัตโนมัติ)"
+                    value={sn}
+                    onChange={(e) => setSn(e.target.value)}
+                    className="flex-1 liquid-glass-input rounded-xl px-3 py-2 text-xs text-[#FF6B00] font-mono focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setIsScannerOpen(true)}
+                    title="สแกนด้วยกล้อง"
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#FF6B00]/15 text-[#FF6B00] border border-[#FF6B00]/30 hover:bg-[#FF6B00]/25 transition cursor-pointer text-[11px] font-bold flex-shrink-0"
+                  >
+                    <Camera className="w-4 h-4" />
+                    <span>สแกน</span>
+                  </button>
+                </div>
               </div>
 
               {/* Warranty Check Preview */}
@@ -618,16 +664,16 @@ export const RepairView: React.FC = () => {
             <div id="company-repair-receipt" className="space-y-4 print:text-black">
               {/* Company Header */}
               <div className="text-center pb-3 border-b border-white/[0.1] print:border-black">
-                <h1 className="text-base font-extrabold text-[#FF6B00] print:text-black tracking-wide uppercase">
+                <h1 className="text-lg font-extrabold text-[#FF6B00] print:text-black tracking-wide uppercase">
                   บริษัท บอส คอมพิวเทค แอนด์ เซอร์วิส จำกัด
                 </h1>
-                <p className="text-[11px] text-slate-300 print:text-black mt-0.5">
+                <p className="text-[11px] text-slate-300 print:text-black mt-0.5 data-meta">
                   142/5 หมู่ 2 ต.มะขามเตี้ย อ.เมือง จ.สุราษฎร์ธานี 84000 • โทร. 077-999-888
                 </p>
-                <p className="text-xs font-bold text-white print:text-black mt-2 underline">
+                <p className="text-sm font-bold text-white print:text-black mt-2 underline">
                   ใบรับเครื่องซ่อม / SERVICE REPAIR INTAKE RECEIPT
                 </p>
-                <div className="mt-2 inline-block px-3 py-1 rounded-full bg-[#FF6B00]/20 border border-[#FF6B00]/40 text-[#FF6B00] print:text-black font-mono font-bold text-xs">
+                <div className="mt-2 inline-block px-3 py-1 rounded-full bg-[#FF6B00]/20 border border-[#FF6B00]/40 text-[#FF6B00] print:text-black font-mono font-extrabold text-sm data-key">
                   เลขที่: {receiptTicket.ticket_no}
                 </div>
               </div>
@@ -644,7 +690,7 @@ export const RepairView: React.FC = () => {
                 </div>
                 <div>
                   <span className="text-slate-400 print:text-gray-700">ชื่อลูกค้า: </span>
-                  <span className="font-bold text-white print:text-black">{receiptTicket.customer_name}</span>
+                  <span className="font-bold text-white print:text-black text-sm">{receiptTicket.customer_name}</span>
                 </div>
                 <div>
                   <span className="text-slate-400 print:text-gray-700">เบอร์โทรศัพท์: </span>
@@ -656,7 +702,7 @@ export const RepairView: React.FC = () => {
                 </div>
                 <div>
                   <span className="text-slate-400 print:text-gray-700">Serial Number (S/N): </span>
-                  <span className="font-mono font-bold text-[#FF6B00] print:text-black">{receiptTicket.walkin_sn}</span>
+                  <span className="font-mono font-extrabold text-[#FF6B00] print:text-black data-key">{receiptTicket.walkin_sn}</span>
                 </div>
               </div>
 
@@ -717,6 +763,18 @@ export const RepairView: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Reusable camera barcode/QR scanner for device S/N intake */}
+      <BarcodeScannerModal
+        open={isScannerOpen}
+        onClose={() => setIsScannerOpen(false)}
+        onScan={(value) => {
+          const clean = value.trim();
+          if (clean) setSn(clean);
+        }}
+        title="สแกน S/N เครื่องซ่อม"
+        hint="ส่องกล้องไปที่บาร์โค้ด/QR บนเครื่องหรือกล่อง เพื่อกรอก S/N อัตโนมัติ"
+      />
     </div>
   );
 };

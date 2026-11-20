@@ -11,6 +11,8 @@ import {
   ROUTE_DEFINITIONS, getRouteByDistrict, RouteCode, BillType, PaymentTerm, DeliveryMode, OrderItem,
   Product, ProductCategory, ProductUnit, PRODUCT_CATEGORY_LABELS, PRODUCT_UNIT_OPTIONS
 } from '../types';
+import { ListControls, useListControls } from './ListControls';
+import { ActivityTimeline, LatestUpdateBadge } from './ActivityTimeline';
 
 const DISTRICT_OPTIONS = [
   // สาย 1 (โซนเหนือ)
@@ -51,7 +53,7 @@ const emptyProductForm = () => ({
 });
 
 export const SalesView: React.FC = () => {
-  const { orders, createOrder, currentUser, products, addProduct, updateProduct, deleteProduct } = useApp();
+  const { orders, createOrder, currentUser, products, addProduct, updateProduct, deleteProduct, items } = useApp();
 
   // ชื่อพนักงานขายที่ล็อกอินอยู่ (auto-tag ลงทุกออเดอร์ ไม่ต้องเลือกเอง)
   const salespersonName = currentUser?.name || 'ไม่ระบุตัวตน';
@@ -82,6 +84,7 @@ export const SalesView: React.FC = () => {
   const [isCatalogModalOpen, setIsCatalogModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<'all' | ProductCategory>('all');
+  const [sortBy, setSortBy] = useState<'stock_desc' | 'stock_asc' | 'price_desc' | 'price_asc' | 'name'>('stock_desc');
 
   // Selected items inside the Modal: mapping productId -> quantity
   const [modalSelectedMap, setModalSelectedMap] = useState<Record<string, number>>({});
@@ -125,6 +128,7 @@ export const SalesView: React.FC = () => {
     setModalSelectedMap({});
     setSearchQuery('');
     setCategoryFilter('all');
+    setSortBy('stock_desc');
     setIsAddingNewToCatalog(false);
     setEditingProductId(null);
     setProductForm(emptyProductForm());
@@ -320,11 +324,67 @@ export const SalesView: React.FC = () => {
     }
   };
 
-  // Filtered Catalog Items for Modal
-  const filteredCatalog = products.filter(item => {
+  // Filtered Catalog Items for Modal (before sorting)
+  const filteredCatalogBase = products.filter(item => {
     const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesCategory = categoryFilter === 'all' || item.category === categoryFilter;
     return matchesSearch && matchesCategory;
+  });
+
+  // Live stock counts per product name (normalized name.trim().toLowerCase())
+  // - inStock: raw_stock + in_stock (ของอยู่ในมือ/พร้อมขาย)
+  // - incoming: จำนวนที่กำลังสั่งเข้า (ออเดอร์สถานะ waiting_po)
+  const stockByName = useMemo(() => {
+    const map: Record<string, { inStock: number; incoming: number }> = {};
+    items.forEach(it => {
+      const key = (it.model_name || '').trim().toLowerCase();
+      if (!key) return;
+      if (!map[key]) map[key] = { inStock: 0, incoming: 0 };
+      if (it.status === 'raw_stock' || it.status === 'in_stock') map[key].inStock += 1;
+    });
+    orders.forEach(o => {
+      if (o.order_status !== 'waiting_po') return;
+      (o.items_list || []).forEach(it => {
+        if (it.item_type === 'service') return;
+        const key = (it.model_name || '').trim().toLowerCase();
+        if (!key) return;
+        if (!map[key]) map[key] = { inStock: 0, incoming: 0 };
+        map[key].incoming += it.quantity || 1;
+      });
+    });
+    return map;
+  }, [items, orders]);
+
+  const getStockInfo = (productName: string) =>
+    stockByName[(productName || '').trim().toLowerCase()] || { inStock: 0, incoming: 0 };
+
+  // Sorted Catalog Items for Modal (apply sortBy on top of the filtered list)
+  const filteredCatalog = useMemo(() => {
+    const list = [...filteredCatalogBase];
+    const stockOf = (name: string) =>
+      stockByName[(name || '').trim().toLowerCase()]?.inStock || 0;
+
+    switch (sortBy) {
+      case 'stock_desc':
+        return list.sort((a, b) => stockOf(b.name) - stockOf(a.name));
+      case 'stock_asc':
+        return list.sort((a, b) => stockOf(a.name) - stockOf(b.name));
+      case 'price_desc':
+        return list.sort((a, b) => b.sell_price - a.sell_price);
+      case 'price_asc':
+        return list.sort((a, b) => a.sell_price - b.sell_price);
+      case 'name':
+        return list.sort((a, b) => a.name.localeCompare(b.name, 'th'));
+      default:
+        return list;
+    }
+  }, [filteredCatalogBase, stockByName, sortBy]);
+
+  // Sort + pagination สำหรับตารางติดตามออเดอร์
+  const ordersList = useListControls(orders, {
+    getDate: (o) => o.created_at,
+    getValue: (o) => (o.items_list || []).reduce((s, it) => s + (it.unit_price || 0) * it.quantity, 0),
+    initialSort: 'newest',
   });
 
   const selectedCount = Object.keys(modalSelectedMap).length;
@@ -600,9 +660,9 @@ export const SalesView: React.FC = () => {
                               </span>
                             )}
                           </td>
-                          <td className="py-2.5 px-3 font-semibold text-white">
+                          <td className="py-2.5 px-3 text-base font-bold text-white">
                             {item.model_name}
-                            {item.unit && <span className="ml-1 text-[10px] text-slate-500">({item.unit})</span>}
+                            {item.unit && <span className="ml-1 text-xs font-medium text-slate-500">({item.unit})</span>}
                           </td>
                           <td className="py-2.5 px-3 text-right">
                             <input
@@ -631,10 +691,10 @@ export const SalesView: React.FC = () => {
                               className="w-16 text-center liquid-glass-input rounded-lg px-2 py-1 text-xs text-[#FF6B00] font-bold"
                             />
                           </td>
-                          <td className={`py-2.5 px-3 text-right font-mono font-bold ${rowProfit >= 0 ? 'text-[#FF6B00]' : 'text-rose-400'}`}>
+                          <td className={`py-2.5 px-3 text-right font-mono font-extrabold text-sm data-key ${rowProfit >= 0 ? 'text-[#FF6B00]' : 'text-rose-400'}`}>
                             {fmt(rowProfit)}
                           </td>
-                          <td className="py-2.5 px-3 text-right font-mono font-bold text-white">
+                          <td className="py-2.5 px-3 text-right font-mono font-extrabold text-sm text-white data-key">
                             {fmt(rowTotal)}
                           </td>
                           <td className="py-2.5 px-3 text-right">
@@ -698,20 +758,20 @@ export const SalesView: React.FC = () => {
 
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
               <div className="rounded-xl p-3 bg-emerald-500/10 border border-emerald-500/25">
-                <div className="text-[10px] text-slate-400 uppercase tracking-wide">ยอดขาย (ex-VAT)</div>
-                <div className="text-base font-extrabold font-mono text-emerald-400">฿{fmt(financials.revenue)}</div>
+                <div className="text-[10px] text-slate-400 uppercase tracking-wide data-meta">ยอดขาย (ex-VAT)</div>
+                <div className="text-lg font-extrabold font-mono text-emerald-400 data-key">฿{fmt(financials.revenue)}</div>
               </div>
               <div className="rounded-xl p-3 bg-rose-500/10 border border-rose-500/25">
-                <div className="text-[10px] text-slate-400 uppercase tracking-wide">ต้นทุนรวม</div>
-                <div className="text-base font-extrabold font-mono text-rose-400">฿{fmt(financials.totalCost)}</div>
+                <div className="text-[10px] text-slate-400 uppercase tracking-wide data-meta">ต้นทุนรวม</div>
+                <div className="text-lg font-extrabold font-mono text-rose-400 data-key">฿{fmt(financials.totalCost)}</div>
               </div>
               <div className={`rounded-xl p-3 border ${financials.gp >= 0 ? 'bg-[#FF6B00]/10 border-[#FF6B00]/25' : 'bg-rose-500/15 border-rose-500/40'}`}>
-                <div className="text-[10px] text-slate-400 uppercase tracking-wide">กำไรขั้นต้น (GP)</div>
-                <div className={`text-base font-extrabold font-mono ${financials.gp >= 0 ? 'text-[#FF6B00]' : 'text-rose-400'}`}>฿{fmt(financials.gp)}</div>
+                <div className="text-[10px] text-slate-400 uppercase tracking-wide data-meta">กำไรขั้นต้น (GP)</div>
+                <div className={`text-lg font-extrabold font-mono data-key ${financials.gp >= 0 ? 'text-[#FF6B00]' : 'text-rose-400'}`}>฿{fmt(financials.gp)}</div>
               </div>
               <div className={`rounded-xl p-3 border ${financials.belowCost || financials.lowMargin ? 'bg-amber-500/10 border-amber-500/30' : 'bg-sky-500/10 border-sky-500/25'}`}>
-                <div className="text-[10px] text-slate-400 uppercase tracking-wide">Margin (%)</div>
-                <div className={`text-base font-extrabold font-mono ${financials.belowCost ? 'text-rose-400' : financials.lowMargin ? 'text-amber-400' : 'text-sky-400'}`}>
+                <div className="text-[10px] text-slate-400 uppercase tracking-wide data-meta">Margin (%)</div>
+                <div className={`text-lg font-extrabold font-mono data-key ${financials.belowCost ? 'text-rose-400' : financials.lowMargin ? 'text-amber-400' : 'text-sky-400'}`}>
                   {financials.marginPct.toFixed(1)}%
                 </div>
               </div>
@@ -772,6 +832,22 @@ export const SalesView: React.FC = () => {
                     onChange={(e) => setSearchQuery(e.target.value)}
                     className="w-full liquid-glass-input rounded-xl pl-9 pr-3 py-2 text-xs text-white focus:outline-none"
                   />
+                </div>
+
+                {/* Sort Selector */}
+                <div className="relative w-full sm:w-auto">
+                  <select
+                    value={sortBy}
+                    onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+                    aria-label="เรียงลำดับสินค้า"
+                    className="w-full sm:w-auto liquid-glass-input rounded-xl pl-3 pr-8 py-2 text-xs text-white focus:outline-none cursor-pointer"
+                  >
+                    <option value="stock_desc" className="bg-[#12141A]">สต๊อกพร้อมขาย: มาก → น้อย (Stock: High to Low)</option>
+                    <option value="stock_asc" className="bg-[#12141A]">สต๊อกพร้อมขาย: น้อย → มาก (Stock: Low to High)</option>
+                    <option value="price_desc" className="bg-[#12141A]">ราคาขาย: มาก → น้อย (Price: High to Low)</option>
+                    <option value="price_asc" className="bg-[#12141A]">ราคาขาย: น้อย → มาก (Price: Low to High)</option>
+                    <option value="name" className="bg-[#12141A]">ชื่อสินค้า: ก → ฮ / A → Z (Name)</option>
+                  </select>
                 </div>
 
                 <button
@@ -967,14 +1043,36 @@ export const SalesView: React.FC = () => {
                                 </span>
                               )}
                             </td>
-                            <td className="py-2.5 px-3 font-semibold text-white">
-                              {item.name}
-                              <span className="ml-1 text-[10px] text-slate-500">/ {item.unit}</span>
+                            <td className="py-2.5 px-3 text-base font-bold text-white">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span>
+                                  {item.name}
+                                  <span className="ml-1 text-xs font-medium text-slate-500">/ {item.unit}</span>
+                                </span>
+                                {item.item_type !== 'service' && (() => {
+                                  const { inStock, incoming } = getStockInfo(item.name);
+                                  return (
+                                    <>
+                                      <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold whitespace-nowrap border ${inStock > 0
+                                        ? 'bg-teal-500/15 text-teal-300 border-teal-500/30'
+                                        : 'bg-slate-500/15 text-slate-400 border-slate-500/30'
+                                        }`}>
+                                        ในสต๊อก: {inStock} {item.unit}
+                                      </span>
+                                      {incoming > 0 && (
+                                        <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-blue-500/15 text-blue-300 border border-blue-500/30 whitespace-nowrap">
+                                          กำลังสั่งเข้า: {incoming} {item.unit}
+                                        </span>
+                                      )}
+                                    </>
+                                  );
+                                })()}
+                              </div>
                             </td>
-                            <td className="py-2.5 px-3 text-right font-mono font-bold text-rose-300">
+                            <td className="py-2.5 px-3 text-right font-mono font-extrabold text-sm text-rose-300 data-key">
                               {fmt(item.cost_price)}
                             </td>
-                            <td className="py-2.5 px-3 text-right font-mono font-bold text-emerald-400">
+                            <td className="py-2.5 px-3 text-right font-mono font-extrabold text-sm text-emerald-400 data-key">
                               {fmt(item.sell_price)}
                             </td>
                             <td className="py-2.5 px-3 text-center" onClick={(e) => e.stopPropagation()}>
@@ -1063,6 +1161,21 @@ export const SalesView: React.FC = () => {
           <span className="text-xs text-slate-400">{orders.length} ออเดอร์ทั้งหมด</span>
         </div>
 
+        <ListControls
+          from={ordersList.from}
+          to={ordersList.to}
+          total={ordersList.total}
+          page={ordersList.page}
+          totalPages={ordersList.totalPages}
+          pageSize={ordersList.pageSize}
+          sort={ordersList.sort}
+          onSortChange={ordersList.setSort}
+          onPageSizeChange={ordersList.setPageSize}
+          onPageChange={ordersList.setPage}
+          unit="ออเดอร์"
+          className="mb-3"
+        />
+
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead className="bg-white/[0.04] text-slate-400 border-b border-white/[0.06]">
@@ -1079,55 +1192,67 @@ export const SalesView: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-white/[0.04]">
-              {orders.map((ord) => {
+              {ordersList.pageItems.map((ord) => {
                 const rMeta = ord.route_code ? ROUTE_DEFINITIONS[ord.route_code] : null;
                 return (
-                  <tr key={ord.id} className="hover:bg-white/[0.02] transition">
-                    <td className="py-3 px-3 font-mono font-bold text-[#FF6B00] whitespace-nowrap">
-                      {ord.sales_ref || 'SO-AUTO'}
-                    </td>
-                    <td className="py-3 px-3 whitespace-nowrap">
-                      <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-                        {ord.salesperson || '-'}
-                      </span>
-                    </td>
-                    <td className="py-3 px-3 whitespace-nowrap">
-                      <div className="font-semibold text-white">{ord.customer_name}</div>
-                      <div className="text-[10px] text-slate-500">{ord.customer_phone || '-'}</div>
-                    </td>
-                    <td className="py-3 px-3 whitespace-nowrap">
-                      {rMeta ? (
-                        <span className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border ${rMeta.badgeBg} ${rMeta.badgeBorder} ${rMeta.badgeText}`}>
-                          {rMeta.shortName} ({ord.district || '-'})
+                  <React.Fragment key={ord.id}>
+                    <tr className="hover:bg-white/[0.02] transition">
+                      <td className="py-3 px-3 font-mono font-extrabold text-[#FF6B00] whitespace-nowrap text-sm data-key">
+                        {ord.sales_ref || 'SO-AUTO'}
+                      </td>
+                      <td className="py-3 px-3 whitespace-nowrap">
+                        <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                          {ord.salesperson || '-'}
                         </span>
-                      ) : '-'}
-                    </td>
-                    <td className="py-3 px-3 font-mono text-slate-300 whitespace-nowrap">
-                      {ord.delivery_date ? new Date(ord.delivery_date).toLocaleDateString('th-TH') : '-'}
-                    </td>
-                    <td className="py-3 px-3 whitespace-nowrap text-[11px]">
-                      {ord.delivery_mode === 'install' && <span className="text-blue-400 font-semibold">ส่งพร้อมติดตั้ง</span>}
-                      {ord.delivery_mode === 'drop_off' && <span className="text-emerald-400 font-semibold">ส่งไม่ต้องติดตั้ง</span>}
-                      {ord.delivery_mode === 'customer_pickup' && <span className="text-amber-400 font-semibold">ลูกค้ารับเอง</span>}
-                      {ord.delivery_mode === 'project' && (
-                        <span className="px-2.5 py-0.5 rounded-full bg-gradient-to-r from-purple-500/20 to-orange-500/20 text-purple-300 border border-purple-500/40 font-extrabold shadow-sm">
-                          ⚡ งานโครงการ (Project)
-                        </span>
-                      )}
-                      {!ord.delivery_mode && <span className="text-slate-400">-</span>}
-                    </td>
-                    <td className="py-3 px-3 text-slate-300 max-w-xs truncate">
-                      {ord.items_list && ord.items_list.length > 0
-                        ? ord.items_list.map(it => `${it.model_name} (x${it.quantity})`).join(', ')
-                        : (ord._planned_model ? `${ord._planned_model} (x${ord._planned_quantity || 1})` : '-')}
-                    </td>
-                    <td className="py-3 px-3 font-mono text-slate-400 whitespace-nowrap">
-                      {ord.bill_no || <span className="text-slate-600">ยังไม่ออกบิล</span>}
-                    </td>
-                    <td className="py-3 px-3 text-right whitespace-nowrap">
-                      {getOrderStatusBadge(ord.order_status)}
-                    </td>
-                  </tr>
+                      </td>
+                      <td className="py-3 px-3 whitespace-nowrap">
+                        <div className="text-base font-bold text-white">{ord.customer_name}</div>
+                        <div className="text-xs font-medium text-slate-500 data-meta">{ord.customer_phone || '-'}</div>
+                      </td>
+                      <td className="py-3 px-3 whitespace-nowrap">
+                        {rMeta ? (
+                          <span className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border ${rMeta.badgeBg} ${rMeta.badgeBorder} ${rMeta.badgeText}`}>
+                            {rMeta.shortName} ({ord.district || '-'})
+                          </span>
+                        ) : '-'}
+                      </td>
+                      <td className="py-3 px-3 font-mono text-slate-300 whitespace-nowrap">
+                        {ord.delivery_date ? new Date(ord.delivery_date).toLocaleDateString('th-TH') : '-'}
+                      </td>
+                      <td className="py-3 px-3 whitespace-nowrap text-[11px]">
+                        {ord.delivery_mode === 'install' && <span className="text-blue-400 font-semibold">ส่งพร้อมติดตั้ง</span>}
+                        {ord.delivery_mode === 'drop_off' && <span className="text-emerald-400 font-semibold">ส่งไม่ต้องติดตั้ง</span>}
+                        {ord.delivery_mode === 'customer_pickup' && <span className="text-amber-400 font-semibold">ลูกค้ารับเอง</span>}
+                        {ord.delivery_mode === 'project' && (
+                          <span className="px-2.5 py-0.5 rounded-full bg-gradient-to-r from-purple-500/20 to-orange-500/20 text-purple-300 border border-purple-500/40 font-extrabold shadow-sm">
+                            ⚡ งานโครงการ (Project)
+                          </span>
+                        )}
+                        {!ord.delivery_mode && <span className="text-slate-400">-</span>}
+                      </td>
+                      <td className="py-3 px-3 text-slate-300 max-w-xs truncate">
+                        {ord.items_list && ord.items_list.length > 0
+                          ? ord.items_list.map(it => `${it.model_name} (x${it.quantity})`).join(', ')
+                          : (ord._planned_model ? `${ord._planned_model} (x${ord._planned_quantity || 1})` : '-')}
+                      </td>
+                      <td className="py-3 px-3 font-mono text-slate-400 whitespace-nowrap">
+                        {ord.bill_no || <span className="text-slate-600">ยังไม่ออกบิล</span>}
+                      </td>
+                      <td className="py-3 px-3 text-right whitespace-nowrap">
+                        {getOrderStatusBadge(ord.order_status)}
+                      </td>
+                    </tr>
+                    <tr className="bg-white/[0.01]">
+                      <td colSpan={9} className="px-3 pb-3 pt-0">
+                        <LatestUpdateBadge
+                          logs={ord.activity_logs}
+                          fallbackTimestamp={ord.updated_at || ord.created_at}
+                          fallbackActor={ord.salesperson}
+                        />
+                        <ActivityTimeline logs={ord.activity_logs} />
+                      </td>
+                    </tr>
+                  </React.Fragment>
                 );
               })}
             </tbody>

@@ -420,7 +420,8 @@ html.light .bg-rose-500\/10 {
 }
 
 /* Teal & Cyan & Sky boost */
-html.light .text-teal-400 {
+html.light .text-teal-400,
+html.light .text-teal-300 {
   color: #0F766E !important;
   /* Teal 700 */
   font-weight: 600 !important;
@@ -429,6 +430,14 @@ html.light .text-teal-400 {
 html.light .bg-teal-500\/15 {
   background-color: rgba(20, 184, 166, 0.16) !important;
   border-color: rgba(15, 118, 110, 0.45) !important;
+}
+
+/* "ในสต๊อก" stock badge (SalesView / PurchasingStockView) — deeper teal in light mode */
+html.light .bg-teal-500\/15.text-teal-300 {
+  color: #115E59 !important;
+  /* Teal 800 */
+  font-weight: 700 !important;
+  border-color: rgba(17, 94, 89, 0.55) !important;
 }
 
 html.light .text-cyan-400,
@@ -442,6 +451,177 @@ html.light .bg-cyan-500\/15,
 html.light .bg-sky-500\/15 {
   background-color: rgba(6, 182, 212, 0.16) !important;
   border-color: rgba(3, 105, 161, 0.45) !important;
+}
+
+/* ========================================================================= */
+/* LIGHT MODE: STATUS BADGES — DARK READABLE TEXT ON SOFT TINTS              */
+/* (Amber / Blue / Emerald / Purple / Rose / Teal / Cyan / Sky / Slate)      */
+/* ========================================================================= */
+
+/* Amber / Yellow badges */
+html.light .bg-amber-500\/15.text-amber-400,
+html.light .bg-amber-500\/20.text-amber-300,
+html.light .bg-amber-500\/20.text-amber-400,
+html.light .bg-amber-500\/10.text-amber-300 {
+  color: #78350F !important;
+  /* Amber 900 */
+  font-weight: 700 !important;
+}
+
+/* Blue badges */
+html.light .bg-blue-500\/15.text-blue-400,
+html.light .bg-blue-500\/15.text-blue-300,
+html.light .bg-blue-500\/20.text-blue-300,
+html.light .bg-blue-500\/20.text-blue-400 {
+  color: #075985 !important;
+  /* Sky 800 */
+  font-weight: 700 !important;
+}
+
+/* Emerald / Green badges */
+html.light .bg-emerald-500\/15.text-emerald-400,
+html.light .bg-emerald-500\/20.text-emerald-300,
+html.light .bg-emerald-500\/20.text-emerald-400 {
+  color: #065F46 !important;
+  /* Emerald 800 */
+  font-weight: 700 !important;
+}
+
+/* "ผู้เปิดบิล" salesperson badge (SalesView) — deeper green in light mode */
+html.light .bg-emerald-500\/10.text-emerald-300 {
+  color: #047857 !important;
+  /* Emerald 700 */
+  font-weight: 700 !important;
+  border-color: rgba(4, 120, 87, 0.45) !important;
+}
+
+html.light .bg-emerald-500\/10.text-emerald-300 strong,
+html.light .text-emerald-200 {
+  color: #065F46 !important;
+  /* Emerald 800 — darker for the name */
+  font-weight: 800 !important;
+}
+
+/* Purple / Violet badges */
+html.light .bg-purple-500\/15.text-purple-400,
+html.light .bg-purple-500\/20.text-purple-300,
+html.light .bg-purple-500\/20.text-purple-400 {
+  color: #5B21B6 !important;
+  /* Violet 800 */
+  font-weight: 700 !important;
+}
+
+/* Rose / Red badges */
+html.light .bg-rose-500\/15.text-rose-400,
+html.light .bg-rose-500\/10.text-rose-400 {
+  color: #9F1239 !important;
+  /* Rose 800 */
+  font-weight: 700 !important;
+}
+
+/* Teal badges */
+html.light .bg-teal-500\/15.text-teal-400 {
+  color: #115E59 !important;
+  /* Teal 800 */
+  font-weight: 700 !important;
+}
+
+/* Cyan / Sky badges */
+html.light .bg-cyan-500\/15.text-cyan-400,
+html.light .bg-sky-500\/15.text-sky-400 {
+  color: #075985 !important;
+  /* Sky 800 */
+  font-weight: 700 !important;
+}
+
+/* Slate / neutral badges */
+html.light .bg-slate-500\/15.text-slate-400 {
+  color: #334155 !important;
+  font-weight: 600 !important;
+}
+
+/* Colored badge borders — strengthen so they read on white */
+html.light .border-blue-500\/30,
+html.light .border-blue-500\/40 {
+  border-color: rgba(7, 89, 133, 0.45) !important;
+}
+
+html.light .border-emerald-500\/30,
+html.light .border-emerald-500\/40 {
+  border-color: rgba(6, 95, 70, 0.45) !important;
+}
+
+html.light .border-purple-500\/30,
+html.light .border-purple-500\/40 {
+  border-color: rgba(91, 33, 182, 0.45) !important;
+}
+
+html.light .border-rose-500\/30,
+html.light .border-rose-500\/40 {
+  border-color: rgba(159, 18, 57, 0.45) !important;
+}
+
+html.light .border-teal-500\/30 {
+  border-color: rgba(17, 94, 89, 0.45) !important;
+}
+
+html.light .border-cyan-500\/30,
+html.light .border-sky-500\/30 {
+  border-color: rgba(7, 89, 133, 0.45) !important;
+}
+
+/* ========================================================================= */
+/* LIGHT MODE: REMAINING HARDCODED DARK SURFACES & INPUTS                    */
+/* ========================================================================= */
+
+/* Solid dark panel backgrounds used in modals / dropdowns */
+html.light .bg-\[\#12141A\],
+html.light .bg-\[\#12141A\]\/95,
+html.light .bg-\[\#0C0E12\] {
+  background-color: #FFFFFF !important;
+}
+
+/* Tailwind slate dark surfaces (if any remain) */
+html.light .bg-slate-900,
+html.light .bg-slate-800,
+html.light .bg-slate-800\/50,
+html.light .bg-slate-800\/60 {
+  background-color: #F1F5F9 !important;
+}
+
+/* Dark borders */
+html.light .border-slate-700,
+html.light .border-slate-800 {
+  border-color: rgba(203, 213, 225, 0.9) !important;
+}
+
+/* Native select / option text in light mode */
+html.light select,
+html.light option {
+  color: #090D16 !important;
+}
+
+/* Placeholder text everywhere in light mode */
+html.light ::placeholder {
+  color: #64748B !important;
+  opacity: 1;
+}
+
+/* ========================================================================= */
+/* TYPOGRAPHIC HIERARCHY — KEY DATA EMPHASIS (both themes)                   */
+/* ========================================================================= */
+
+/* Key operational figures: prices, quantities, IDs, S/Ns */
+.data-key {
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+/* Secondary metadata: timestamps, helper notes — de-emphasized */
+.data-meta {
+  font-weight: 500;
+  letter-spacing: 0.01em;
 }
 
 /* ========================================================================= */
@@ -533,17 +713,38 @@ html.light ::-webkit-scrollbar-thumb {
   }
 
   #print-section,
-  #print-section * {
+  #print-section *,
+  #company-repair-receipt,
+  #company-repair-receipt *,
+  #repair-receipt-print,
+  #repair-receipt-print * {
     visibility: visible;
   }
 
-  #print-section {
+  #print-section,
+  #company-repair-receipt,
+  #repair-receipt-print {
     position: absolute;
     left: 0;
     top: 0;
     width: 100%;
-    background: white !important;
-    color: black !important;
+    background: #FFFFFF !important;
+    color: #000000 !important;
+    box-shadow: none !important;
+    border: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+
+  /* Force crisp black text on pure white paper regardless of theme */
+  #print-section *,
+  #company-repair-receipt *,
+  #repair-receipt-print * {
+    color: #000000 !important;
+    background: transparent !important;
+    border-color: #000000 !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
   }
 
   .no-print {

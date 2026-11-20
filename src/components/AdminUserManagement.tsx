@@ -123,20 +123,20 @@ export const AdminUserManagement: React.FC = () => {
             <tbody className="divide-y divide-white/[0.05]">
               {users.map((u) => (
                 <tr key={u.id} className="hover:bg-white/[0.03] transition">
-                  <td className="py-3.5 px-4 font-medium text-white flex items-center gap-2.5">
+                  <td className="py-3.5 px-4 font-bold text-white text-base flex items-center gap-2.5">
                     <div className="w-8 h-8 rounded-xl bg-white/[0.05] border border-white/[0.08] flex items-center justify-center font-bold text-xs text-[#FF6B00]">
                       {u.name.slice(0, 1)}
                     </div>
                     <span>{u.name}</span>
                   </td>
-                  <td className="py-3.5 px-4 font-mono text-[#FF6B00]">{u.username}</td>
+                  <td className="py-3.5 px-4 font-mono font-bold text-[#FF6B00] data-key">{u.username}</td>
                   <td className="py-3.5 px-4">
                     <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold border border-[#FF6B00]/30 bg-[#FF6B00]/10 text-slate-200">
                       {roleLabel[u.role]}
                     </span>
                   </td>
-                  <td className="py-3.5 px-4 text-slate-300">{u.phone || '-'}</td>
-                  <td className="py-3.5 px-4 text-slate-400 font-mono text-[11px]">{u.badge || '-'}</td>
+                  <td className="py-3.5 px-4 text-slate-300 data-meta">{u.phone || '-'}</td>
+                  <td className="py-3.5 px-4 text-slate-400 font-mono text-[11px] data-meta">{u.badge || '-'}</td>
                   <td className="py-3.5 px-4 text-right">
                     {u.id === 'u-admin' ? (
                       <span className="text-[10px] text-slate-500 italic">บัญชีหลัก</span>

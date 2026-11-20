@@ -2,10 +2,69 @@ import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import {
   MapPin, ShieldCheck, CheckCircle, Truck, Package,
-  RotateCcw, Wrench, Navigation, Filter, Plus, Printer,
-  CheckSquare, Square, X, Smartphone, AlertCircle, FileText
+  RotateCcw, Wrench, Printer,
+  CheckSquare, Square, X, Smartphone, UserCheck, Layers, Lock,
+  ChevronDown, ChevronUp
 } from 'lucide-react';
-import { ROUTE_DEFINITIONS, RouteCode, RepairTicket, getRouteByDistrict } from '../types';
+import { ROUTE_DEFINITIONS, RouteCode, RepairTicket, Item, getRouteByDistrict } from '../types';
+import { ListControls, useListControls } from './ListControls';
+import { ActivityTimeline, LatestUpdateBadge } from './ActivityTimeline';
+
+// ---------------------------------------------------------------------------
+// Helpers: group identical items into a single stacked card
+// ---------------------------------------------------------------------------
+interface ItemGroup {
+  key: string;
+  items: Item[];
+  model_name: string;
+  order_id?: string | null;
+  po_no?: string;
+  delivery_mode?: Item['delivery_mode'];
+}
+
+const groupItems = (list: Item[]): ItemGroup[] => {
+  const map = new Map<string, ItemGroup>();
+  list.forEach((item) => {
+    const key = `${item.order_id || item.po_no || 'no-order'}::${item.model_name}`;
+    const existing = map.get(key);
+    if (existing) {
+      existing.items.push(item);
+    } else {
+      map.set(key, {
+        key,
+        items: [item],
+        model_name: item.model_name,
+        order_id: item.order_id,
+        po_no: item.po_no,
+        delivery_mode: item.delivery_mode
+      });
+    }
+  });
+  return Array.from(map.values());
+};
+
+const DELIVERY_MODE_LABEL: Record<string, string> = {
+  install: 'ส่งพร้อมติดตั้ง',
+  drop_off: 'ส่งไม่ต้องติดตั้ง',
+  customer_pickup: 'ลูกค้ารับเองหน้าร้าน'
+};
+
+// Step badge component (1 -> 2 -> 3)
+const StepBadge: React.FC<{ step: number; label: string; active: boolean; done?: boolean }> = ({ step, label, active, done }) => (
+  <div
+    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold border whitespace-nowrap transition ${done
+      ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+      : active
+        ? 'bg-[#FF6B00]/20 text-[#FF6B00] border-[#FF6B00]/40'
+        : 'bg-white/[0.03] text-slate-500 border-white/[0.08]'
+      }`}
+  >
+    <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] ${done ? 'bg-emerald-500 text-black' : active ? 'bg-[#FF6B00] text-black' : 'bg-white/10 text-slate-400'}`}>
+      {done ? '✓' : step}
+    </span>
+    <span>{label}</span>
+  </div>
+);
 
 const ACCESSORY_PRESETS = [
   'Adapter / หม้อแปลง',
@@ -43,7 +102,8 @@ const DISTRICT_OPTIONS = [
 export const OnsiteView: React.FC = () => {
   const {
     items, orders, repairTickets, confirmOnsiteDelivery,
-    completeRepairTicket, closeRepairTicket, createRepairTicket, currentUser, users
+    completeRepairTicket, closeRepairTicket, createRepairTicket, currentUser, users,
+    acceptOnsiteJob
   } = useApp();
 
   // If user has assigned route, default to it, otherwise 'all'
@@ -55,6 +115,7 @@ export const OnsiteView: React.FC = () => {
   const [selectedTechNameFilter, setSelectedTechNameFilter] = useState<string>(currentUser?.role === 'onsite' ? currentUser.name : 'all');
   const [selectedCategory, setSelectedCategory] = useState<'all' | 'new_goods' | 'repair_return' | 'pickup'>('all');
   const [deliveryNotes, setDeliveryNotes] = useState<Record<string, string>>({});
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   const [toast, setToast] = useState('');
 
   // Modal State for Onsite Pickup Form
@@ -145,11 +206,33 @@ export const OnsiteView: React.FC = () => {
 
   const totalAssignedCount = assignedNewGoods.length + assignedRepairedReturns.length + assignedPickups.length;
 
-  const handleDeliveryConfirm = (itemId: string, sn: string | null) => {
-    const note = deliveryNotes[itemId] || 'ติดตั้งและส่งมอบถึงมือลูกค้าเรียบร้อย';
-    confirmOnsiteDelivery(itemId, note);
+  // Sort + pagination สำหรับการ์ดงาน Onsite (จัดกลุ่มแล้ว)
+  const newGoodsList = useListControls(groupItems(assignedNewGoods), {
+    getDate: (g) => g.items[0]?.created_at,
+    getValue: (g) => g.items.length,
+    initialSort: 'newest',
+  });
 
-    setToast(`ส่งมอบสินค้าใหม่ S/N: ${sn || '-'} สำเร็จ และปิดงานเรียบร้อยแล้ว`);
+  const toggleGroup = (key: string) => {
+    setExpandedGroups(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const handleAcceptGroup = (group: ItemGroup) => {
+    const techName = currentUser?.name || 'ช่าง Onsite';
+    group.items.forEach(it => {
+      if (!it.assigned_prep_tech) acceptOnsiteJob(it.id, techName);
+    });
+    setExpandedGroups(prev => ({ ...prev, [group.key]: true }));
+    setToast(`ช่าง "${techName}" รับงานทั้งชุด ${group.items.length} เครื่องเรียบร้อยแล้ว`);
+    setTimeout(() => setToast(''), 3500);
+  };
+
+  const handleDeliveryConfirmGroup = (group: ItemGroup) => {
+    group.items.forEach(it => {
+      const note = deliveryNotes[it.id] || 'ติดตั้งและส่งมอบถึงมือลูกค้าเรียบร้อย';
+      confirmOnsiteDelivery(it.id, note);
+    });
+    setToast(`ส่งมอบสินค้าใหม่ทั้งชุด ${group.items.length} เครื่องสำเร็จ และปิดงานเรียบร้อยแล้ว`);
     setTimeout(() => setToast(''), 3500);
   };
 
@@ -447,232 +530,331 @@ export const OnsiteView: React.FC = () => {
             <p className="text-xs text-slate-500 mt-0.5">โปรดลองเลือกสายรถอื่น หรือเลือกดูงานช่างทุกคน</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {/* 1. CARDS: NEW GOODS */}
-            {(selectedCategory === 'all' || selectedCategory === 'new_goods') &&
-              assignedNewGoods.map((item) => {
-                const order = orders.find(o => o.id === item.order_id);
-                const rMeta = order?.route_code ? ROUTE_DEFINITIONS[order.route_code] : null;
-                const teamTechs = item.assigned_techs && item.assigned_techs.length > 0
-                  ? item.assigned_techs
-                  : (item.assigned_onsite_tech ? [item.assigned_onsite_tech] : []);
+          <div className="space-y-4">
+            <ListControls
+              from={newGoodsList.from}
+              to={newGoodsList.to}
+              total={newGoodsList.total}
+              page={newGoodsList.page}
+              totalPages={newGoodsList.totalPages}
+              pageSize={newGoodsList.pageSize}
+              sort={newGoodsList.sort}
+              onSortChange={newGoodsList.setSort}
+              onPageSizeChange={newGoodsList.setPageSize}
+              onPageChange={newGoodsList.setPage}
+              unit="งาน"
+            />
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {/* 1. CARDS: NEW GOODS (stacked by order + model) */}
+              {(selectedCategory === 'all' || selectedCategory === 'new_goods') &&
+                newGoodsList.pageItems.map((group) => {
+                  const order = orders.find(o => o.id === group.order_id);
+                  const rMeta = order?.route_code ? ROUTE_DEFINITIONS[order.route_code] : null;
+                  const firstItem = group.items[0];
+                  const teamTechs = firstItem.assigned_techs && firstItem.assigned_techs.length > 0
+                    ? firstItem.assigned_techs
+                    : (firstItem.assigned_onsite_tech ? [firstItem.assigned_onsite_tech] : []);
+                  const isAccepted = group.items.every(it => !!it.assigned_prep_tech);
+                  const isExpanded = !!expandedGroups[group.key];
+                  const deliveryLabel = DELIVERY_MODE_LABEL[group.delivery_mode || 'install'] || 'ส่งพร้อมติดตั้ง';
 
-                return (
-                  <div
-                    key={'new-' + item.id}
-                    className="p-5 rounded-2xl liquid-glass-card flex flex-col justify-between space-y-4 relative overflow-hidden border-emerald-500/30"
-                  >
-                    <div className="absolute top-0 left-0 right-0 h-1 bg-emerald-500" />
-
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-[11px] font-extrabold px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center gap-1">
-                          <Package className="w-3 h-3" />
-                          <span>[ส่งของใหม่ - เช็ควอย]</span>
-                        </span>
-                        <div className="flex items-center gap-1.5">
-                          {order?.delivery_mode === 'project' && (
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-gradient-to-r from-purple-500/25 to-orange-500/25 text-purple-300 border border-purple-500/40 shadow-sm animate-pulse">
-                              ⚡ Project
-                            </span>
-                          )}
-                          <span className="text-xs font-mono font-bold text-[#FF6B00]">{item.serial_number}</span>
-                        </div>
-                      </div>
-
-                      {/* Route Tag */}
-                      {rMeta && (
-                        <div className={`mb-2 px-2 py-0.5 rounded-md text-[10px] font-bold border inline-flex items-center gap-1 ${rMeta.badgeBg} ${rMeta.badgeBorder} ${rMeta.badgeText}`}>
-                          <span>{rMeta.name}</span>
-                          <span>• {order?.district || ''}</span>
-                        </div>
-                      )}
-
-                      {/* Team Teammates Display */}
-                      {teamTechs.length > 0 && (
-                        <div className="mb-2 p-1.5 rounded-xl bg-white/[0.04] border border-white/[0.08] text-[11px] text-slate-300 flex items-center gap-1.5 flex-wrap">
-                          <span className="text-slate-400 font-medium">ทีมงาน:</span>
-                          {teamTechs.map((name, idx) => (
-                            <span key={idx} className="px-2 py-0.2 rounded-md bg-[#FF6B00]/15 text-[#FF6B00] border border-[#FF6B00]/30 font-semibold text-[10px]">
-                              {name}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-
-                      <h4 className="text-sm font-bold text-white mb-1">{item.model_name}</h4>
-                      <p className="text-xs text-slate-300 font-medium">ลูกค้า: {order ? order.customer_name : '-'}</p>
-                      <p className="text-xs text-slate-500 mt-1 flex items-start gap-1">
-                        <MapPin className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0 mt-0.5" />
-                        <span>{order ? order.delivery_location : '-'}</span>
-                      </p>
-                    </div>
-
-                    <div className="pt-3 border-t border-white/[0.08] space-y-3">
-                      <div className="p-2.5 rounded-xl bg-white/[0.03] border border-white/[0.06] text-[11px] text-slate-300 flex items-center justify-between">
-                        <span className="text-slate-400">วอยรับประกัน:</span>
-                        <span className="font-mono text-emerald-400 font-bold flex items-center gap-1">
-                          <ShieldCheck className="w-3.5 h-3.5" />
-                          <span>ช่างเตรียมติดแล้ว ({item.void_date || 'ระบุแล้ว'})</span>
-                        </span>
-                      </div>
+                  return (
+                    <div
+                      key={'new-' + group.key}
+                      className={`p-5 rounded-2xl liquid-glass-card flex flex-col justify-between space-y-4 relative overflow-hidden border ${isAccepted ? 'border-emerald-500/30' : 'border-white/[0.08]'}`}
+                    >
+                      {isAccepted && <div className="absolute top-0 left-0 right-0 h-1 bg-emerald-500" />}
 
                       <div>
-                        <label className="block text-[11px] font-medium text-slate-400 mb-1">
-                          บันทึกการส่งมอบ / เซ็นรับ:
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="เช่น ลูกค้าตรวจรับครบถ้วน, ทดสอบเปิดเครื่องติดปกติ"
-                          value={deliveryNotes[item.id] || ''}
-                          onChange={(e) => setDeliveryNotes({ ...deliveryNotes, [item.id]: e.target.value })}
-                          className="w-full liquid-glass-input rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none"
-                        />
-                      </div>
-
-                      <button
-                        onClick={() => handleDeliveryConfirm(item.id, item.serial_number)}
-                        className="w-full py-2.5 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 active:scale-95 text-black font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-500/25 border border-white/20"
-                      >
-                        <CheckCircle className="w-4 h-4" />
-                        <span>ส่งมอบของใหม่สำเร็จ (ปิดงาน)</span>
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-
-            {/* 2. CARDS: REPAIRED RETURN */}
-            {(selectedCategory === 'all' || selectedCategory === 'repair_return') &&
-              assignedRepairedReturns.map((ticket) => {
-                const rMeta = ticket.route_code ? ROUTE_DEFINITIONS[ticket.route_code] : null;
-                const teamTechs = ticket.assigned_techs && ticket.assigned_techs.length > 0
-                  ? ticket.assigned_techs
-                  : (ticket.assigned_onsite_tech ? [ticket.assigned_onsite_tech] : []);
-
-                return (
-                  <div
-                    key={'rep-return-' + ticket.id}
-                    className="p-5 rounded-2xl liquid-glass-card flex flex-col justify-between space-y-4 relative overflow-hidden border-purple-500/30"
-                  >
-                    <div className="absolute top-0 left-0 right-0 h-1 bg-purple-500" />
-
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-[11px] font-extrabold px-2.5 py-1 rounded-lg bg-purple-500/20 text-purple-400 border border-purple-500/40 flex items-center gap-1">
-                          <RotateCcw className="w-3 h-3" />
-                          <span>[ส่งคืนงานซ่อม]</span>
-                        </span>
-                        <span className="text-xs font-mono font-bold text-slate-300">{ticket.ticket_no}</span>
-                      </div>
-
-                      {rMeta && (
-                        <div className={`mb-2 px-2 py-0.5 rounded-md text-[10px] font-bold border inline-flex items-center gap-1 ${rMeta.badgeBg} ${rMeta.badgeBorder} ${rMeta.badgeText}`}>
-                          <span>{rMeta.name}</span>
-                          <span>• {ticket.district || ''}</span>
+                        {/* Step badges */}
+                        <div className="flex items-center gap-1.5 flex-wrap mb-3">
+                          <StepBadge step={1} label="รอกดรับงาน" active={!isAccepted} done={isAccepted} />
+                          <StepBadge step={2} label="กำลังเตรียม/ติดโลโก้" active={isAccepted} />
+                          <StepBadge step={3} label="พร้อมส่ง/ติดวอย" active={false} />
                         </div>
-                      )}
 
-                      {teamTechs.length > 0 && (
-                        <div className="mb-2 p-1.5 rounded-xl bg-white/[0.04] border border-white/[0.08] text-[11px] text-slate-300 flex items-center gap-1.5 flex-wrap">
-                          <span className="text-slate-400 font-medium">ทีมงาน:</span>
-                          {teamTechs.map((name, idx) => (
-                            <span key={idx} className="px-2 py-0.2 rounded-md bg-purple-500/20 text-purple-300 border border-purple-500/30 font-semibold text-[10px]">
-                              {name}
+                        <div className="flex items-center justify-between mb-2">
+                          <span className={`text-[11px] font-extrabold px-2.5 py-1 rounded-lg border flex items-center gap-1 ${isAccepted ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40' : 'bg-white/[0.05] text-slate-400 border-white/[0.1]'}`}>
+                            <Package className="w-3 h-3" />
+                            <span>{isAccepted ? '[ส่งของใหม่ - กำลังส่งมอบ]' : '[ส่งของใหม่ - รอกดรับงาน]'}</span>
+                          </span>
+                          {group.items.length > 1 && (
+                            <span className="px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[11px] font-extrabold flex items-center gap-1">
+                              <Layers className="w-3 h-3" />
+                              จำนวน {group.items.length} เครื่อง
                             </span>
-                          ))}
+                          )}
                         </div>
-                      )}
 
-                      <h4 className="text-sm font-bold text-white mb-0.5">S/N: {ticket.walkin_sn}</h4>
-                      <p className="text-xs text-slate-300 font-medium">ลูกค้า: {ticket.customer_name}</p>
-                      <p className="text-xs text-slate-500 mt-1 flex items-start gap-1">
-                        <MapPin className="w-3.5 h-3.5 text-purple-400 flex-shrink-0 mt-0.5" />
-                        <span>{ticket.delivery_location || ticket.customer_phone || '-'}</span>
-                      </p>
-                      <div className="mt-2 p-2 rounded-xl bg-purple-500/10 border border-purple-500/20 text-[11px] text-purple-300">
-                        <strong>ผลการซ่อม:</strong> {ticket.repair_detail || 'เปลี่ยนอะไหล่และเทสผ่านแล้ว'}
+                        {/* Route & Delivery Mode */}
+                        <div className="flex items-center gap-1.5 flex-wrap mb-2">
+                          {rMeta && (
+                            <div className={`px-2 py-0.5 rounded-md text-[10px] font-bold border inline-flex items-center gap-1 ${rMeta.badgeBg} ${rMeta.badgeBorder} ${rMeta.badgeText}`}>
+                              <span>{rMeta.shortName}</span>
+                              <span>• {order?.district || ''}</span>
+                            </div>
+                          )}
+                          <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-blue-500/15 text-blue-300 border border-blue-500/30">
+                            {deliveryLabel}
+                          </span>
+                        </div>
+
+                        {/* Team Teammates Display */}
+                        {teamTechs.length > 0 && (
+                          <div className="mb-2 p-1.5 rounded-xl bg-white/[0.04] border border-white/[0.08] text-[11px] text-slate-300 flex items-center gap-1.5 flex-wrap">
+                            <span className="text-slate-400 font-medium">ทีมงาน:</span>
+                            {teamTechs.map((name, idx) => (
+                              <span key={idx} className="px-2 py-0.2 rounded-md bg-[#FF6B00]/15 text-[#FF6B00] border border-[#FF6B00]/30 font-semibold text-[10px]">
+                                {name}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
+                        <h4 className="text-base font-bold text-white mb-1">{group.model_name}</h4>
+                        <p className="text-xs text-slate-300 font-medium data-meta">ลูกค้า: <strong className="text-white font-bold">{order ? order.customer_name : '-'}</strong></p>
+                        <p className="text-xs text-slate-500 mt-1 flex items-start gap-1 data-meta">
+                          <MapPin className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0 mt-0.5" />
+                          <span>{order ? order.delivery_location : '-'}</span>
+                        </p>
+
+                        {isAccepted && (
+                          <div className="mt-2 text-[10px] text-emerald-400 flex items-center gap-1">
+                            <UserCheck className="w-3.5 h-3.5" />
+                            <span>ผู้รับงาน: {firstItem.assigned_prep_tech} ({new Date(firstItem.prep_accepted_at || Date.now()).toLocaleTimeString('th-TH')})</span>
+                          </div>
+                        )}
+
+                        <div className="mt-3 pt-2 border-t border-white/[0.08]">
+                          <LatestUpdateBadge
+                            logs={firstItem.activity_logs}
+                            fallbackTimestamp={firstItem.delivered_at || firstItem.dispatched_at || firstItem.assigned_at || firstItem.updated_at || firstItem.created_at}
+                            fallbackActor={firstItem.assigned_prep_tech}
+                          />
+                          <ActivityTimeline logs={firstItem.activity_logs} />
+                        </div>
+                      </div>
+
+                      {/* GATE: Accept first, or unlocked controls */}
+                      <div className="pt-3 border-t border-white/[0.08] space-y-3">
+                        {!isAccepted ? (
+                          <>
+                            <div className="p-2.5 rounded-xl bg-white/[0.03] border border-white/[0.06] text-[11px] text-slate-400 flex items-center gap-1.5">
+                              <Lock className="w-3.5 h-3.5 text-slate-500" />
+                              <span>กดรับงานก่อนจึงจะบันทึกส่งมอบได้</span>
+                            </div>
+                            <button
+                              onClick={() => handleAcceptGroup(group)}
+                              className="w-full py-3 bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] active:scale-95 text-black font-extrabold rounded-xl text-sm transition cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-[#FF6B00]/25 border border-white/20"
+                            >
+                              <UserCheck className="w-4 h-4" />
+                              <span>กดรับงานนี้ (Accept Job)</span>
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => toggleGroup(group.key)}
+                              className="w-full py-1.5 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] text-slate-300 text-[11px] font-semibold border border-white/[0.1] transition cursor-pointer flex items-center justify-center gap-1"
+                            >
+                              {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                              <span>{isExpanded ? 'ซ่อนรายการส่งมอบ' : `เปิดรายการส่งมอบ (${group.items.length} เครื่อง)`}</span>
+                            </button>
+
+                            {isExpanded && (
+                              <>
+                                <div className="space-y-2">
+                                  {group.items.map((item, idx) => (
+                                    <div key={item.id} className="p-2.5 rounded-xl bg-white/[0.03] border border-white/[0.06] space-y-2">
+                                      <div className="flex items-center justify-between">
+                                        <span className="text-[10px] font-bold text-slate-400">#{idx + 1}</span>
+                                        <span className="text-xs font-mono font-extrabold text-[#FF6B00] data-key">{item.serial_number}</span>
+                                      </div>
+                                      <div className="flex items-center justify-between text-[10px] text-slate-400">
+                                        <span>วอยรับประกัน:</span>
+                                        <span className="font-mono text-emerald-400 font-bold flex items-center gap-1">
+                                          <ShieldCheck className="w-3 h-3" />
+                                          {item.void_date || 'ระบุแล้ว'}
+                                        </span>
+                                      </div>
+                                      <input
+                                        type="text"
+                                        placeholder="บันทึกการส่งมอบ / เซ็นรับ"
+                                        value={deliveryNotes[item.id] || ''}
+                                        onChange={(e) => setDeliveryNotes({ ...deliveryNotes, [item.id]: e.target.value })}
+                                        className="w-full liquid-glass-input rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none"
+                                      />
+                                    </div>
+                                  ))}
+                                </div>
+
+                                <button
+                                  onClick={() => handleDeliveryConfirmGroup(group)}
+                                  className="w-full py-2.5 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 active:scale-95 text-black font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-500/25 border border-white/20"
+                                >
+                                  <CheckCircle className="w-4 h-4" />
+                                  <span>ส่งมอบของใหม่สำเร็จทั้งชุด ({group.items.length})</span>
+                                </button>
+                              </>
+                            )}
+                          </>
+                        )}
                       </div>
                     </div>
+                  );
+                })}
 
-                    <div className="pt-3 border-t border-white/[0.08] space-y-3">
-                      <button
-                        onClick={() => handleReturnConfirm(ticket.id, ticket.ticket_no)}
-                        className="w-full py-2.5 bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-500 active:scale-95 text-white font-bold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-purple-600/25 border border-white/20"
-                      >
-                        <CheckCircle className="w-4 h-4" />
-                        <span>ส่งคืนเครื่องซ่อมถึงมือลูกค้า (ปิดงาน)</span>
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
+              {/* 2. CARDS: REPAIRED RETURN */}
+              {(selectedCategory === 'all' || selectedCategory === 'repair_return') &&
+                assignedRepairedReturns.map((ticket) => {
+                  const rMeta = ticket.route_code ? ROUTE_DEFINITIONS[ticket.route_code] : null;
+                  const teamTechs = ticket.assigned_techs && ticket.assigned_techs.length > 0
+                    ? ticket.assigned_techs
+                    : (ticket.assigned_onsite_tech ? [ticket.assigned_onsite_tech] : []);
 
-            {/* 3. CARDS: ONSITE PICKUP */}
-            {(selectedCategory === 'all' || selectedCategory === 'pickup') &&
-              assignedPickups.map((ticket) => {
-                const rMeta = ticket.route_code ? ROUTE_DEFINITIONS[ticket.route_code] : null;
-                const teamTechs = ticket.assigned_techs && ticket.assigned_techs.length > 0
-                  ? ticket.assigned_techs
-                  : (ticket.assigned_onsite_tech ? [ticket.assigned_onsite_tech] : []);
+                  return (
+                    <div
+                      key={'rep-return-' + ticket.id}
+                      className="p-5 rounded-2xl liquid-glass-card flex flex-col justify-between space-y-4 relative overflow-hidden border-purple-500/30"
+                    >
+                      <div className="absolute top-0 left-0 right-0 h-1 bg-purple-500" />
 
-                return (
-                  <div
-                    key={'pickup-' + ticket.id}
-                    className="p-5 rounded-2xl liquid-glass-card flex flex-col justify-between space-y-4 relative overflow-hidden border-amber-500/30"
-                  >
-                    <div className="absolute top-0 left-0 right-0 h-1 bg-amber-500" />
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-[11px] font-extrabold px-2.5 py-1 rounded-lg bg-purple-500/20 text-purple-400 border border-purple-500/40 flex items-center gap-1">
+                            <RotateCcw className="w-3 h-3" />
+                            <span>[ส่งคืนงานซ่อม]</span>
+                          </span>
+                          <span className="text-sm font-mono font-extrabold text-slate-300 data-key">{ticket.ticket_no}</span>
+                        </div>
 
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-[11px] font-extrabold px-2.5 py-1 rounded-lg bg-amber-500/20 text-amber-400 border border-amber-500/40 flex items-center gap-1">
-                          <Wrench className="w-3 h-3" />
-                          <span>[ออกซ่อม/รับเครื่องกลับร้าน]</span>
-                        </span>
-                        <span className="text-xs font-mono font-bold text-amber-400">{ticket.ticket_no}</span>
+                        {rMeta && (
+                          <div className={`mb-2 px-2 py-0.5 rounded-md text-[10px] font-bold border inline-flex items-center gap-1 ${rMeta.badgeBg} ${rMeta.badgeBorder} ${rMeta.badgeText}`}>
+                            <span>{rMeta.name}</span>
+                            <span>• {ticket.district || ''}</span>
+                          </div>
+                        )}
+
+                        {teamTechs.length > 0 && (
+                          <div className="mb-2 p-1.5 rounded-xl bg-white/[0.04] border border-white/[0.08] text-[11px] text-slate-300 flex items-center gap-1.5 flex-wrap">
+                            <span className="text-slate-400 font-medium">ทีมงาน:</span>
+                            {teamTechs.map((name, idx) => (
+                              <span key={idx} className="px-2 py-0.2 rounded-md bg-purple-500/20 text-purple-300 border border-purple-500/30 font-semibold text-[10px]">
+                                {name}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
+                        <h4 className="text-base font-bold text-white mb-0.5 data-key">S/N: {ticket.walkin_sn}</h4>
+                        <p className="text-xs text-slate-300 font-medium data-meta">ลูกค้า: <strong className="text-white font-bold">{ticket.customer_name}</strong></p>
+                        <p className="text-xs text-slate-500 mt-1 flex items-start gap-1 data-meta">
+                          <MapPin className="w-3.5 h-3.5 text-purple-400 flex-shrink-0 mt-0.5" />
+                          <span>{ticket.delivery_location || ticket.customer_phone || '-'}</span>
+                        </p>
+                        <div className="mt-2 p-2 rounded-xl bg-purple-500/10 border border-purple-500/20 text-[11px] text-purple-300">
+                          <strong>ผลการซ่อม:</strong> {ticket.repair_detail || 'เปลี่ยนอะไหล่และเทสผ่านแล้ว'}
+                        </div>
+
+                        <div className="mt-3 pt-2 border-t border-white/[0.08]">
+                          <LatestUpdateBadge
+                            logs={ticket.activity_logs}
+                            fallbackTimestamp={ticket.delivered_at || ticket.assigned_at || ticket.updated_at || ticket.created_at}
+                            fallbackActor={ticket.received_by}
+                          />
+                          <ActivityTimeline logs={ticket.activity_logs} />
+                        </div>
                       </div>
 
-                      {rMeta && (
-                        <div className={`mb-2 px-2 py-0.5 rounded-md text-[10px] font-bold border inline-flex items-center gap-1 ${rMeta.badgeBg} ${rMeta.badgeBorder} ${rMeta.badgeText}`}>
-                          <span>{rMeta.name}</span>
-                          <span>• {ticket.district || ''}</span>
-                        </div>
-                      )}
-
-                      {teamTechs.length > 0 && (
-                        <div className="mb-2 p-1.5 rounded-xl bg-white/[0.04] border border-white/[0.08] text-[11px] text-slate-300 flex items-center gap-1.5 flex-wrap">
-                          <span className="text-slate-400 font-medium">ทีมงาน:</span>
-                          {teamTechs.map((name, idx) => (
-                            <span key={idx} className="px-2 py-0.2 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold text-[10px]">
-                              {name}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-
-                      <h4 className="text-sm font-bold text-white mb-0.5">S/N: {ticket.walkin_sn}</h4>
-                      <p className="text-xs text-slate-300 font-medium">ลูกค้า: {ticket.customer_name}</p>
-                      <p className="text-xs text-slate-500 mt-1 flex items-start gap-1">
-                        <MapPin className="w-3.5 h-3.5 text-amber-400 flex-shrink-0 mt-0.5" />
-                        <span>{ticket.delivery_location || ticket.customer_phone || '-'}</span>
-                      </p>
-                      <div className="mt-2 p-2 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-300">
-                        <strong>อาการเสีย:</strong> {ticket.fault_symptom}
+                      <div className="pt-3 border-t border-white/[0.08] space-y-3">
+                        <button
+                          onClick={() => handleReturnConfirm(ticket.id, ticket.ticket_no)}
+                          className="w-full py-2.5 bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-500 active:scale-95 text-white font-bold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-purple-600/25 border border-white/20"
+                        >
+                          <CheckCircle className="w-4 h-4" />
+                          <span>ส่งคืนเครื่องซ่อมถึงมือลูกค้า (ปิดงาน)</span>
+                        </button>
                       </div>
                     </div>
+                  );
+                })}
 
-                    <div className="pt-3 border-t border-white/[0.08] space-y-2">
-                      <button
-                        onClick={() => handleOpenPickupForJob(ticket)}
-                        className="w-full py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 active:scale-95 text-black font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-amber-500/25 border border-white/20"
-                      >
-                        <Smartphone className="w-4 h-4" />
-                        <span>บันทึกรับเครื่อง & ระบุอุปกรณ์ที่ติดมา</span>
-                      </button>
+              {/* 3. CARDS: ONSITE PICKUP */}
+              {(selectedCategory === 'all' || selectedCategory === 'pickup') &&
+                assignedPickups.map((ticket) => {
+                  const rMeta = ticket.route_code ? ROUTE_DEFINITIONS[ticket.route_code] : null;
+                  const teamTechs = ticket.assigned_techs && ticket.assigned_techs.length > 0
+                    ? ticket.assigned_techs
+                    : (ticket.assigned_onsite_tech ? [ticket.assigned_onsite_tech] : []);
+
+                  return (
+                    <div
+                      key={'pickup-' + ticket.id}
+                      className="p-5 rounded-2xl liquid-glass-card flex flex-col justify-between space-y-4 relative overflow-hidden border-amber-500/30"
+                    >
+                      <div className="absolute top-0 left-0 right-0 h-1 bg-amber-500" />
+
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-[11px] font-extrabold px-2.5 py-1 rounded-lg bg-amber-500/20 text-amber-400 border border-amber-500/40 flex items-center gap-1">
+                            <Wrench className="w-3 h-3" />
+                            <span>[ออกซ่อม/รับเครื่องกลับร้าน]</span>
+                          </span>
+                          <span className="text-sm font-mono font-extrabold text-amber-400 data-key">{ticket.ticket_no}</span>
+                        </div>
+
+                        {rMeta && (
+                          <div className={`mb-2 px-2 py-0.5 rounded-md text-[10px] font-bold border inline-flex items-center gap-1 ${rMeta.badgeBg} ${rMeta.badgeBorder} ${rMeta.badgeText}`}>
+                            <span>{rMeta.name}</span>
+                            <span>• {ticket.district || ''}</span>
+                          </div>
+                        )}
+
+                        {teamTechs.length > 0 && (
+                          <div className="mb-2 p-1.5 rounded-xl bg-white/[0.04] border border-white/[0.08] text-[11px] text-slate-300 flex items-center gap-1.5 flex-wrap">
+                            <span className="text-slate-400 font-medium">ทีมงาน:</span>
+                            {teamTechs.map((name, idx) => (
+                              <span key={idx} className="px-2 py-0.2 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold text-[10px]">
+                                {name}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
+                        <h4 className="text-base font-bold text-white mb-0.5 data-key">S/N: {ticket.walkin_sn}</h4>
+                        <p className="text-xs text-slate-300 font-medium data-meta">ลูกค้า: <strong className="text-white font-bold">{ticket.customer_name}</strong></p>
+                        <p className="text-xs text-slate-500 mt-1 flex items-start gap-1 data-meta">
+                          <MapPin className="w-3.5 h-3.5 text-amber-400 flex-shrink-0 mt-0.5" />
+                          <span>{ticket.delivery_location || ticket.customer_phone || '-'}</span>
+                        </p>
+                        <div className="mt-2 p-2 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-300">
+                          <strong>อาการเสีย:</strong> {ticket.fault_symptom}
+                        </div>
+
+                        <div className="mt-3 pt-2 border-t border-white/[0.08]">
+                          <LatestUpdateBadge
+                            logs={ticket.activity_logs}
+                            fallbackTimestamp={ticket.started_at || ticket.assigned_at || ticket.updated_at || ticket.created_at}
+                            fallbackActor={ticket.received_by}
+                          />
+                          <ActivityTimeline logs={ticket.activity_logs} />
+                        </div>
+                      </div>
+
+                      <div className="pt-3 border-t border-white/[0.08] space-y-2">
+                        <button
+                          onClick={() => handleOpenPickupForJob(ticket)}
+                          className="w-full py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 active:scale-95 text-black font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-amber-500/25 border border-white/20"
+                        >
+                          <Smartphone className="w-4 h-4" />
+                          <span>บันทึกรับเครื่อง & ระบุอุปกรณ์ที่ติดมา</span>
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
+            </div>
           </div>
         )}
       </div>
@@ -909,11 +1091,11 @@ export const OnsiteView: React.FC = () => {
             {/* Printable Receipt Section */}
             <div id="repair-receipt-print" className="space-y-4">
               <div className="text-center pb-3 border-b border-white/[0.1]">
-                <h2 className="text-base font-extrabold text-[#FF6B00] tracking-wider uppercase">
+                <h2 className="text-lg font-extrabold text-[#FF6B00] tracking-wider uppercase">
                   BossComputech
                 </h2>
-                <p className="text-[10px] text-slate-400">ใบรับเครื่องซ่อม / Service Intake Receipt</p>
-                <div className="mt-2 inline-block px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 font-mono font-bold text-xs">
+                <p className="text-[10px] text-slate-400 data-meta">ใบรับเครื่องซ่อม / Service Intake Receipt</p>
+                <div className="mt-2 inline-block px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 font-mono font-extrabold text-sm data-key">
                   {receiptTicket.ticket_no}
                 </div>
               </div>
@@ -925,7 +1107,7 @@ export const OnsiteView: React.FC = () => {
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-400">ลูกค้า:</span>
-                  <span className="text-white font-bold">{receiptTicket.customer_name}</span>
+                  <span className="text-white font-bold text-sm">{receiptTicket.customer_name}</span>
                 </div>
                 {receiptTicket.customer_phone && (
                   <div className="flex justify-between">
@@ -945,7 +1127,7 @@ export const OnsiteView: React.FC = () => {
                 )}
                 <div className="flex justify-between">
                   <span className="text-slate-400">Serial Number (S/N):</span>
-                  <span className="text-[#FF6B00] font-mono font-bold">{receiptTicket.walkin_sn}</span>
+                  <span className="text-[#FF6B00] font-mono font-extrabold data-key">{receiptTicket.walkin_sn}</span>
                 </div>
                 <div className="pt-2 border-t border-white/[0.06]">
                   <span className="text-slate-400 block mb-0.5">อุปกรณ์ที่ติดมาด้วย:</span>

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { 
-  Clock, Package, ClipboardList, Truck, Wrench, CheckCircle2, 
+import {
+  Clock, Package, ClipboardList, Truck, Wrench, CheckCircle2,
   Search, ShieldAlert, CheckCircle, Hash, Warehouse
 } from 'lucide-react';
 import { ItemStatus } from '../types';
@@ -24,7 +24,7 @@ export const DashboardView: React.FC = () => {
   };
 
   const searchedItem = searchQuery ? items.find(i => i.serial_number && i.serial_number.toLowerCase() === searchQuery.toLowerCase()) : null;
-  const searchedOrder = searchQuery 
+  const searchedOrder = searchQuery
     ? orders.find(o => (o.bill_no && o.bill_no.toLowerCase() === searchQuery.toLowerCase()) || (searchedItem && searchedItem.order_id === o.id))
     : null;
   const searchedRepairs = searchQuery ? repairTickets.filter(r => r.walkin_sn && r.walkin_sn.toLowerCase() === searchQuery.toLowerCase()) : [];
@@ -42,7 +42,7 @@ export const DashboardView: React.FC = () => {
     expDate.setFullYear(expDate.getFullYear() + 1);
     isExpired = new Date() > expDate;
     isWarrantyActive = !isExpired;
-    warrantyText = isExpired 
+    warrantyText = isExpired
       ? `หมดประกันแล้ว (สิ้นสุด ${expDate.toLocaleDateString('th-TH')})`
       : `อยู่ในประกัน 1 ปี (คุ้มครองถึง ${expDate.toLocaleDateString('th-TH')})`;
   }
@@ -124,8 +124,8 @@ export const DashboardView: React.FC = () => {
             <span>รอจัดซื้อ/เช็กสต๊อก</span>
             <Clock className="w-3.5 h-3.5 text-amber-400" />
           </div>
-          <div className="text-2xl font-extrabold text-amber-400">{pendingPurchasing}</div>
-          <div className="text-[11px] text-slate-500 mt-1">ออเดอร์ใหม่ฝ่ายขาย</div>
+          <div className="text-2xl font-extrabold text-amber-400 data-key">{pendingPurchasing}</div>
+          <div className="text-xs font-medium text-slate-500 mt-1 data-meta">ออเดอร์ใหม่ฝ่ายขาย</div>
         </div>
 
         <div className="liquid-glass-card p-4 rounded-2xl relative overflow-hidden group">
@@ -133,8 +133,8 @@ export const DashboardView: React.FC = () => {
             <span>รอช่างเตรียม</span>
             <Package className="w-3.5 h-3.5 text-[#FF6B00]" />
           </div>
-          <div className="text-2xl font-extrabold text-[#FF6B00]">{pendingPrep}</div>
-          <div className="text-[11px] text-slate-500 mt-1">ชิ้น รอใส่ S/N</div>
+          <div className="text-2xl font-extrabold text-[#FF6B00] data-key">{pendingPrep}</div>
+          <div className="text-xs font-medium text-slate-500 mt-1 data-meta">ชิ้น รอใส่ S/N</div>
         </div>
 
         <div className="liquid-glass-card p-4 rounded-2xl relative overflow-hidden group">
@@ -142,8 +142,8 @@ export const DashboardView: React.FC = () => {
             <span>พร้อมจัดคิวส่ง</span>
             <ClipboardList className="w-3.5 h-3.5 text-blue-400" />
           </div>
-          <div className="text-2xl font-extrabold text-blue-400">{readyDispatch}</div>
-          <div className="text-[11px] text-slate-500 mt-1">หน้าร้านรอจ่ายงาน</div>
+          <div className="text-2xl font-extrabold text-blue-400 data-key">{readyDispatch}</div>
+          <div className="text-xs font-medium text-slate-500 mt-1 data-meta">หน้าร้านรอจ่ายงาน</div>
         </div>
 
         <div className="liquid-glass-card p-4 rounded-2xl relative overflow-hidden group">
@@ -151,8 +151,8 @@ export const DashboardView: React.FC = () => {
             <span>กำลังส่ง Onsite</span>
             <Truck className="w-3.5 h-3.5 text-purple-400" />
           </div>
-          <div className="text-2xl font-extrabold text-purple-400">{assignedOnsite}</div>
-          <div className="text-[11px] text-slate-500 mt-1">ช่างกำลังไปส่ง/ติดวอย</div>
+          <div className="text-2xl font-extrabold text-purple-400 data-key">{assignedOnsite}</div>
+          <div className="text-xs font-medium text-slate-500 mt-1 data-meta">ช่างกำลังไปส่ง/ติดวอย</div>
         </div>
 
         <div className="liquid-glass-card p-4 rounded-2xl relative overflow-hidden group">
@@ -160,8 +160,8 @@ export const DashboardView: React.FC = () => {
             <span>กำลังซ่อมในร้าน</span>
             <Wrench className="w-3.5 h-3.5 text-rose-400" />
           </div>
-          <div className="text-2xl font-extrabold text-rose-400">{inRepair}</div>
-          <div className="text-[11px] text-slate-500 mt-1">ตรวจเช็คบนโต๊ะช่าง</div>
+          <div className="text-2xl font-extrabold text-rose-400 data-key">{inRepair}</div>
+          <div className="text-xs font-medium text-slate-500 mt-1 data-meta">ตรวจเช็คบนโต๊ะช่าง</div>
         </div>
 
         <div className="liquid-glass-card p-4 rounded-2xl relative overflow-hidden group">
@@ -169,8 +169,8 @@ export const DashboardView: React.FC = () => {
             <span>ส่งมอบสมบูรณ์</span>
             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
           </div>
-          <div className="text-2xl font-extrabold text-emerald-400">{delivered}</div>
-          <div className="text-[11px] text-slate-500 mt-1">ติดวอย & ปิดงานแล้ว</div>
+          <div className="text-2xl font-extrabold text-emerald-400 data-key">{delivered}</div>
+          <div className="text-xs font-medium text-slate-500 mt-1 data-meta">ติดวอย & ปิดงานแล้ว</div>
         </div>
       </div>
 
@@ -255,13 +255,12 @@ export const DashboardView: React.FC = () => {
                   </p>
                 </div>
                 <div>
-                  <span className={`px-3 py-1 rounded-xl text-xs font-semibold border ${
-                    isWarrantyActive 
-                      ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
-                      : isExpired 
+                  <span className={`px-3 py-1 rounded-xl text-xs font-semibold border ${isWarrantyActive
+                    ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                    : isExpired
                       ? 'bg-rose-500/15 text-rose-400 border-rose-500/30'
                       : 'bg-amber-500/15 text-amber-400 border-amber-500/30'
-                  }`}>
+                    }`}>
                     {warrantyText}
                   </span>
                 </div>
@@ -342,11 +341,11 @@ export const DashboardView: React.FC = () => {
                 const ord = orders.find(o => o.id === i.order_id);
                 return (
                   <tr key={i.id} className="hover:bg-white/[0.03] transition">
-                    <td className="py-3.5 px-4 font-mono font-bold text-[#FF6B00] whitespace-nowrap">
+                    <td className="py-3.5 px-4 font-mono font-extrabold text-sm text-[#FF6B00] whitespace-nowrap data-key">
                       {i.serial_number || <span className="text-slate-500 font-normal italic">รอใส่ S/N</span>}
                     </td>
-                    <td className="py-3.5 px-4 text-white font-medium whitespace-nowrap">{i.model_name}</td>
-                    <td className="py-3.5 px-4 text-slate-300 whitespace-nowrap">{ord ? ord.customer_name : (i.status === 'in_stock' ? <span className="text-emerald-400">สต๊อกร้าน BossComputech</span> : '-')}</td>
+                    <td className="py-3.5 px-4 text-base font-bold text-white whitespace-nowrap">{i.model_name}</td>
+                    <td className="py-3.5 px-4 text-slate-300 font-medium whitespace-nowrap">{ord ? ord.customer_name : (i.status === 'in_stock' ? <span className="text-emerald-400">สต๊อกร้าน BossComputech</span> : '-')}</td>
                     <td className="py-3.5 px-4 whitespace-nowrap">
                       {renderItemStatusBadge(i.status)}
                     </td>
