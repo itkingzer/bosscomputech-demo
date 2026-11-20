@@ -1,35 +1,16 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { useApp } from '../context/AppContext';
 import {
   FilePlus2, Send, ListOrdered, CheckCircle, Plus,
-  Sparkles, Tag, Layers, MapPin, Navigation, Trash2, Calendar, CreditCard,
-  FileText, Truck, Search, Filter, ShoppingBag, X, CheckSquare, Square, Check
+  Sparkles, Layers, Trash2, Calendar, CreditCard,
+  FileText, Truck, Search, Filter, ShoppingBag, X, Check,
+  UserCheck, Pencil, Lock, TrendingUp, AlertTriangle, Package
 } from 'lucide-react';
-import { ROUTE_DEFINITIONS, getRouteByDistrict, RouteCode, BillType, PaymentTerm, DeliveryMode, OrderItem } from '../types';
-
-export interface CatalogItem {
-  id: string;
-  name: string;
-  category: 'pc_notebook' | 'printer' | 'cctv_network' | 'service' | 'general';
-  item_type: 'hardware' | 'service';
-  unit_price: number;
-}
-
-const DEFAULT_CATALOG: CatalogItem[] = [
-  { id: 'cat-1', name: 'BossComputech Core-i7 Workstation Pro', category: 'pc_notebook', item_type: 'hardware', unit_price: 32500 },
-  { id: 'cat-2', name: 'BossComputech Mini POS Terminal X1', category: 'pc_notebook', item_type: 'hardware', unit_price: 18900 },
-  { id: 'cat-3', name: 'BossComputech AI Edge Box Ultra', category: 'pc_notebook', item_type: 'hardware', unit_price: 24500 },
-  { id: 'cat-4', name: 'BossComputech All-in-One Touch 21.5"', category: 'pc_notebook', item_type: 'hardware', unit_price: 21900 },
-  { id: 'cat-5', name: 'BossComputech Rack Server 1U Standard', category: 'pc_notebook', item_type: 'hardware', unit_price: 65000 },
-  { id: 'cat-6', name: 'Hikvision IP Camera 4MP ColorVu PoE Kit 4ch', category: 'cctv_network', item_type: 'hardware', unit_price: 12900 },
-  { id: 'cat-7', name: 'Epson EcoTank L14150 A3+ Wi-Fi All-in-One Ink Tank Printer', category: 'printer', item_type: 'hardware', unit_price: 16500 },
-  { id: 'cat-8', name: 'Ubiquiti UniFi U6-Pro Wi-Fi 6 Access Point', category: 'cctv_network', item_type: 'hardware', unit_price: 6200 },
-  { id: 'cat-9', name: 'ตู้ Rack 42U 600x1000mm พร้อม PDU & พัดลม', category: 'cctv_network', item_type: 'hardware', unit_price: 18500 },
-  { id: 'cat-10', name: 'สายสัญญาณ LAN Link Cat6 UTP 305m (กล่อง)', category: 'cctv_network', item_type: 'hardware', unit_price: 3850 },
-  { id: 'cat-11', name: 'ค่าบริการเดินสาย LAN ท่อร้อยสาย และจัดตู้ Rack Server (ต่อจุด)', category: 'service', item_type: 'service', unit_price: 450 },
-  { id: 'cat-12', name: 'ค่าบริการติดตั้งเซ็ตอัพระบบกล้องวงจรปิด CCTV PoE (4 จุด)', category: 'service', item_type: 'service', unit_price: 2500 },
-  { id: 'cat-13', name: 'ค่าบริการติดตั้งและอบรมการใช้งานโปรแกรม POS หน้าร้าน', category: 'service', item_type: 'service', unit_price: 1500 }
-];
+import {
+  ROUTE_DEFINITIONS, getRouteByDistrict, RouteCode, BillType, PaymentTerm, DeliveryMode, OrderItem,
+  Product, ProductCategory, ProductUnit, PRODUCT_CATEGORY_LABELS, PRODUCT_UNIT_OPTIONS
+} from '../types';
 
 const DISTRICT_OPTIONS = [
   // สาย 1 (โซนเหนือ)
@@ -56,21 +37,24 @@ const DISTRICT_OPTIONS = [
   { district: 'ต่างจังหวัด / งานเหมาพิเศษ', zone: 'สาย 6 (ต่างจังหวัด / ชั่วคราว)' }
 ];
 
-export const SalesView: React.FC = () => {
-  const { orders, createOrder } = useApp();
+const LOW_MARGIN_THRESHOLD = 10; // GP ต่ำกว่า 10% = เตือน
 
-  // Master Catalog Pool (Persistent in localStorage)
-  const [catalogPool, setCatalogPool] = useState<CatalogItem[]>(() => {
-    const saved = localStorage.getItem('boss_sales_catalog_pool');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        return DEFAULT_CATALOG;
-      }
-    }
-    return DEFAULT_CATALOG;
-  });
+const fmt = (n: number) => n.toLocaleString('th-TH', { maximumFractionDigits: 0 });
+
+const emptyProductForm = () => ({
+  name: '',
+  category: 'pc_notebook' as ProductCategory,
+  item_type: 'hardware' as 'hardware' | 'service',
+  unit: 'เครื่อง' as ProductUnit,
+  cost_price: 0,
+  sell_price: 0
+});
+
+export const SalesView: React.FC = () => {
+  const { orders, createOrder, currentUser, products, addProduct, updateProduct, deleteProduct } = useApp();
+
+  // ชื่อพนักงานขายที่ล็อกอินอยู่ (auto-tag ลงทุกออเดอร์ ไม่ต้องเลือกเอง)
+  const salespersonName = currentUser?.name || 'ไม่ระบุตัวตน';
 
   // Sales Order Form Inputs (แทนใบขาว ORDER FORM 2026)
   const [salesRef, setSalesRef] = useState(`SO-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`);
@@ -88,31 +72,24 @@ export const SalesView: React.FC = () => {
   const [paymentTerm, setPaymentTerm] = useState<PaymentTerm>('cash');
   const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>('install');
   const [siteNotes, setSiteNotes] = useState('');
+  // ต้นทุนแฝง / ค่าดำเนินการหน้างาน (INTERNAL ONLY)
+  const [extraJobCost, setExtraJobCost] = useState<number>(0);
 
   // Multi-item Order List on White Sheet
-  const [orderItems, setOrderItems] = useState<OrderItem[]>([
-    {
-      model_name: DEFAULT_CATALOG[0].name,
-      quantity: 1,
-      item_type: DEFAULT_CATALOG[0].item_type,
-      unit_price: DEFAULT_CATALOG[0].unit_price
-    }
-  ]);
+  const [orderItems, setOrderItems] = useState<OrderItem[]>([]);
 
-  // Modal State for Product Selection & Interest
+  // Modal State for Product Selection & Catalog Management
   const [isCatalogModalOpen, setIsCatalogModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [categoryFilter, setCategoryFilter] = useState<'all' | 'pc_notebook' | 'printer' | 'cctv_network' | 'service'>('all');
+  const [categoryFilter, setCategoryFilter] = useState<'all' | ProductCategory>('all');
 
-  // Selected items inside the Modal: mapping itemId -> quantity
+  // Selected items inside the Modal: mapping productId -> quantity
   const [modalSelectedMap, setModalSelectedMap] = useState<Record<string, number>>({});
 
-  // Inline Quick Add within Modal
+  // Inline Add / Edit Product Form within Modal
   const [isAddingNewToCatalog, setIsAddingNewToCatalog] = useState(false);
-  const [newItemName, setNewItemName] = useState('');
-  const [newItemCategory, setNewItemCategory] = useState<'pc_notebook' | 'printer' | 'cctv_network' | 'service' | 'general'>('pc_notebook');
-  const [newItemType, setNewItemType] = useState<'hardware' | 'service'>('hardware');
-  const [newItemPrice, setNewItemPrice] = useState<number>(0);
+  const [editingProductId, setEditingProductId] = useState<string | null>(null);
+  const [productForm, setProductForm] = useState(emptyProductForm());
 
   const [toast, setToast] = useState('');
 
@@ -120,22 +97,42 @@ export const SalesView: React.FC = () => {
   const currentRouteCode: RouteCode = getRouteByDistrict(district);
   const routeMeta = ROUTE_DEFINITIONS[currentRouteCode];
 
-  // Persist catalog pool
+  // Lock background scroll while the catalog modal is open
   useEffect(() => {
-    localStorage.setItem('boss_sales_catalog_pool', JSON.stringify(catalogPool));
-  }, [catalogPool]);
+    if (!isCatalogModalOpen) return;
 
-  // Open Modal and initialize selected map with 1 for clean selection
+    const htmlEl = document.documentElement;
+    const bodyEl = document.body;
+    const mainEl = document.querySelector('main');
+
+    const prevHtmlOverflow = htmlEl.style.overflow;
+    const prevBodyOverflow = bodyEl.style.overflow;
+    const prevMainOverflow = mainEl ? mainEl.style.overflow : '';
+
+    htmlEl.style.overflow = 'hidden';
+    bodyEl.style.overflow = 'hidden';
+    if (mainEl) mainEl.style.overflow = 'hidden';
+
+    return () => {
+      htmlEl.style.overflow = prevHtmlOverflow;
+      bodyEl.style.overflow = prevBodyOverflow;
+      if (mainEl) mainEl.style.overflow = prevMainOverflow;
+    };
+  }, [isCatalogModalOpen]);
+
+  // Open Modal
   const handleOpenCatalogModal = () => {
     setModalSelectedMap({});
     setSearchQuery('');
     setCategoryFilter('all');
     setIsAddingNewToCatalog(false);
+    setEditingProductId(null);
+    setProductForm(emptyProductForm());
     setIsCatalogModalOpen(true);
   };
 
   // Toggle selection in Modal
-  const handleToggleSelectModalItem = (item: CatalogItem) => {
+  const handleToggleSelectModalItem = (item: Product) => {
     setModalSelectedMap(prev => {
       const copy = { ...prev };
       if (copy[item.id] !== undefined) {
@@ -152,37 +149,62 @@ export const SalesView: React.FC = () => {
     setModalSelectedMap(prev => ({ ...prev, [itemId]: validQty }));
   };
 
-  // Add brand new item into Catalog Pool
-  const handleCreateNewCatalogItem = (e: React.FormEvent) => {
+  // Save (create or update) product in catalog
+  const handleSaveProduct = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newItemName.trim()) {
+    if (!productForm.name.trim()) {
       alert('กรุณาระบุชื่อสินค้าหรือบริการ');
       return;
     }
 
-    const newItem: CatalogItem = {
-      id: 'cat-custom-' + Date.now(),
-      name: newItemName.trim(),
-      category: newItemCategory,
-      item_type: newItemType,
-      unit_price: Math.max(0, newItemPrice)
+    const payload = {
+      name: productForm.name.trim(),
+      category: productForm.category,
+      item_type: productForm.item_type,
+      unit: productForm.unit,
+      cost_price: Math.max(0, productForm.cost_price),
+      sell_price: Math.max(0, productForm.sell_price)
     };
 
-    setCatalogPool(prev => [newItem, ...prev]);
-    // Auto tick this new item
-    setModalSelectedMap(prev => ({ ...prev, [newItem.id]: 1 }));
-    setNewItemName('');
-    setNewItemPrice(0);
+    if (editingProductId) {
+      updateProduct(editingProductId, payload);
+      setToast(`อัปเดต "${payload.name}" ในแคตตาล็อกแล้ว`);
+    } else {
+      addProduct(payload);
+      setToast(`เพิ่ม "${payload.name}" เข้าแคตตาล็อกแล้ว`);
+    }
+
+    setProductForm(emptyProductForm());
+    setEditingProductId(null);
     setIsAddingNewToCatalog(false);
-    setToast(`เพิ่ม "${newItem.name}" เข้าแคตตาล็อกและติ๊กเลือกแล้ว`);
     setTimeout(() => setToast(''), 3000);
   };
 
-  // Delete item from Catalog Pool
+  const handleStartEditProduct = (item: Product, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingProductId(item.id);
+    setProductForm({
+      name: item.name,
+      category: item.category,
+      item_type: item.item_type,
+      unit: item.unit,
+      cost_price: item.cost_price,
+      sell_price: item.sell_price
+    });
+    setIsAddingNewToCatalog(true);
+  };
+
+  const handleCancelProductForm = () => {
+    setIsAddingNewToCatalog(false);
+    setEditingProductId(null);
+    setProductForm(emptyProductForm());
+  };
+
+  // Delete item from Catalog
   const handleDeleteCatalogItem = (itemId: string, itemName: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (confirm(`ต้องการลบ "${itemName}" ออกจากแคตตาล็อกหรือไม่?`)) {
-      setCatalogPool(prev => prev.filter(c => c.id !== itemId));
+      deleteProduct(itemId);
       setModalSelectedMap(prev => {
         const copy = { ...prev };
         delete copy[itemId];
@@ -201,21 +223,20 @@ export const SalesView: React.FC = () => {
 
     const itemsToAdd: OrderItem[] = [];
     selectedIds.forEach(id => {
-      const catItem = catalogPool.find(c => c.id === id);
+      const catItem = products.find(c => c.id === id);
       if (catItem) {
         itemsToAdd.push({
           model_name: catItem.name,
           quantity: modalSelectedMap[id] || 1,
           item_type: catItem.item_type,
-          unit_price: catItem.unit_price
+          unit: catItem.unit,
+          unit_price: catItem.sell_price,
+          unit_cost: catItem.cost_price
         });
       }
     });
 
-    setOrderItems(prev => {
-      // If previous order had only 1 dummy item, we can merge or append
-      return [...prev, ...itemsToAdd];
-    });
+    setOrderItems(prev => [...prev, ...itemsToAdd]);
 
     setIsCatalogModalOpen(false);
     setToast(`เพิ่ม ${itemsToAdd.length} รายการเข้าตารางใบขาวเรียบร้อยแล้ว`);
@@ -223,10 +244,6 @@ export const SalesView: React.FC = () => {
   };
 
   const handleRemoveItemFromOrder = (index: number) => {
-    if (orderItems.length <= 1) {
-      alert('ต้องมีสินค้าอย่างน้อย 1 รายการในบิล');
-      return;
-    }
     setOrderItems(prev => prev.filter((_, i) => i !== index));
   };
 
@@ -240,6 +257,11 @@ export const SalesView: React.FC = () => {
     setOrderItems(prev => prev.map((item, i) => i === index ? { ...item, unit_price: validPrice } : item));
   };
 
+  const handleUpdateItemUnitCost = (index: number, cost: number) => {
+    const validCost = Math.max(0, cost);
+    setOrderItems(prev => prev.map((item, i) => i === index ? { ...item, unit_cost: validCost } : item));
+  };
+
   const handleSubmitOrder = (e: React.FormEvent) => {
     e.preventDefault();
     if (!customerName.trim() || orderItems.length === 0) {
@@ -251,6 +273,7 @@ export const SalesView: React.FC = () => {
 
     createOrder({
       sales_ref: salesRef,
+      salesperson: salespersonName,
       customer_name: customerName.trim(),
       customer_phone: customerPhone.trim(),
       delivery_location: deliveryLoc.trim() || `อ.${district}`,
@@ -263,6 +286,7 @@ export const SalesView: React.FC = () => {
       delivery_mode: deliveryMode,
       site_notes: siteNotes.trim(),
       items_list: orderItems,
+      extra_cost: Math.max(0, extraJobCost),
       planned_model: orderItems[0]?.model_name || '',
       planned_quantity: totalQty,
       bill_no: null
@@ -273,12 +297,8 @@ export const SalesView: React.FC = () => {
     setCustomerPhone('');
     setDeliveryLoc('');
     setSiteNotes('');
-    setOrderItems([{
-      model_name: catalogPool[0]?.name || 'BossComputech Core-i7 Workstation Pro',
-      quantity: 1,
-      item_type: catalogPool[0]?.item_type || 'hardware',
-      unit_price: catalogPool[0]?.unit_price || 0
-    }]);
+    setExtraJobCost(0);
+    setOrderItems([]);
     setSalesRef(`SO-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`);
     setTimeout(() => setToast(''), 4500);
   };
@@ -301,7 +321,7 @@ export const SalesView: React.FC = () => {
   };
 
   // Filtered Catalog Items for Modal
-  const filteredCatalog = catalogPool.filter(item => {
+  const filteredCatalog = products.filter(item => {
     const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesCategory = categoryFilter === 'all' || item.category === categoryFilter;
     return matchesSearch && matchesCategory;
@@ -309,14 +329,22 @@ export const SalesView: React.FC = () => {
 
   const selectedCount = Object.keys(modalSelectedMap).length;
   const modalTotalAmount = Object.keys(modalSelectedMap).reduce((sum, id) => {
-    const item = catalogPool.find(c => c.id === id);
+    const item = products.find(c => c.id === id);
     const qty = modalSelectedMap[id] || 1;
-    return sum + (item ? item.unit_price * qty : 0);
+    return sum + (item ? item.sell_price * qty : 0);
   }, 0);
 
-  const orderFormTotalAmount = orderItems.reduce((sum, it) => {
-    return sum + ((it.unit_price || 0) * it.quantity);
-  }, 0);
+  // Live Order Financials (INTERNAL ONLY)
+  const financials = useMemo(() => {
+    const revenue = orderItems.reduce((sum, it) => sum + (it.unit_price || 0) * it.quantity, 0);
+    const itemCost = orderItems.reduce((sum, it) => sum + (it.unit_cost || 0) * it.quantity, 0);
+    const totalCost = itemCost + Math.max(0, extraJobCost);
+    const gp = revenue - totalCost;
+    const marginPct = revenue > 0 ? (gp / revenue) * 100 : 0;
+    const belowCost = revenue > 0 && gp < 0;
+    const lowMargin = revenue > 0 && !belowCost && marginPct < LOW_MARGIN_THRESHOLD;
+    return { revenue, itemCost, totalCost, gp, marginPct, belowCost, lowMargin };
+  }, [orderItems, extraJobCost]);
 
   return (
     <div className="space-y-6">
@@ -338,12 +366,19 @@ export const SalesView: React.FC = () => {
               <span>ฝ่ายขาย (Sales) - ใบสั่งขาย / ORDER FORM 2026 (ใบขาว)</span>
             </h2>
             <p className="text-xs text-slate-400 mt-1">
-              สร้างใบสั่งขาย เลือกลิสต์สินค้า/บริการจากแคตตาล็อก ระบุเงื่อนไขบิล และจัดสายรถอัตโนมัติ
+              สร้างใบสั่งขาย เลือกลิสต์สินค้า/บริการจากแคตตาล็อก ระบุราคาทุน-ราคาขาย และดูกำไร (GP) แบบเรียลไทม์
             </p>
           </div>
-          <span className="font-mono text-xs px-3 py-1.5 rounded-xl bg-white/[0.04] border border-white/[0.08] text-slate-300">
-            เลขที่เอกสาร: <strong className="text-[#FF6B00]">{salesRef}</strong>
-          </span>
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+            {/* Read-only salesperson badge (auto-tag จากผู้ใช้ที่ล็อกอิน) */}
+            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-[11px] font-semibold text-emerald-300">
+              <UserCheck className="w-3.5 h-3.5" />
+              <span>ผู้เปิดบิล: <strong className="text-emerald-200">{salespersonName}</strong></span>
+            </span>
+            <span className="font-mono text-xs px-3 py-1.5 rounded-xl bg-white/[0.04] border border-white/[0.08] text-slate-300">
+              เลขที่เอกสาร: <strong className="text-[#FF6B00]">{salesRef}</strong>
+            </span>
+          </div>
         </div>
 
         <form onSubmit={handleSubmitOrder} className="space-y-5">
@@ -511,7 +546,7 @@ export const SalesView: React.FC = () => {
                   <span>รายการสินค้า & บริการในบิลนี้ ({orderItems.length} รายการ)</span>
                 </span>
                 <p className="text-[11px] text-slate-400 mt-0.5">
-                  รวม {orderItems.reduce((sum, item) => sum + item.quantity, 0)} ชิ้น | ยอดประเมินรวม: <strong className="text-emerald-400 font-mono">{orderFormTotalAmount.toLocaleString('th-TH')} บาท</strong>
+                  รวม {orderItems.reduce((sum, item) => sum + item.quantity, 0)} หน่วย | ยอดขายรวม: <strong className="text-emerald-400 font-mono">{fmt(financials.revenue)} บาท</strong>
                 </p>
               </div>
 
@@ -522,78 +557,164 @@ export const SalesView: React.FC = () => {
                 className="w-full sm:w-auto px-4 py-2.5 min-h-[44px] rounded-xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold text-xs transition cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-[#FF6B00]/25 border border-white/20 active:scale-95"
               >
                 <Plus className="w-4 h-4" />
-                <span>+ เลือกสินค้า / บริการ (จากรายการที่สนใจ & แคตตาล็อก)</span>
+                <span>+ เลือกสินค้า / จัดการแคตตาล็อก</span>
               </button>
             </div>
 
             {/* Existing Items Table */}
-            <div className="overflow-x-auto rounded-xl border border-white/[0.06]">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-white/[0.04] text-slate-400 border-b border-white/[0.06]">
-                  <tr>
-                    <th className="py-2.5 px-3">#</th>
-                    <th className="py-2.5 px-3">ประเภท</th>
-                    <th className="py-2.5 px-3">รุ่นสินค้า / รายการบริการ</th>
-                    <th className="py-2.5 px-3 text-right">ราคา/หน่วย (บาท)</th>
-                    <th className="py-2.5 px-3 text-center w-28">จำนวน</th>
-                    <th className="py-2.5 px-3 text-right">รวมเงิน (บาท)</th>
-                    <th className="py-2.5 px-3 text-right w-16">ลบ</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/[0.04]">
-                  {orderItems.map((item, idx) => {
-                    const rowTotal = (item.unit_price || 0) * item.quantity;
-                    return (
-                      <tr key={idx} className="hover:bg-white/[0.02]">
-                        <td className="py-2.5 px-3 text-slate-500 font-mono">{idx + 1}</td>
-                        <td className="py-2.5 px-3 whitespace-nowrap">
-                          {item.item_type === 'service' ? (
-                            <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-purple-500/15 text-purple-400 border border-purple-500/30">
-                              🛠️ ค่าแรง/บริการ
-                            </span>
-                          ) : (
-                            <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-blue-500/15 text-blue-400 border border-blue-500/30">
-                              📦 วัสดุ/อุปกรณ์
-                            </span>
-                          )}
-                        </td>
-                        <td className="py-2.5 px-3 font-semibold text-white">{item.model_name}</td>
-                        <td className="py-2.5 px-3 text-right">
-                          <input
-                            type="number"
-                            min={0}
-                            value={item.unit_price !== undefined ? item.unit_price : 0}
-                            onChange={(e) => handleUpdateItemUnitPrice(idx, parseFloat(e.target.value) || 0)}
-                            className="w-24 text-right liquid-glass-input rounded-lg px-2 py-1 text-xs text-emerald-400 font-mono font-bold"
-                          />
-                        </td>
-                        <td className="py-2.5 px-3 text-center">
-                          <input
-                            type="number"
-                            min={1}
-                            value={item.quantity}
-                            onChange={(e) => handleUpdateItemQuantity(idx, parseInt(e.target.value) || 1)}
-                            className="w-16 text-center liquid-glass-input rounded-lg px-2 py-1 text-xs text-[#FF6B00] font-bold"
-                          />
-                        </td>
-                        <td className="py-2.5 px-3 text-right font-mono font-bold text-white">
-                          {rowTotal.toLocaleString('th-TH')}
-                        </td>
-                        <td className="py-2.5 px-3 text-right">
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveItemFromOrder(idx)}
-                            className="text-slate-500 hover:text-rose-400 transition cursor-pointer p-1"
-                            title="ลบรายการ"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+            {orderItems.length === 0 ? (
+              <div className="text-center py-8 text-slate-500 border border-dashed border-white/[0.1] rounded-xl text-xs">
+                ยังไม่มีรายการในบิล กดปุ่มด้านบนเพื่อเลือกสินค้า/บริการจากแคตตาล็อก
+              </div>
+            ) : (
+              <div className="overflow-x-auto rounded-xl border border-white/[0.06]">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-white/[0.04] text-slate-400 border-b border-white/[0.06]">
+                    <tr>
+                      <th className="py-2.5 px-3">#</th>
+                      <th className="py-2.5 px-3">ประเภท</th>
+                      <th className="py-2.5 px-3">รุ่นสินค้า / รายการบริการ</th>
+                      <th className="py-2.5 px-3 text-right">ราคาทุน/หน่วย</th>
+                      <th className="py-2.5 px-3 text-right">ราคาขาย/หน่วย</th>
+                      <th className="py-2.5 px-3 text-center w-24">จำนวน</th>
+                      <th className="py-2.5 px-3 text-right">กำไร/รายการ</th>
+                      <th className="py-2.5 px-3 text-right">รวมเงิน</th>
+                      <th className="py-2.5 px-3 text-right w-12">ลบ</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/[0.04]">
+                    {orderItems.map((item, idx) => {
+                      const rowTotal = (item.unit_price || 0) * item.quantity;
+                      const rowProfit = ((item.unit_price || 0) - (item.unit_cost || 0)) * item.quantity;
+                      return (
+                        <tr key={idx} className="hover:bg-white/[0.02]">
+                          <td className="py-2.5 px-3 text-slate-500 font-mono">{idx + 1}</td>
+                          <td className="py-2.5 px-3 whitespace-nowrap">
+                            {item.item_type === 'service' ? (
+                              <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-purple-500/15 text-purple-400 border border-purple-500/30">
+                                🛠️ ค่าแรง/บริการ
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-blue-500/15 text-blue-400 border border-blue-500/30">
+                                📦 วัสดุ/อุปกรณ์
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-2.5 px-3 font-semibold text-white">
+                            {item.model_name}
+                            {item.unit && <span className="ml-1 text-[10px] text-slate-500">({item.unit})</span>}
+                          </td>
+                          <td className="py-2.5 px-3 text-right">
+                            <input
+                              type="number"
+                              min={0}
+                              value={item.unit_cost !== undefined ? item.unit_cost : 0}
+                              onChange={(e) => handleUpdateItemUnitCost(idx, parseFloat(e.target.value) || 0)}
+                              className="w-24 text-right liquid-glass-input rounded-lg px-2 py-1 text-xs text-rose-300 font-mono font-bold"
+                            />
+                          </td>
+                          <td className="py-2.5 px-3 text-right">
+                            <input
+                              type="number"
+                              min={0}
+                              value={item.unit_price !== undefined ? item.unit_price : 0}
+                              onChange={(e) => handleUpdateItemUnitPrice(idx, parseFloat(e.target.value) || 0)}
+                              className="w-24 text-right liquid-glass-input rounded-lg px-2 py-1 text-xs text-emerald-400 font-mono font-bold"
+                            />
+                          </td>
+                          <td className="py-2.5 px-3 text-center">
+                            <input
+                              type="number"
+                              min={1}
+                              value={item.quantity}
+                              onChange={(e) => handleUpdateItemQuantity(idx, parseInt(e.target.value) || 1)}
+                              className="w-16 text-center liquid-glass-input rounded-lg px-2 py-1 text-xs text-[#FF6B00] font-bold"
+                            />
+                          </td>
+                          <td className={`py-2.5 px-3 text-right font-mono font-bold ${rowProfit >= 0 ? 'text-[#FF6B00]' : 'text-rose-400'}`}>
+                            {fmt(rowProfit)}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono font-bold text-white">
+                            {fmt(rowTotal)}
+                          </td>
+                          <td className="py-2.5 px-3 text-right">
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveItemFromOrder(idx)}
+                              className="text-slate-500 hover:text-rose-400 transition cursor-pointer p-1"
+                              title="ลบรายการ"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* Extra Job Cost */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-2 border-t border-white/[0.06]">
+              <label className="text-[11px] text-slate-300 flex items-center gap-1.5">
+                <Lock className="w-3.5 h-3.5 text-rose-400" />
+                <span>ต้นทุนแฝง / ค่าดำเนินการหน้างาน (Extra Job Cost) - ภายในเท่านั้น</span>
+              </label>
+              <input
+                type="number"
+                min={0}
+                placeholder="0"
+                value={extraJobCost || ''}
+                onChange={(e) => setExtraJobCost(parseFloat(e.target.value) || 0)}
+                className="w-full sm:w-40 liquid-glass-input rounded-lg px-2 py-1 text-xs text-rose-300 font-mono font-bold focus:outline-none"
+              />
+            </div>
+          </div>
+
+          {/* Section 5: Live Order Financial Summary (INTERNAL ONLY) */}
+          <div className="p-5 rounded-2xl bg-gradient-to-br from-white/[0.04] to-white/[0.01] border border-white/[0.08] space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                <TrendingUp className="w-4 h-4 text-[#FF6B00]" />
+                <span>สรุปการเงินออเดอร์ (ภายในเท่านั้น - ไม่แสดงในเอกสารลูกค้า)</span>
+              </span>
+              {financials.belowCost ? (
+                <span className="px-2.5 py-1 rounded-full text-[10px] font-extrabold bg-rose-500/20 text-rose-300 border border-rose-500/40 flex items-center gap-1">
+                  <AlertTriangle className="w-3 h-3" />
+                  ขายต่ำกว่าทุน!
+                </span>
+              ) : financials.lowMargin ? (
+                <span className="px-2.5 py-1 rounded-full text-[10px] font-extrabold bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1">
+                  <AlertTriangle className="w-3 h-3" />
+                  กำไรต่ำกว่า {LOW_MARGIN_THRESHOLD}%
+                </span>
+              ) : financials.revenue > 0 ? (
+                <span className="px-2.5 py-1 rounded-full text-[10px] font-extrabold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                  กำไรปกติ
+                </span>
+              ) : null}
+            </div>
+
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <div className="rounded-xl p-3 bg-emerald-500/10 border border-emerald-500/25">
+                <div className="text-[10px] text-slate-400 uppercase tracking-wide">ยอดขาย (ex-VAT)</div>
+                <div className="text-base font-extrabold font-mono text-emerald-400">฿{fmt(financials.revenue)}</div>
+              </div>
+              <div className="rounded-xl p-3 bg-rose-500/10 border border-rose-500/25">
+                <div className="text-[10px] text-slate-400 uppercase tracking-wide">ต้นทุนรวม</div>
+                <div className="text-base font-extrabold font-mono text-rose-400">฿{fmt(financials.totalCost)}</div>
+              </div>
+              <div className={`rounded-xl p-3 border ${financials.gp >= 0 ? 'bg-[#FF6B00]/10 border-[#FF6B00]/25' : 'bg-rose-500/15 border-rose-500/40'}`}>
+                <div className="text-[10px] text-slate-400 uppercase tracking-wide">กำไรขั้นต้น (GP)</div>
+                <div className={`text-base font-extrabold font-mono ${financials.gp >= 0 ? 'text-[#FF6B00]' : 'text-rose-400'}`}>฿{fmt(financials.gp)}</div>
+              </div>
+              <div className={`rounded-xl p-3 border ${financials.belowCost || financials.lowMargin ? 'bg-amber-500/10 border-amber-500/30' : 'bg-sky-500/10 border-sky-500/25'}`}>
+                <div className="text-[10px] text-slate-400 uppercase tracking-wide">Margin (%)</div>
+                <div className={`text-base font-extrabold font-mono ${financials.belowCost ? 'text-rose-400' : financials.lowMargin ? 'text-amber-400' : 'text-sky-400'}`}>
+                  {financials.marginPct.toFixed(1)}%
+                </div>
+              </div>
             </div>
           </div>
 
@@ -610,22 +731,22 @@ export const SalesView: React.FC = () => {
       </div>
 
       {/* ========================================================================= */}
-      {/* PRODUCT SELECTION & INTEREST MODAL (แคตตาล็อก & รายการที่เสนอ/สนใจ)         */}
+      {/* PRODUCT SELECTION & CATALOG MANAGEMENT MODAL                              */}
       {/* ========================================================================= */}
-      {isCatalogModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/75 backdrop-blur-md animate-fade-in">
-          <div className="liquid-glass rounded-2xl sm:rounded-3xl w-[95vw] max-w-4xl max-h-[90vh] flex flex-col shadow-2xl border border-white/[0.12] overflow-hidden">
+      {isCatalogModalOpen && createPortal(
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/75 backdrop-blur-md animate-fade-in overscroll-contain touch-none">
+          <div className="liquid-glass rounded-2xl sm:rounded-3xl w-[95vw] sm:w-[90vw] max-w-4xl max-h-[85vh] flex flex-col shadow-2xl border border-white/[0.12] overflow-hidden">
 
-            {/* Modal Header */}
-            <div className="p-4 sm:p-6 border-b border-white/[0.08] flex items-start sm:items-center justify-between gap-2">
+            {/* Modal Header (sticky) */}
+            <div className="sticky top-0 z-10 bg-white/95 dark:bg-[#12141A]/95 backdrop-blur-md p-4 sm:p-6 border-b border-slate-200 dark:border-white/[0.08] flex items-start sm:items-center justify-between gap-2 flex-shrink-0">
               <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
                 <div className="p-2.5 rounded-2xl bg-[#FF6B00]/15 text-[#FF6B00] border border-[#FF6B00]/30">
                   <ShoppingBag className="w-6 h-6" />
                 </div>
                 <div className="min-w-0">
-                  <h3 className="text-sm sm:text-base font-bold text-white leading-tight">เลือกสินค้า & บริการ</h3>
+                  <h3 className="text-sm sm:text-base font-bold text-white leading-tight">แคตตาล็อกสินค้า & บริการ</h3>
                   <p className="text-[11px] sm:text-xs text-slate-400 hidden sm:block">
-                    ค้นหา ติ๊กเลือกหลายรายการเข้าบิล พร้อมปรับจำนวน และเพิ่มรายการสเปกพิเศษเข้าแคตตาล็อกได้ทันที
+                    เพิ่ม/แก้ไข/ลบสินค้าพร้อมราคาทุน-ราคาขาย ติ๊กเลือกหลายรายการเข้าบิล
                   </p>
                 </div>
               </div>
@@ -640,13 +761,13 @@ export const SalesView: React.FC = () => {
             </div>
 
             {/* Modal Controls: Search, Filter, and Toggle New Item */}
-            <div className="p-4 sm:p-5 border-b border-white/[0.06] space-y-3 bg-white/[0.02]">
+            <div className="p-4 sm:p-5 border-b border-slate-200 dark:border-white/[0.06] space-y-3 bg-slate-50 dark:bg-white/[0.02] flex-shrink-0">
               <div className="flex flex-col sm:flex-row items-center gap-3">
                 <div className="relative flex-1 w-full">
                   <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
                   <input
                     type="text"
-                    placeholder="ค้นหาชื่อรุ่นสินค้า, รายการบริการ, หรือรหัสอุปกรณ์..."
+                    placeholder="ค้นหาชื่อรุ่นสินค้า, รายการบริการ..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     className="w-full liquid-glass-input rounded-xl pl-9 pr-3 py-2 text-xs text-white focus:outline-none"
@@ -655,11 +776,19 @@ export const SalesView: React.FC = () => {
 
                 <button
                   type="button"
-                  onClick={() => setIsAddingNewToCatalog(!isAddingNewToCatalog)}
+                  onClick={() => {
+                    if (isAddingNewToCatalog) {
+                      handleCancelProductForm();
+                    } else {
+                      setEditingProductId(null);
+                      setProductForm(emptyProductForm());
+                      setIsAddingNewToCatalog(true);
+                    }
+                  }}
                   className="w-full sm:w-auto px-4 py-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 text-xs font-semibold whitespace-nowrap transition cursor-pointer flex items-center justify-center gap-1.5"
                 >
                   <Plus className="w-4 h-4" />
-                  <span>{isAddingNewToCatalog ? 'ปิดฟอร์มเพิ่มใหม่' : '+ เพิ่มรายการสินค้า/บริการใหม่'}</span>
+                  <span>{isAddingNewToCatalog ? 'ปิดฟอร์ม' : '+ เพิ่มสินค้า/บริการใหม่'}</span>
                 </button>
               </div>
 
@@ -690,52 +819,75 @@ export const SalesView: React.FC = () => {
                 ))}
               </div>
 
-              {/* Inline Form to Add New Product / Service */}
+              {/* Inline Form to Add / Edit Product */}
               {isAddingNewToCatalog && (
-                <div className="p-4 rounded-2xl bg-white/[0.03] border border-amber-500/30 space-y-3 animate-fade-in">
+                <form onSubmit={handleSaveProduct} className="p-4 rounded-2xl bg-amber-50 dark:bg-white/[0.03] border border-amber-500/30 space-y-3 animate-fade-in">
                   <div className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
                     <Sparkles className="w-4 h-4 text-amber-400" />
-                    <span>เพิ่มสินค้า/บริการใหม่เข้าแคตตาล็อกระบบ</span>
+                    <span>{editingProductId ? 'แก้ไขสินค้า/บริการในแคตตาล็อก' : 'เพิ่มสินค้า/บริการใหม่เข้าแคตตาล็อก'}</span>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5 text-xs">
-                    <div className="sm:col-span-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 text-xs">
+                    <div className="sm:col-span-2 lg:col-span-3">
                       <label className="block text-[11px] text-slate-300 mb-1">ชื่อรุ่น / รายการสินค้าหรือบริการ *</label>
                       <input
                         type="text"
                         required
                         placeholder="เช่น Dell OptiPlex 7010 Micro หรือ ค่าบริการลากสายไฟ 30m"
-                        value={newItemName}
-                        onChange={(e) => setNewItemName(e.target.value)}
+                        value={productForm.name}
+                        onChange={(e) => setProductForm({ ...productForm, name: e.target.value })}
                         className="w-full liquid-glass-input rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none"
                       />
                     </div>
                     <div>
                       <label className="block text-[11px] text-slate-300 mb-1">หมวดหมู่</label>
                       <select
-                        value={newItemCategory}
+                        value={productForm.category}
                         onChange={(e) => {
-                          const val = e.target.value as any;
-                          setNewItemCategory(val);
-                          if (val === 'service') setNewItemType('service');
-                          else setNewItemType('hardware');
+                          const val = e.target.value as ProductCategory;
+                          setProductForm({
+                            ...productForm,
+                            category: val,
+                            item_type: val === 'service' ? 'service' : 'hardware'
+                          });
                         }}
                         className="w-full liquid-glass-input rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none"
                       >
-                        <option value="pc_notebook" className="bg-[#12141A]">คอมพิวเตอร์ / โน้ตบุ๊ก</option>
-                        <option value="printer" className="bg-[#12141A]">เครื่องพิมพ์</option>
-                        <option value="cctv_network" className="bg-[#12141A]">กล้อง / เน็ตเวิร์ก</option>
-                        <option value="service" className="bg-[#12141A]">ค่าแรง / บริการติดตั้ง</option>
-                        <option value="general" className="bg-[#12141A]">สินค้าทั่วไป</option>
+                        {(Object.keys(PRODUCT_CATEGORY_LABELS) as ProductCategory[]).map((cat) => (
+                          <option key={cat} value={cat} className="bg-white dark:bg-[#12141A]">{PRODUCT_CATEGORY_LABELS[cat]}</option>
+                        ))}
                       </select>
                     </div>
                     <div>
-                      <label className="block text-[11px] text-slate-300 mb-1">ราคาต่อหน่วย (บาท)</label>
+                      <label className="block text-[11px] text-slate-300 mb-1">หน่วยนับ</label>
+                      <select
+                        value={productForm.unit}
+                        onChange={(e) => setProductForm({ ...productForm, unit: e.target.value as ProductUnit })}
+                        className="w-full liquid-glass-input rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none"
+                      >
+                        {PRODUCT_UNIT_OPTIONS.map((u) => (
+                          <option key={u} value={u} className="bg-white dark:bg-[#12141A]">{u}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[11px] text-rose-300 mb-1">ราคาทุน (บาท)</label>
                       <input
                         type="number"
                         min={0}
                         placeholder="0"
-                        value={newItemPrice || ''}
-                        onChange={(e) => setNewItemPrice(parseFloat(e.target.value) || 0)}
+                        value={productForm.cost_price || ''}
+                        onChange={(e) => setProductForm({ ...productForm, cost_price: parseFloat(e.target.value) || 0 })}
+                        className="w-full liquid-glass-input rounded-xl px-3 py-1.5 text-xs text-rose-300 font-mono font-bold focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] text-emerald-300 mb-1">ราคาขาย (บาท)</label>
+                      <input
+                        type="number"
+                        min={0}
+                        placeholder="0"
+                        value={productForm.sell_price || ''}
+                        onChange={(e) => setProductForm({ ...productForm, sell_price: parseFloat(e.target.value) || 0 })}
                         className="w-full liquid-glass-input rounded-xl px-3 py-1.5 text-xs text-emerald-400 font-mono font-bold focus:outline-none"
                       />
                     </div>
@@ -743,43 +895,43 @@ export const SalesView: React.FC = () => {
                   <div className="flex justify-end gap-2 pt-1">
                     <button
                       type="button"
-                      onClick={() => setIsAddingNewToCatalog(false)}
+                      onClick={handleCancelProductForm}
                       className="px-3 py-1.5 rounded-xl text-xs text-slate-400 hover:text-white"
                     >
                       ยกเลิก
                     </button>
                     <button
-                      type="button"
-                      onClick={handleCreateNewCatalogItem}
+                      type="submit"
                       className="px-4 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs transition cursor-pointer"
                     >
-                      บันทึกเข้าแคตตาล็อก
+                      {editingProductId ? 'บันทึกการแก้ไข' : 'บันทึกเข้าแคตตาล็อก'}
                     </button>
                   </div>
-                </div>
+                </form>
               )}
             </div>
 
             {/* Modal Body: Multi-Select Table */}
-            <div className="flex-1 overflow-y-auto p-4 sm:p-5">
+            <div className="flex-1 overflow-y-auto overscroll-contain p-4 sm:p-5">
               {filteredCatalog.length === 0 ? (
-                <div className="text-center py-12 text-slate-500 border border-dashed border-white/[0.08] rounded-2xl text-xs">
+                <div className="text-center py-12 text-slate-500 border border-dashed border-slate-300 dark:border-white/[0.08] rounded-2xl text-xs">
                   ไม่พบสินค้าหรือบริการที่ตรงกับเงื่อนไขการค้นหา
                 </div>
               ) : (
-                <div className="overflow-x-auto rounded-2xl border border-white/[0.06]">
+                <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-white/[0.06]">
                   <table className="w-full text-left text-xs">
-                    <thead className="bg-white/[0.04] text-slate-400 border-b border-white/[0.06]">
+                    <thead className="bg-slate-100 dark:bg-white/[0.04] text-slate-600 dark:text-slate-400 border-b border-slate-200 dark:border-white/[0.06]">
                       <tr>
                         <th className="py-2.5 px-3 w-10 text-center">เลือก</th>
                         <th className="py-2.5 px-3">หมวดหมู่</th>
                         <th className="py-2.5 px-3">ชื่อสินค้า / บริการ</th>
-                        <th className="py-2.5 px-3 text-right">ราคา/หน่วย (บาท)</th>
-                        <th className="py-2.5 px-3 text-center w-28">จำนวน (Qty)</th>
-                        <th className="py-2.5 px-3 text-right w-16">ลบ</th>
+                        <th className="py-2.5 px-3 text-right">ราคาทุน</th>
+                        <th className="py-2.5 px-3 text-right">ราคาขาย</th>
+                        <th className="py-2.5 px-3 text-center w-24">จำนวน</th>
+                        <th className="py-2.5 px-3 text-right w-20">จัดการ</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-white/[0.04]">
+                    <tbody className="divide-y divide-slate-200 dark:divide-white/[0.04]">
                       {filteredCatalog.map((item) => {
                         const isSelected = modalSelectedMap[item.id] !== undefined;
                         const qty = modalSelectedMap[item.id] || 1;
@@ -790,7 +942,7 @@ export const SalesView: React.FC = () => {
                             onClick={() => handleToggleSelectModalItem(item)}
                             className={`transition cursor-pointer ${isSelected
                               ? 'bg-[#FF6B00]/10 hover:bg-[#FF6B00]/15'
-                              : 'hover:bg-white/[0.02]'
+                              : 'hover:bg-slate-100 dark:hover:bg-white/[0.02]'
                               }`}
                           >
                             <td className="py-2.5 px-3 text-center">
@@ -800,7 +952,7 @@ export const SalesView: React.FC = () => {
                                     <Check className="w-3.5 h-3.5" />
                                   </div>
                                 ) : (
-                                  <div className="w-5 h-5 rounded-md border border-white/20 bg-white/[0.03]" />
+                                  <div className="w-5 h-5 rounded-md border border-slate-300 dark:border-white/20 bg-slate-100 dark:bg-white/[0.03]" />
                                 )}
                               </div>
                             </td>
@@ -817,9 +969,13 @@ export const SalesView: React.FC = () => {
                             </td>
                             <td className="py-2.5 px-3 font-semibold text-white">
                               {item.name}
+                              <span className="ml-1 text-[10px] text-slate-500">/ {item.unit}</span>
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-mono font-bold text-rose-300">
+                              {fmt(item.cost_price)}
                             </td>
                             <td className="py-2.5 px-3 text-right font-mono font-bold text-emerald-400">
-                              {item.unit_price.toLocaleString('th-TH')}
+                              {fmt(item.sell_price)}
                             </td>
                             <td className="py-2.5 px-3 text-center" onClick={(e) => e.stopPropagation()}>
                               {isSelected ? (
@@ -835,14 +991,24 @@ export const SalesView: React.FC = () => {
                               )}
                             </td>
                             <td className="py-2.5 px-3 text-right" onClick={(e) => e.stopPropagation()}>
-                              <button
-                                type="button"
-                                onClick={(e) => handleDeleteCatalogItem(item.id, item.name, e)}
-                                className="text-slate-500 hover:text-rose-400 transition cursor-pointer p-1"
-                                title="ลบรายการนี้ออกจากแคตตาล็อก"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
+                              <div className="flex items-center justify-end gap-1">
+                                <button
+                                  type="button"
+                                  onClick={(e) => handleStartEditProduct(item, e)}
+                                  className="text-slate-500 hover:text-amber-400 transition cursor-pointer p-1"
+                                  title="แก้ไขสินค้านี้"
+                                >
+                                  <Pencil className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => handleDeleteCatalogItem(item.id, item.name, e)}
+                                  className="text-slate-500 hover:text-rose-400 transition cursor-pointer p-1"
+                                  title="ลบรายการนี้ออกจากแคตตาล็อก"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         );
@@ -853,10 +1019,10 @@ export const SalesView: React.FC = () => {
               )}
             </div>
 
-            {/* Modal Footer */}
-            <div className="p-3 sm:p-5 border-t border-white/[0.08] flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 bg-white/[0.02] pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+            {/* Modal Footer (sticky) */}
+            <div className="sticky bottom-0 z-10 p-3 sm:p-5 border-t border-slate-200 dark:border-white/[0.08] flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 bg-white/95 dark:bg-[#12141A]/95 backdrop-blur-md pb-[max(0.75rem,env(safe-area-inset-bottom))] flex-shrink-0">
               <div className="text-xs text-slate-300 text-center sm:text-left">
-                เลือกแล้ว <strong className="text-[#FF6B00] font-mono text-sm">{selectedCount}</strong> รายการ | ยอดรวม: <strong className="text-emerald-400 font-mono text-sm">{modalTotalAmount.toLocaleString('th-TH')} บาท</strong>
+                เลือกแล้ว <strong className="text-[#FF6B00] font-mono text-sm">{selectedCount}</strong> รายการ | ยอดขายรวม: <strong className="text-emerald-400 font-mono text-sm">{fmt(modalTotalAmount)} บาท</strong>
               </div>
 
               <div className="flex items-center gap-2.5 w-full sm:w-auto">
@@ -873,7 +1039,7 @@ export const SalesView: React.FC = () => {
                   disabled={selectedCount === 0}
                   className={`w-full sm:w-auto px-6 py-2.5 rounded-xl text-xs font-extrabold transition cursor-pointer flex items-center justify-center gap-2 shadow-xl min-h-[44px] ${selectedCount > 0
                     ? 'bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black shadow-[#FF6B00]/25 active:scale-95'
-                    : 'bg-white/10 text-slate-500 cursor-not-allowed'
+                    : 'bg-slate-200 dark:bg-white/10 text-slate-500 cursor-not-allowed'
                     }`}
                 >
                   <Check className="w-4 h-4" />
@@ -883,7 +1049,8 @@ export const SalesView: React.FC = () => {
             </div>
 
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Orders Tracking Table for Sales */}
@@ -901,6 +1068,7 @@ export const SalesView: React.FC = () => {
             <thead className="bg-white/[0.04] text-slate-400 border-b border-white/[0.06]">
               <tr>
                 <th className="py-3 px-3 whitespace-nowrap">เลขที่ SO</th>
+                <th className="py-3 px-3 whitespace-nowrap">ผู้เปิดบิล</th>
                 <th className="py-3 px-3 whitespace-nowrap">ลูกค้า</th>
                 <th className="py-3 px-3 whitespace-nowrap">สายรถ / อำเภอ</th>
                 <th className="py-3 px-3 whitespace-nowrap">วันที่ส่งมอบ</th>
@@ -917,6 +1085,11 @@ export const SalesView: React.FC = () => {
                   <tr key={ord.id} className="hover:bg-white/[0.02] transition">
                     <td className="py-3 px-3 font-mono font-bold text-[#FF6B00] whitespace-nowrap">
                       {ord.sales_ref || 'SO-AUTO'}
+                    </td>
+                    <td className="py-3 px-3 whitespace-nowrap">
+                      <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                        {ord.salesperson || '-'}
+                      </span>
                     </td>
                     <td className="py-3 px-3 whitespace-nowrap">
                       <div className="font-semibold text-white">{ord.customer_name}</div>

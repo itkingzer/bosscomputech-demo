@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* Map Tailwind's `dark:` variant to the app's `html.dark` class toggle */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @layer base {
   :root {
     --bg-page: #08090C;
@@ -235,6 +238,25 @@ html.light .liquid-glass-input:focus {
 /* Modal and Scrim */
 html.light .bg-black\/60 {
   background-color: rgba(15, 23, 42, 0.55);
+}
+
+html.light .bg-black\/75 {
+  background-color: rgba(15, 23, 42, 0.45);
+}
+
+/* Light mode: dark sticky header/footer panels inside modals */
+html.light .bg-\[\#12141A\]\/95 {
+  background-color: rgba(255, 255, 255, 0.95) !important;
+}
+
+/* Light mode: amber-tinted inline form panel */
+html.light .bg-amber-50 {
+  background-color: rgba(255, 251, 235, 0.95) !important;
+}
+
+/* Light mode: table row hover */
+html.light .hover\:bg-slate-100:hover {
+  background-color: rgba(226, 232, 240, 0.75) !important;
 }
 
 /* ========================================================================= */

@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useApp } from '../context/AppContext';
 import { Database, X } from 'lucide-react';
 
@@ -10,6 +11,16 @@ export const SettingsModal: React.FC<{ isOpen: boolean; onClose: () => void }> =
 
   const [url, setUrl] = useState(supabaseUrl);
   const [key, setKey] = useState(supabaseKey);
+
+  // Lock background scroll while the settings modal is open
+  useEffect(() => {
+    if (!isOpen) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -23,7 +34,7 @@ export const SettingsModal: React.FC<{ isOpen: boolean; onClose: () => void }> =
     }
   };
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-md flex items-center justify-center p-2 sm:p-4">
       <div className="liquid-glass rounded-2xl sm:rounded-3xl w-[95vw] max-w-md max-h-[90vh] overflow-y-auto p-4 sm:p-7 shadow-2xl border border-white/[0.12] relative">
         <button
@@ -99,6 +110,7 @@ export const SettingsModal: React.FC<{ isOpen: boolean; onClose: () => void }> =
           </div>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };

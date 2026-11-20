@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { 
-  Boxes, PackagePlus, CheckCircle, Info, MapPin, 
+import {
+  Boxes, PackagePlus, CheckCircle, Info, MapPin,
   ShoppingCart, Clock, AlertTriangle, Truck, Tag, Send, Check,
-  ArrowRight, ShieldCheck, FileCheck, Layers
+  ArrowRight, ShieldCheck, FileCheck, Layers, Lock
 } from 'lucide-react';
 import { ROUTE_DEFINITIONS, Order } from '../types';
 
@@ -18,13 +18,41 @@ const SUPPLIER_PRESETS = [
 ];
 
 export const PurchasingStockView: React.FC = () => {
-  const { orders, cutStock, updateOrderPOStatus, receivePOIntoStock } = useApp();
+  const { orders, items, cutStock, updateOrderPOStatus, receivePOIntoStock, updateOrderCosts } = useApp();
   const [billInputs, setBillInputs] = useState<Record<string, string>>({});
   const [supplierInputs, setSupplierInputs] = useState<Record<string, string>>({});
   const [poInputs, setPoInputs] = useState<Record<string, string>>({});
   const [prepNoteInputs, setPrepNoteInputs] = useState<Record<string, string>>({});
+  // เลือกดึงจากสต๊อกคลัง (in_stock) แทนการสร้างใหม่ - key = `${orderId}:${itemIndex}`
+  const [stockPickInputs, setStockPickInputs] = useState<Record<string, string>>({});
+  // ราคาทุนต่อหน่วย (INTERNAL ONLY) - key = `${orderId}:${itemIndex}`
+  const [costInputs, setCostInputs] = useState<Record<string, number>>({});
+  // ต้นทุนค่าแรง/ค่าดำเนินการอื่นต่อออเดอร์ (INTERNAL ONLY)
+  const [extraCostInputs, setExtraCostInputs] = useState<Record<string, number>>({});
   const [activeTab, setActiveTab] = useState<'pending' | 'waiting_po' | 'po_received'>('pending');
   const [toast, setToast] = useState('');
+
+  const getItemCost = (orderId: string, idx: number, fallback?: number) => {
+    const key = `${orderId}:${idx}`;
+    return costInputs[key] !== undefined ? costInputs[key] : (fallback || 0);
+  };
+
+  const getExtraCost = (orderId: string, fallback?: number) => {
+    return extraCostInputs[orderId] !== undefined ? extraCostInputs[orderId] : (fallback || 0);
+  };
+
+  // บันทึกราคาทุนของออเดอร์นี้ (internal only)
+  const handleSaveCosts = (orderId: string, salesRef: string | null) => {
+    const order = orders.find(o => o.id === orderId);
+    if (!order) return;
+    const itemCosts: Record<number, number> = {};
+    (order.items_list || []).forEach((it, idx) => {
+      itemCosts[idx] = getItemCost(orderId, idx, it.unit_cost);
+    });
+    updateOrderCosts(orderId, getExtraCost(orderId, order.extra_cost), itemCosts);
+    setToast(`บันทึกราคาทุน (ภายใน) ของออเดอร์ ${salesRef || orderId} เรียบร้อยแล้ว`);
+    setTimeout(() => setToast(''), 3500);
+  };
 
   // 3 distinct subsets of orders
   const newOrders = orders.filter(o => o.order_status === 'pending_purchasing');
@@ -35,7 +63,7 @@ export const PurchasingStockView: React.FC = () => {
   const handleOrderPO = (orderId: string, salesRef: string | null) => {
     const supplier = supplierInputs[orderId] || 'SIS Distribution';
     const poNo = poInputs[orderId] || `PKT/${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`;
-    
+
     updateOrderPOStatus(orderId, 'waiting_po');
     setToast(`สั่งซื้อ PO เรียบร้อย! ออเดอร์ ${salesRef || orderId} -> รอของเข้าจาก Supplier (waiting_po)`);
     setTimeout(() => setToast(''), 3500);
@@ -63,25 +91,34 @@ export const PurchasingStockView: React.FC = () => {
 
     // Convert items_list or fallback to planned model
     const itemsToCut = order.items_list && order.items_list.length > 0
-      ? order.items_list.map(it => ({
-          model_name: it.model_name,
-          quantity: it.quantity,
-          supplier: supplier,
-          po_no: poNo,
-          prep_note: prepNote
-        }))
+      ? order.items_list.map((it, idx) => ({
+        model_name: it.model_name,
+        quantity: it.quantity,
+        supplier: supplier,
+        po_no: poNo,
+        prep_note: prepNote,
+        unit_cost: getItemCost(orderId, idx, it.unit_cost),
+        stockItemId: stockPickInputs[`${orderId}:${idx}`] || undefined
+      }))
       : [{
-          model_name: order._planned_model || 'BossComputech Core-i7 Workstation Pro',
-          quantity: order._planned_quantity || 1,
-          supplier: supplier,
-          po_no: poNo,
-          prep_note: prepNote
-        }];
+        model_name: order._planned_model || 'BossComputech Core-i7 Workstation Pro',
+        quantity: order._planned_quantity || 1,
+        supplier: supplier,
+        po_no: poNo,
+        prep_note: prepNote,
+        unit_cost: getItemCost(orderId, 0, undefined),
+        stockItemId: stockPickInputs[`${orderId}:0`] || undefined
+      }];
 
     cutStock(orderId, billNo, itemsToCut);
 
     const totalQty = itemsToCut.reduce((sum, item) => sum + item.quantity, 0);
-    setToast(`ตัดสต๊อกบิล ${billNo} สำเร็จ! ปล่อยคิว ${totalQty} ชิ้นเข้าโต๊ะช่างเตรียมสินค้าแล้ว`);
+    const fromStockCount = itemsToCut.filter(p => p.stockItemId).length;
+    setToast(
+      fromStockCount > 0
+        ? `ตัดสต๊อกบิล ${billNo} สำเร็จ! ดึงจากคลัง ${fromStockCount} รายการ + ปล่อยคิว ${totalQty} ชิ้นเข้าโต๊ะช่างเตรียมสินค้าแล้ว`
+        : `ตัดสต๊อกบิล ${billNo} สำเร็จ! ปล่อยคิว ${totalQty} ชิ้นเข้าโต๊ะช่างเตรียมสินค้าแล้ว`
+    );
     setTimeout(() => setToast(''), 4000);
   };
 
@@ -120,11 +157,10 @@ export const PurchasingStockView: React.FC = () => {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 mb-6">
           <button
             onClick={() => setActiveTab('pending')}
-            className={`p-3.5 rounded-2xl text-left transition-all border flex items-center justify-between cursor-pointer ${
-              activeTab === 'pending'
-                ? 'bg-blue-500/20 border-blue-500/50 shadow-lg text-white'
-                : 'bg-white/[0.02] border-white/[0.06] text-slate-400 hover:text-white hover:bg-white/[0.05]'
-            }`}
+            className={`p-3.5 rounded-2xl text-left transition-all border flex items-center justify-between cursor-pointer ${activeTab === 'pending'
+              ? 'bg-blue-500/20 border-blue-500/50 shadow-lg text-white'
+              : 'bg-white/[0.02] border-white/[0.06] text-slate-400 hover:text-white hover:bg-white/[0.05]'
+              }`}
           >
             <div>
               <div className="text-xs font-bold flex items-center gap-1.5">
@@ -133,20 +169,18 @@ export const PurchasingStockView: React.FC = () => {
               </div>
               <div className="text-[10px] text-slate-400 mt-0.5">รอเช็กสต๊อก / เปิดสั่งซื้อ PO</div>
             </div>
-            <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
-              newOrders.length > 0 ? 'bg-blue-500 text-black' : 'bg-white/10 text-slate-400'
-            }`}>
+            <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${newOrders.length > 0 ? 'bg-blue-500 text-black' : 'bg-white/10 text-slate-400'
+              }`}>
               {newOrders.length}
             </span>
           </button>
 
           <button
             onClick={() => setActiveTab('waiting_po')}
-            className={`p-3.5 rounded-2xl text-left transition-all border flex items-center justify-between cursor-pointer ${
-              activeTab === 'waiting_po'
-                ? 'bg-purple-500/20 border-purple-500/50 shadow-lg text-white'
-                : 'bg-white/[0.02] border-white/[0.06] text-slate-400 hover:text-white hover:bg-white/[0.05]'
-            }`}
+            className={`p-3.5 rounded-2xl text-left transition-all border flex items-center justify-between cursor-pointer ${activeTab === 'waiting_po'
+              ? 'bg-purple-500/20 border-purple-500/50 shadow-lg text-white'
+              : 'bg-white/[0.02] border-white/[0.06] text-slate-400 hover:text-white hover:bg-white/[0.05]'
+              }`}
           >
             <div>
               <div className="text-xs font-bold flex items-center gap-1.5">
@@ -155,20 +189,18 @@ export const PurchasingStockView: React.FC = () => {
               </div>
               <div className="text-[10px] text-slate-400 mt-0.5">สั่งของแล้ว รอกดรับเข้าสต๊อกร้าน</div>
             </div>
-            <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
-              waitingPoOrders.length > 0 ? 'bg-purple-500 text-white' : 'bg-white/10 text-slate-400'
-            }`}>
+            <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${waitingPoOrders.length > 0 ? 'bg-purple-500 text-white' : 'bg-white/10 text-slate-400'
+              }`}>
               {waitingPoOrders.length}
             </span>
           </button>
 
           <button
             onClick={() => setActiveTab('po_received')}
-            className={`p-3.5 rounded-2xl text-left transition-all border flex items-center justify-between cursor-pointer ${
-              activeTab === 'po_received'
-                ? 'bg-teal-500/20 border-teal-500/50 shadow-lg text-white'
-                : 'bg-white/[0.02] border-white/[0.06] text-slate-400 hover:text-white hover:bg-white/[0.05]'
-            }`}
+            className={`p-3.5 rounded-2xl text-left transition-all border flex items-center justify-between cursor-pointer ${activeTab === 'po_received'
+              ? 'bg-teal-500/20 border-teal-500/50 shadow-lg text-white'
+              : 'bg-white/[0.02] border-white/[0.06] text-slate-400 hover:text-white hover:bg-white/[0.05]'
+              }`}
           >
             <div>
               <div className="text-xs font-bold flex items-center gap-1.5">
@@ -177,9 +209,8 @@ export const PurchasingStockView: React.FC = () => {
               </div>
               <div className="text-[10px] text-slate-400 mt-0.5">ของพร้อมปล่อยให้ช่างเตรียม</div>
             </div>
-            <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
-              poReceivedOrders.length > 0 ? 'bg-teal-500 text-black' : 'bg-white/10 text-slate-400'
-            }`}>
+            <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${poReceivedOrders.length > 0 ? 'bg-teal-500 text-black' : 'bg-white/10 text-slate-400'
+              }`}>
               {poReceivedOrders.length}
             </span>
           </button>
@@ -200,8 +231,8 @@ export const PurchasingStockView: React.FC = () => {
           <div className="space-y-5">
             {currentTabOrders.map((order) => {
               const rMeta = order.route_code ? ROUTE_DEFINITIONS[order.route_code] : null;
-              const suggestedBillNo = billInputs[order.id] !== undefined 
-                ? billInputs[order.id] 
+              const suggestedBillNo = billInputs[order.id] !== undefined
+                ? billInputs[order.id]
                 : `INV-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`;
               const selectedSupplier = supplierInputs[order.id] || order.items_list?.[0]?.supplier || 'สต๊อกร้าน (Main Store)';
               const suggestedPo = poInputs[order.id] || order.items_list?.[0]?.po_no || `PKT/${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`;
@@ -233,7 +264,13 @@ export const PurchasingStockView: React.FC = () => {
                       )}
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {order.salesperson && (
+                        <span className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+                          <Tag className="w-3.5 h-3.5 text-emerald-400" />
+                          <span>เซลล์ผู้ขาย: {order.salesperson}</span>
+                        </span>
+                      )}
                       {order.order_status === 'waiting_po' && (
                         <span className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-purple-500/15 text-purple-400 border border-purple-500/30 flex items-center gap-1">
                           <Clock className="w-3.5 h-3.5 text-purple-400" />
@@ -289,33 +326,159 @@ export const PurchasingStockView: React.FC = () => {
                     <span className="text-slate-400 font-medium block mb-2">รายการสินค้า & บริการในบิล:</span>
                     <div className="space-y-1.5">
                       {order.items_list && order.items_list.length > 0 ? (
-                        order.items_list.map((it, idx) => (
-                          <div key={idx} className="flex justify-between items-center py-1 border-b border-white/[0.03] last:border-0">
-                            <div className="flex items-center gap-2">
-                              {it.item_type === 'service' ? (
-                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
-                                  บริการ
+                        order.items_list.map((it, idx) => {
+                          // หาเครื่อง in_stock ในคลังที่รุ่นตรงกัน (พร้อมขาย)
+                          const matchingStock = items.filter(
+                            s => s.status === 'in_stock' && s.model_name === it.model_name
+                          );
+                          const pickedStockId = stockPickInputs[`${order.id}:${idx}`] || '';
+                          const canPickStock = it.item_type !== 'service' && matchingStock.length > 0;
+
+                          return (
+                            <div key={idx} className="py-1 border-b border-white/[0.03] last:border-0 space-y-1.5">
+                              <div className="flex justify-between items-center">
+                                <div className="flex items-center gap-2">
+                                  {it.item_type === 'service' ? (
+                                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                                      บริการ
+                                    </span>
+                                  ) : (
+                                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                                      อุปกรณ์
+                                    </span>
+                                  )}
+                                  <span className="text-white font-semibold">{it.model_name}</span>
+                                </div>
+                                <span className="px-2.5 py-0.5 rounded-md bg-[#FF6B00]/15 text-[#FF6B00] font-mono font-bold text-xs">
+                                  x{it.quantity} {it.item_type === 'service' ? 'รายการ' : 'เครื่อง'}
                                 </span>
-                              ) : (
-                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30">
-                                  อุปกรณ์
-                                </span>
+                              </div>
+
+                              {/* ตัวเลือกดึงจากสต๊อกคลัง (in_stock) ถ้ามีของรุ่นตรงกัน */}
+                              {canPickStock && (
+                                <div className="flex items-center gap-2 pl-1">
+                                  <span className="text-[10px] text-emerald-300 whitespace-nowrap flex items-center gap-1">
+                                    <Boxes className="w-3 h-3" />
+                                    มีในคลัง {matchingStock.length} เครื่อง:
+                                  </span>
+                                  <select
+                                    value={pickedStockId}
+                                    onChange={(e) => setStockPickInputs({ ...stockPickInputs, [`${order.id}:${idx}`]: e.target.value })}
+                                    className="flex-1 liquid-glass-input rounded-lg px-2 py-1 text-[11px] text-emerald-200 font-mono focus:outline-none"
+                                  >
+                                    <option value="" className="bg-[#12141A]">— สั่งใหม่ / ไม่ดึงจากคลัง —</option>
+                                    {matchingStock.map((s) => (
+                                      <option key={s.id} value={s.id} className="bg-[#12141A]">
+                                        {s.serial_number || '(ไม่มี S/N)'} • {s.notes || 'พร้อมขาย'}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
                               )}
-                              <span className="text-white font-semibold">{it.model_name}</span>
                             </div>
-                            <span className="px-2.5 py-0.5 rounded-md bg-[#FF6B00]/15 text-[#FF6B00] font-mono font-bold text-xs">
-                              x{it.quantity} {it.item_type === 'service' ? 'รายการ' : 'เครื่อง'}
-                            </span>
-                          </div>
-                        ))
+                          );
+                        })
                       ) : (
-                        <div className="flex justify-between items-center">
-                          <span className="text-white font-semibold">• {order._planned_model || 'BossComputech Workstation'}</span>
-                          <span className="px-2.5 py-0.5 rounded-md bg-[#FF6B00]/15 text-[#FF6B00] font-mono font-bold text-xs">
-                            x{order._planned_quantity || 1} เครื่อง
-                          </span>
-                        </div>
+                        (() => {
+                          const plannedModel = order._planned_model || 'BossComputech Workstation';
+                          const matchingStock = items.filter(
+                            s => s.status === 'in_stock' && s.model_name === plannedModel
+                          );
+                          const pickedStockId = stockPickInputs[`${order.id}:0`] || '';
+                          return (
+                            <div className="space-y-1.5">
+                              <div className="flex justify-between items-center">
+                                <span className="text-white font-semibold">• {plannedModel}</span>
+                                <span className="px-2.5 py-0.5 rounded-md bg-[#FF6B00]/15 text-[#FF6B00] font-mono font-bold text-xs">
+                                  x{order._planned_quantity || 1} เครื่อง
+                                </span>
+                              </div>
+                              {matchingStock.length > 0 && (
+                                <div className="flex items-center gap-2 pl-1">
+                                  <span className="text-[10px] text-emerald-300 whitespace-nowrap flex items-center gap-1">
+                                    <Boxes className="w-3 h-3" />
+                                    มีในคลัง {matchingStock.length} เครื่อง:
+                                  </span>
+                                  <select
+                                    value={pickedStockId}
+                                    onChange={(e) => setStockPickInputs({ ...stockPickInputs, [`${order.id}:0`]: e.target.value })}
+                                    className="flex-1 liquid-glass-input rounded-lg px-2 py-1 text-[11px] text-emerald-200 font-mono focus:outline-none"
+                                  >
+                                    <option value="" className="bg-[#12141A]">— สั่งใหม่ / ไม่ดึงจากคลัง —</option>
+                                    {matchingStock.map((s) => (
+                                      <option key={s.id} value={s.id} className="bg-[#12141A]">
+                                        {s.serial_number || '(ไม่มี S/N)'} • {s.notes || 'พร้อมขาย'}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()
                       )}
+                    </div>
+                  </div>
+
+                  {/* Cost Price (INTERNAL ONLY) - ราคาทุนต่อหน่วย + ต้นทุนค่าแรง/ค่าดำเนินการอื่น */}
+                  <div className="p-4 rounded-2xl bg-rose-500/[0.04] border border-rose-500/20 space-y-3 text-xs">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] font-bold text-rose-300 flex items-center gap-1.5">
+                        <Lock className="w-3.5 h-3.5" />
+                        <span>ราคาทุน & ต้นทุน (ภายในเท่านั้น - ไม่แสดงในเอกสารลูกค้า)</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleSaveCosts(order.id, order.sales_ref)}
+                        className="px-3 py-1.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 border border-rose-500/30 text-[11px] font-semibold transition cursor-pointer flex items-center justify-center gap-1"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                        <span>บันทึกราคาทุน</span>
+                      </button>
+                    </div>
+
+                    <div className="space-y-2">
+                      {(order.items_list && order.items_list.length > 0
+                        ? order.items_list
+                        : [{ model_name: order._planned_model || 'BossComputech Workstation', quantity: order._planned_quantity || 1 }]
+                      ).map((it, idx) => (
+                        <div key={idx} className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-2 items-center">
+                          <div className="text-[11px] text-slate-300 truncate">
+                            <span className="text-slate-500 font-mono mr-1">{idx + 1}.</span>
+                            {it.model_name} <span className="text-slate-500">(x{it.quantity})</span>
+                            {it.unit_cost !== undefined && it.unit_cost > 0 && (
+                              <span className="ml-1.5 text-[10px] text-amber-300/80">
+                                • เซลล์ประเมิน ฿{it.unit_cost.toLocaleString('th-TH')}/หน่วย
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <label className="text-[10px] text-slate-400 whitespace-nowrap">ราคาทุนจริง/หน่วย</label>
+                            <input
+                              type="number"
+                              min={0}
+                              placeholder="0"
+                              value={getItemCost(order.id, idx, it.unit_cost) || ''}
+                              onChange={(e) => setCostInputs({ ...costInputs, [`${order.id}:${idx}`]: parseFloat(e.target.value) || 0 })}
+                              className="w-28 liquid-glass-input rounded-lg px-2 py-1 text-xs text-rose-300 font-mono font-bold focus:outline-none"
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-2 border-t border-rose-500/15">
+                      <label className="text-[11px] text-slate-300 flex items-center gap-1.5">
+                        <span>ต้นทุนค่าแรง/ค่าดำเนินการอื่น (Extra Job Cost)</span>
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        placeholder="0"
+                        value={getExtraCost(order.id, order.extra_cost) || ''}
+                        onChange={(e) => setExtraCostInputs({ ...extraCostInputs, [order.id]: parseFloat(e.target.value) || 0 })}
+                        className="w-full sm:w-40 liquid-glass-input rounded-lg px-2 py-1 text-xs text-rose-300 font-mono font-bold focus:outline-none"
+                      />
                     </div>
                   </div>
 

@@ -7,6 +7,7 @@
 CREATE TABLE IF NOT EXISTS public.orders (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     sales_ref TEXT,
+    salesperson TEXT,                       -- ชื่อพนักงานขายผู้เปิดบิล (auto-tag จาก logged-in user)
     customer_name TEXT NOT NULL,
     customer_phone TEXT,
     delivery_location TEXT,
@@ -20,7 +21,8 @@ CREATE TABLE IF NOT EXISTS public.orders (
     site_notes TEXT,                        -- หมายเหตุหน้างาน
     bill_no TEXT UNIQUE,
     order_status TEXT NOT NULL DEFAULT 'pending_purchasing' CHECK (order_status IN ('pending_purchasing', 'waiting_po', 'po_received_in_stock', 'approved_for_prep', 'fulfilled')),
-    items_list JSONB DEFAULT '[]'::jsonb,   -- รายการสินค้าหลายรายการใน 1 บิล (รองรับ item_type: hardware | service)
+    items_list JSONB DEFAULT '[]'::jsonb,   -- รายการสินค้าหลายรายการใน 1 บิล (รองรับ item_type: hardware | service | unit_cost)
+    extra_cost NUMERIC(12,2) DEFAULT 0,     -- ต้นทุนค่าแรง/ค่าดำเนินการอื่นต่อออเดอร์ (INTERNAL ONLY - ห้ามแสดงในเอกสารลูกค้า)
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -97,8 +99,26 @@ CREATE TABLE IF NOT EXISTS public.repair_tickets (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- 4. Products Table (Product Catalog - สินค้า/บริการที่ใช้ซ้ำได้ พร้อมราคาทุน & ราคาขาย)
+CREATE TABLE IF NOT EXISTS public.products (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'general' CHECK (category IN ('pc_notebook', 'printer', 'cctv_network', 'service', 'general')),
+    item_type TEXT NOT NULL DEFAULT 'hardware' CHECK (item_type IN ('hardware', 'service')),
+    unit TEXT NOT NULL DEFAULT 'เครื่อง',    -- หน่วยนับ: เครื่อง, ชุด, จุด, เมตร, รายการ
+    cost_price NUMERIC(12,2) NOT NULL DEFAULT 0,  -- ราคาทุน (INTERNAL ONLY - ห้ามแสดงในเอกสารลูกค้า)
+    sell_price NUMERIC(12,2) NOT NULL DEFAULT 0,  -- ราคาขาย
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Migration: add GP analytics columns to existing deployments (safe to re-run)
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS salesperson TEXT;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS extra_cost NUMERIC(12,2) DEFAULT 0;
+
 -- Indexes for lightning fast lookups, S/N traceability & Route filtering
 CREATE INDEX IF NOT EXISTS idx_orders_status ON public.orders(order_status);
+CREATE INDEX IF NOT EXISTS idx_orders_salesperson ON public.orders(salesperson);
 CREATE INDEX IF NOT EXISTS idx_orders_route_code ON public.orders(route_code);
 CREATE INDEX IF NOT EXISTS idx_orders_bill_no ON public.orders(bill_no);
 CREATE INDEX IF NOT EXISTS idx_items_sn ON public.items(serial_number);
@@ -109,11 +129,14 @@ CREATE INDEX IF NOT EXISTS idx_repair_tickets_status ON public.repair_tickets(st
 CREATE INDEX IF NOT EXISTS idx_repair_tickets_route_code ON public.repair_tickets(route_code);
 CREATE INDEX IF NOT EXISTS idx_repair_tickets_sn ON public.repair_tickets(walkin_sn);
 CREATE INDEX IF NOT EXISTS idx_repair_tickets_assigned_techs ON public.repair_tickets USING GIN (assigned_techs);
+CREATE INDEX IF NOT EXISTS idx_products_category ON public.products(category);
+CREATE INDEX IF NOT EXISTS idx_products_name ON public.products(name);
 
 -- Disable Row Level Security (RLS) for internal operations system deployment
 ALTER TABLE public.orders DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.items DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.repair_tickets DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.products DISABLE ROW LEVEL SECURITY;
 
 -- Enable Realtime publication on all three core operational tables
 -- (wrapped in DO blocks so re-running this script does not error if already added)
@@ -132,6 +155,12 @@ END $$;
 DO $$
 BEGIN
     ALTER PUBLICATION supabase_realtime ADD TABLE public.repair_tickets;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$
+BEGIN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.products;
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
@@ -157,4 +186,9 @@ FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 DROP TRIGGER IF EXISTS trg_repair_tickets_updated_at ON public.repair_tickets;
 CREATE TRIGGER trg_repair_tickets_updated_at
 BEFORE UPDATE ON public.repair_tickets
+FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_products_updated_at ON public.products;
+CREATE TRIGGER trg_products_updated_at
+BEFORE UPDATE ON public.products
 FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();

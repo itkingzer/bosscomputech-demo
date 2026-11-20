@@ -119,7 +119,7 @@ export function getRouteByDistrict(district: string): RouteCode {
   return 'route_6';
 }
 
-export type OrderStatus = 
+export type OrderStatus =
   | 'pending_purchasing'    // รอจัดซื้อ/เช็กสต๊อก (เริ่มต้นเมื่อเซลส่งใบขาว)
   | 'waiting_po'            // รอสั่งซื้อของเข้าจาก Supplier (รอ PO)
   | 'po_received_in_stock'  // รับของเข้าสต๊อกจัดซื้อแล้ว - รอปล่อยให้ช่างเตรียม
@@ -135,20 +135,52 @@ export type PaymentTerm = 'cash' | 'credit_30' | 'project';
 // ประเภทการส่งมอบ (Delivery Mode)
 export type DeliveryMode = 'install' | 'drop_off' | 'customer_pickup' | 'project';
 
+// หมวดหมู่สินค้าในแคตตาล็อก (Product Catalog)
+export type ProductCategory = 'pc_notebook' | 'printer' | 'cctv_network' | 'service' | 'general';
+
+// หน่วยนับของสินค้า/บริการ
+export type ProductUnit = 'เครื่อง' | 'ชุด' | 'จุด' | 'เมตร' | 'รายการ';
+
+export const PRODUCT_CATEGORY_LABELS: Record<ProductCategory, string> = {
+  pc_notebook: 'คอมพิวเตอร์ / โน้ตบุ๊ก',
+  printer: 'เครื่องพิมพ์ / สแกนเนอร์',
+  cctv_network: 'กล้องวงจรปิด / ระบบเครือข่าย',
+  service: 'ค่าแรง / บริการติดตั้ง',
+  general: 'สินค้าทั่วไป'
+};
+
+export const PRODUCT_UNIT_OPTIONS: ProductUnit[] = ['เครื่อง', 'ชุด', 'จุด', 'เมตร', 'รายการ'];
+
+// สินค้า/บริการที่ใช้ซ้ำได้ (Product Catalog) - เก็บใน localStorage (Demo) และ sync กับ Supabase `products`
+export interface Product {
+  id: string;
+  name: string;
+  category: ProductCategory;
+  item_type: 'hardware' | 'service';
+  unit: ProductUnit;
+  cost_price: number;                 // ราคาทุน (INTERNAL ONLY)
+  sell_price: number;                 // ราคาขาย
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface OrderItem {
   id?: string;
   model_name: string;
   item_type?: 'hardware' | 'service'; // อุปกรณ์/วัสดุ หรือ ค่าแรง/ค่าบริการติดตั้ง
   quantity: number;
+  unit?: ProductUnit;                 // หน่วยนับ เช่น เครื่อง, ชุด, จุด, เมตร
   unit_price?: number;
   supplier?: string;
   po_no?: string;
   prep_note?: string;
+  unit_cost?: number;                 // ราคาทุนต่อหน่วย (INTERNAL ONLY - ห้ามแสดงในเอกสารลูกค้า)
 }
 
 export interface Order {
   id: string;
   sales_ref: string | null;
+  salesperson?: string;               // ชื่อพนักงานขายผู้เปิดบิล (auto-tag จาก logged-in user)
   customer_name: string;
   customer_phone?: string;
   delivery_location: string;
@@ -163,6 +195,7 @@ export interface Order {
   bill_no: string | null;
   order_status: OrderStatus;
   items_list?: OrderItem[];           // รายการสินค้าหลายรายการใน 1 บิล
+  extra_cost?: number;                // ต้นทุนค่าแรง/ค่าดำเนินการอื่นต่อออเดอร์ (INTERNAL ONLY)
   created_at: string;
   updated_at?: string;
   _planned_model?: string;

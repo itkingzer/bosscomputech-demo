@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { UserAccount, Order, Item, RepairTicket, RepairStatus, RouteCode, JobCategory, getRouteByDistrict } from '../types';
-import { INITIAL_USERS, INITIAL_ORDERS, INITIAL_ITEMS, INITIAL_REPAIR_TICKETS } from '../data/initialData';
+import { UserAccount, Order, Item, RepairTicket, RepairStatus, RouteCode, JobCategory, Product, getRouteByDistrict } from '../types';
+import { INITIAL_USERS, INITIAL_ORDERS, INITIAL_ITEMS, INITIAL_REPAIR_TICKETS, INITIAL_PRODUCTS } from '../data/initialData';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 interface AppContextType {
@@ -14,14 +14,21 @@ interface AppContextType {
   orders: Order[];
   items: Item[];
   repairTickets: RepairTicket[];
+  products: Product[];
+
+  // Product Catalog CRUD (สินค้า/บริการที่ใช้ซ้ำได้)
+  addProduct: (product: Omit<Product, 'id' | 'created_at' | 'updated_at'>) => void;
+  updateProduct: (id: string, patch: Partial<Omit<Product, 'id'>>) => void;
+  deleteProduct: (id: string) => void;
 
   createOrder: (order: Omit<Order, 'id' | 'created_at' | 'order_status'> & { planned_model?: string; planned_quantity?: number }) => void;
   updateOrderPOStatus: (orderId: string, status: 'waiting_po' | 'pending_purchasing' | 'po_received_in_stock') => void;
   receivePOIntoStock: (orderId: string, supplier?: string, poNo?: string) => void;
+  updateOrderCosts: (orderId: string, extraCost: number, itemCosts: Record<number, number>) => void;
   cutStock: (
     orderId: string,
     billNo: string,
-    itemsToCut: { model_name: string; quantity: number; supplier?: string; po_no?: string; prep_note?: string }[]
+    itemsToCut: { model_name: string; quantity: number; supplier?: string; po_no?: string; prep_note?: string; unit_cost?: number; stockItemId?: string }[]
   ) => void;
 
   // Prep operations
@@ -83,6 +90,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return saved ? JSON.parse(saved) : INITIAL_REPAIR_TICKETS;
   });
 
+  // Product Catalog (localStorage Demo Mode + Supabase `products` sync)
+  const [products, setProducts] = useState<Product[]>(() => {
+    const saved = localStorage.getItem('boss_products');
+    return saved ? JSON.parse(saved) : INITIAL_PRODUCTS;
+  });
+
   // Supabase state
   const [supabaseUrl, setSupabaseUrl] = useState(() => localStorage.getItem('boss_sb_url') || '');
   const [supabaseKey, setSupabaseKey] = useState(() => localStorage.getItem('boss_sb_key') || '');
@@ -136,6 +149,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.setItem('boss_repair_tickets', JSON.stringify(repairTickets));
   }, [repairTickets]);
 
+  useEffect(() => {
+    localStorage.setItem('boss_products', JSON.stringify(products));
+  }, [products]);
+
   // Connect Supabase if configured
   useEffect(() => {
     if (supabaseUrl && supabaseKey) {
@@ -145,14 +162,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setIsSupabaseLive(true);
 
         const loadRemote = async () => {
-          const [o, i, r] = await Promise.all([
+          const [o, i, r, p] = await Promise.all([
             client.from('orders').select('*').order('created_at', { ascending: false }),
             client.from('items').select('*').order('created_at', { ascending: false }),
-            client.from('repair_tickets').select('*').order('created_at', { ascending: false })
+            client.from('repair_tickets').select('*').order('created_at', { ascending: false }),
+            client.from('products').select('*').order('created_at', { ascending: false })
           ]);
           if (o.data) setOrders(o.data);
           if (i.data) setItems(i.data);
           if (r.data) setRepairTickets(r.data);
+          if (p.data) setProducts(p.data as Product[]);
         };
         loadRemote();
 
@@ -160,6 +179,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => loadRemote())
           .on('postgres_changes', { event: '*', schema: 'public', table: 'items' }, () => loadRemote())
           .on('postgres_changes', { event: '*', schema: 'public', table: 'repair_tickets' }, () => loadRemote())
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => loadRemote())
           .subscribe();
 
         return () => {
@@ -202,6 +222,44 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setUsers(prev => prev.filter(u => u.id !== id));
   };
 
+  // Product Catalog CRUD
+  const addProduct = async (productData: Omit<Product, 'id' | 'created_at' | 'updated_at'>) => {
+    const newProduct: Product = {
+      ...productData,
+      id: 'prod-' + Date.now(),
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+    if (isSupabaseLive && supabaseClient) {
+      const { data } = await supabaseClient.from('products').insert([{
+        name: newProduct.name,
+        category: newProduct.category,
+        item_type: newProduct.item_type,
+        unit: newProduct.unit,
+        cost_price: newProduct.cost_price,
+        sell_price: newProduct.sell_price
+      }]).select();
+      if (data && data[0]) setProducts(prev => [data[0] as Product, ...prev]);
+    } else {
+      setProducts(prev => [newProduct, ...prev]);
+    }
+  };
+
+  const updateProduct = async (id: string, patch: Partial<Omit<Product, 'id'>>) => {
+    const updatedAt = new Date().toISOString();
+    if (isSupabaseLive && supabaseClient) {
+      await supabaseClient.from('products').update({ ...patch, updated_at: updatedAt }).eq('id', id);
+    }
+    setProducts(prev => prev.map(p => p.id === id ? { ...p, ...patch, updated_at: updatedAt } : p));
+  };
+
+  const deleteProduct = async (id: string) => {
+    if (isSupabaseLive && supabaseClient) {
+      await supabaseClient.from('products').delete().eq('id', id);
+    }
+    setProducts(prev => prev.filter(p => p.id !== id));
+  };
+
   // Actions
   const createOrder = async (orderData: Omit<Order, 'id' | 'created_at' | 'order_status'> & { planned_model?: string; planned_quantity?: number }) => {
     const routeCode = orderData.district ? getRouteByDistrict(orderData.district) : ('route_5' as RouteCode);
@@ -209,6 +267,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const newOrder: Order = {
       id: 'ord-' + Date.now(),
       sales_ref: orderData.sales_ref,
+      salesperson: orderData.salesperson || currentUser?.name,
       customer_name: orderData.customer_name,
       customer_phone: orderData.customer_phone,
       delivery_location: orderData.delivery_location,
@@ -221,6 +280,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       delivery_mode: orderData.delivery_mode || 'install',
       site_notes: orderData.site_notes,
       items_list: orderData.items_list || (orderData.planned_model ? [{ model_name: orderData.planned_model, quantity: orderData.planned_quantity || 1 }] : []),
+      extra_cost: orderData.extra_cost || 0,
       bill_no: null,
       order_status: 'pending_purchasing',
       created_at: new Date().toISOString(),
@@ -264,16 +324,51 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  // บันทึกราคาทุน (INTERNAL ONLY) - ต้นทุนต่อหน่วยของแต่ละรายการ + ต้นทุนค่าแรง/ค่าดำเนินการอื่นต่อออเดอร์
+  const updateOrderCosts = async (orderId: string, extraCost: number, itemCosts: Record<number, number>) => {
+    const updatedAt = new Date().toISOString();
+    if (isSupabaseLive && supabaseClient) {
+      const target = orders.find(o => o.id === orderId);
+      const nextItems = (target?.items_list || []).map((it, idx) => ({
+        ...it,
+        unit_cost: itemCosts[idx] !== undefined ? itemCosts[idx] : it.unit_cost
+      }));
+      await supabaseClient.from('orders').update({
+        extra_cost: extraCost,
+        items_list: nextItems,
+        updated_at: updatedAt
+      }).eq('id', orderId);
+    } else {
+      setOrders(prev => prev.map(o => o.id === orderId ? {
+        ...o,
+        extra_cost: extraCost,
+        updated_at: updatedAt,
+        items_list: o.items_list?.map((it, idx) => ({
+          ...it,
+          unit_cost: itemCosts[idx] !== undefined ? itemCosts[idx] : it.unit_cost
+        }))
+      } : o));
+    }
+  };
+
   const cutStock = async (
     orderId: string,
     billNo: string,
-    itemsToCut: { model_name: string; quantity: number; supplier?: string; po_no?: string; prep_note?: string }[]
+    itemsToCut: { model_name: string; quantity: number; supplier?: string; po_no?: string; prep_note?: string; unit_cost?: number; stockItemId?: string }[]
   ) => {
     const targetOrder = orders.find(o => o.id === orderId);
     const newItems: Item[] = [];
+    // รายการที่ดึงจากสต๊อก in_stock ที่มีอยู่แล้ว (ไม่สร้างใหม่ แต่แปลงสถานะ)
+    const consumedStockIds: string[] = [];
 
     itemsToCut.forEach((plan, planIdx) => {
       for (let i = 0; i < plan.quantity; i++) {
+        // ถ้าเป็นชิ้นแรกของแผน และมี stockItemId (ดึงจากคลัง) → ใช้ item เดิม
+        if (i === 0 && plan.stockItemId) {
+          consumedStockIds.push(plan.stockItemId);
+          continue;
+        }
+
         newItems.push({
           id: 'itm-' + Date.now() + '-' + planIdx + '-' + i,
           order_id: orderId,
@@ -298,10 +393,52 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     if (isSupabaseLive && supabaseClient) {
       await supabaseClient.from('orders').update({ bill_no: billNo, order_status: 'approved_for_prep' }).eq('id', orderId);
-      await supabaseClient.from('items').insert(newItems);
+      if (newItems.length > 0) {
+        await supabaseClient.from('items').insert(newItems);
+      }
+      // แปลง item in_stock ที่มีอยู่ → pending_prep ผูกกับออเดอร์ (ตัดสต๊อกจริง)
+      for (const stockId of consumedStockIds) {
+        const plan = itemsToCut.find(p => p.stockItemId === stockId);
+        await supabaseClient.from('items').update({
+          order_id: orderId,
+          status: 'pending_prep',
+          prep_type: 'outbound_dispatch',
+          supplier: plan?.supplier || 'สต๊อกร้าน',
+          po_no: plan?.po_no || billNo,
+          prep_note: plan?.prep_note || '',
+          delivery_mode: targetOrder?.delivery_mode || 'install',
+          assigned_prep_tech: null,
+          prep_accepted_at: null,
+          prepped_at: null,
+          void_date: null,
+          notes: `ดึงจากสต๊อกคลังตามบิล ${billNo} | PO: ${plan?.po_no || '-'}`
+        }).eq('id', stockId);
+      }
     } else {
       setOrders(prev => prev.map(o => o.id === orderId ? { ...o, bill_no: billNo, order_status: 'approved_for_prep' } : o));
-      setItems(prev => [...prev, ...newItems]);
+      setItems(prev => {
+        const consumedSet = new Set(consumedStockIds);
+        const updated = prev.map(it => {
+          if (!consumedSet.has(it.id)) return it;
+          const plan = itemsToCut.find(p => p.stockItemId === it.id);
+          return {
+            ...it,
+            order_id: orderId,
+            status: 'pending_prep' as const,
+            prep_type: 'outbound_dispatch' as const,
+            supplier: plan?.supplier || 'สต๊อกร้าน',
+            po_no: plan?.po_no || billNo,
+            prep_note: plan?.prep_note || '',
+            delivery_mode: targetOrder?.delivery_mode || 'install',
+            assigned_prep_tech: null,
+            prep_accepted_at: null,
+            prepped_at: null,
+            void_date: null,
+            notes: `ดึงจากสต๊อกคลังตามบิล ${billNo} | PO: ${plan?.po_no || '-'}`
+          };
+        });
+        return [...updated, ...newItems];
+      });
     }
   };
 
@@ -572,10 +709,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.removeItem('boss_items');
     localStorage.removeItem('boss_repair_tickets');
     localStorage.removeItem('boss_users');
+    localStorage.removeItem('boss_products');
     setOrders(INITIAL_ORDERS);
     setItems(INITIAL_ITEMS);
     setRepairTickets(INITIAL_REPAIR_TICKETS);
     setUsers(INITIAL_USERS);
+    setProducts(INITIAL_PRODUCTS);
   };
 
   return (
@@ -589,9 +728,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       orders,
       items,
       repairTickets,
+      products,
+      addProduct,
+      updateProduct,
+      deleteProduct,
       createOrder,
       updateOrderPOStatus,
       receivePOIntoStock,
+      updateOrderCosts,
       cutStock,
       acceptPrepTask,
       prepFinishToStock,

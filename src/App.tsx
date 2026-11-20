@@ -10,10 +10,11 @@ import { OnsiteView } from './components/OnsiteView';
 import { RepairView } from './components/RepairView';
 import { AdminUserManagement } from './components/AdminUserManagement';
 import { SettingsModal } from './components/SettingsModal';
+import { ProfitDashboardView } from './components/ProfitDashboardView';
 import {
   Cpu, LayoutDashboard, FilePlus2, Boxes, PackageCheck,
   Store, Truck, Wrench, Shield, LogOut, Settings, RotateCcw,
-  ChevronRight, Menu, X, Sparkles, Sun, Moon
+  ChevronRight, Menu, X, Sparkles, Sun, Moon, TrendingUp
 } from 'lucide-react';
 
 export const App: React.FC = () => {
@@ -38,17 +39,29 @@ export const App: React.FC = () => {
   // Desktop drawer: allow collapsing the persistent sidebar (default open)
   const [isDesktopSidebarOpen, setIsDesktopSidebarOpen] = useState(true);
 
-  // Mobile drawer: lock body scroll + close on Escape key
+  // Mobile drawer: lock scroll (html + body + main container) + close on Escape key
   useEffect(() => {
     if (isMobileSidebarOpen) {
-      const prevOverflow = document.body.style.overflow;
-      document.body.style.overflow = 'hidden';
+      const htmlEl = document.documentElement;
+      const bodyEl = document.body;
+      const mainEl = document.querySelector('main');
+
+      const prevHtmlOverflow = htmlEl.style.overflow;
+      const prevBodyOverflow = bodyEl.style.overflow;
+      const prevMainOverflow = mainEl ? mainEl.style.overflow : '';
+
+      htmlEl.style.overflow = 'hidden';
+      bodyEl.style.overflow = 'hidden';
+      if (mainEl) mainEl.style.overflow = 'hidden';
+
       const onKey = (e: KeyboardEvent) => {
         if (e.key === 'Escape') setIsMobileSidebarOpen(false);
       };
       window.addEventListener('keydown', onKey);
       return () => {
-        document.body.style.overflow = prevOverflow;
+        htmlEl.style.overflow = prevHtmlOverflow;
+        bodyEl.style.overflow = prevBodyOverflow;
+        if (mainEl) mainEl.style.overflow = prevMainOverflow;
         window.removeEventListener('keydown', onKey);
       };
     }
@@ -65,6 +78,7 @@ export const App: React.FC = () => {
   const allNavItems = [
     { id: 'dashboard', role: 'all', label: 'ภาพรวม & ค้นหา S/N', icon: LayoutDashboard, badge: null, desc: 'ตรวจสอบสถานะ & ประวัติ' },
     { id: 'sales', role: 'sales', label: 'ฝ่ายขาย (Sales)', icon: FilePlus2, badge: null, desc: 'ORDER FORM 2026 (ใบขาว)' },
+    { id: 'profit', role: 'sales', label: 'สรุปยอด & กำไร (GP)', icon: TrendingUp, badge: null, desc: 'ยอดขาย, ต้นทุน, GP & ค่าคอม' },
     { id: 'accounting', role: 'accounting', label: 'จัดซื้อ & สต๊อก', icon: Boxes, badge: pendingAccounting, desc: 'ใบชมพู & ใบสั่งซื้อ PO' },
     { id: 'prep', role: 'prep', label: 'ช่างเตรียมสินค้า', icon: PackageCheck, badge: pendingPrep, desc: '2 จังหวะ: เตรียม/ปล่อยของ' },
     { id: 'frontdesk', role: 'frontdesk', label: 'หน้าร้าน / จัดคิว', icon: Store, badge: readyDispatch, desc: 'จ่ายงาน & รับเครื่องซ่อม' },
@@ -80,6 +94,10 @@ export const App: React.FC = () => {
   const visibleNavItems = allNavItems.filter((nav) => {
     if (currentUser.role === 'admin') return true;
     if (nav.id === 'dashboard') return true;
+    // พนักงานขายเห็นทั้งแท็บ Sales และแท็บสรุปยอด & กำไร (ของตัวเอง)
+    if (nav.id === 'profit' && currentUser.role === 'sales') return true;
+    // ผู้บริหาร/ผู้จัดการ (manager) เห็นแท็บสรุปยอด & กำไร ภาพรวมทั้งบริษัท
+    if (nav.id === 'profit' && (currentUser.role as string) === 'manager') return true;
     return nav.role === currentUser.role;
   });
 
@@ -108,7 +126,7 @@ export const App: React.FC = () => {
         onClick={() => setIsMobileSidebarOpen(false)}
         aria-hidden="true"
         className={`
-          fixed inset-0 bg-black/60 backdrop-blur-sm z-40 lg:hidden
+          fixed inset-0 bg-black/60 backdrop-blur-sm z-50 lg:hidden
           transition-opacity duration-300 ease-out
           ${isMobileSidebarOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}
         `}
@@ -121,7 +139,7 @@ export const App: React.FC = () => {
         aria-label="เมนูนำทางหลัก"
         aria-hidden={!isMobileSidebarOpen && !isDesktopSidebarOpen}
         className={`
-          fixed top-0 bottom-0 left-0 z-50 w-[82vw] max-w-[19rem] sm:w-72 liquid-glass-sidebar flex flex-col justify-between
+          fixed top-0 bottom-0 left-0 z-[60] w-[82vw] max-w-[19rem] sm:w-72 liquid-glass-sidebar flex flex-col justify-between
           transition-transform duration-300 ease-out will-change-transform
           lg:w-72 lg:max-w-none
           ${isMobileSidebarOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'}
@@ -363,9 +381,10 @@ export const App: React.FC = () => {
         </header>
 
         {/* Dynamic Content Views */}
-        <main className="flex-1 px-3 sm:px-6 lg:px-8 py-4 sm:py-6 max-w-7xl w-full mx-auto min-w-0">
+        <main className="flex-1 px-3 sm:px-6 lg:px-8 py-4 sm:py-6 max-w-7xl w-full mx-auto min-w-0 overflow-y-auto">
           {activeTab === 'dashboard' && <DashboardView />}
           {activeTab === 'sales' && <SalesView />}
+          {activeTab === 'profit' && <ProfitDashboardView />}
           {activeTab === 'accounting' && <AccountingView />}
           {activeTab === 'prep' && <PrepView />}
           {activeTab === 'frontdesk' && <FrontdeskView />}

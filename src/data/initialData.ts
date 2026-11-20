@@ -1,4 +1,21 @@
-import { UserAccount, Order, Item, RepairTicket } from '../types';
+import { UserAccount, Order, Item, RepairTicket, Product } from '../types';
+
+// Product Catalog (แคตตาล็อกสินค้า/บริการที่ใช้ซ้ำได้ พร้อมราคาทุน & ราคาขาย)
+export const INITIAL_PRODUCTS: Product[] = [
+  { id: 'prod-1', name: 'BossComputech Core-i7 Workstation Pro', category: 'pc_notebook', item_type: 'hardware', unit: 'เครื่อง', cost_price: 24800, sell_price: 32500 },
+  { id: 'prod-2', name: 'BossComputech Mini POS Terminal X1', category: 'pc_notebook', item_type: 'hardware', unit: 'เครื่อง', cost_price: 17600, sell_price: 18900 },
+  { id: 'prod-3', name: 'BossComputech AI Edge Box Ultra', category: 'pc_notebook', item_type: 'hardware', unit: 'เครื่อง', cost_price: 22800, sell_price: 24500 },
+  { id: 'prod-4', name: 'BossComputech All-in-One Touch 21.5"', category: 'pc_notebook', item_type: 'hardware', unit: 'เครื่อง', cost_price: 17200, sell_price: 21900 },
+  { id: 'prod-5', name: 'BossComputech Rack Server 1U Standard', category: 'pc_notebook', item_type: 'hardware', unit: 'เครื่อง', cost_price: 54000, sell_price: 65000 },
+  { id: 'prod-6', name: 'Hikvision IP Camera 4MP ColorVu PoE Kit 4ch', category: 'cctv_network', item_type: 'hardware', unit: 'ชุด', cost_price: 10400, sell_price: 12900 },
+  { id: 'prod-7', name: 'Epson EcoTank L14150 A3+ Wi-Fi All-in-One Ink Tank Printer', category: 'printer', item_type: 'hardware', unit: 'เครื่อง', cost_price: 15200, sell_price: 16500 },
+  { id: 'prod-8', name: 'Ubiquiti UniFi U6-Pro Wi-Fi 6 Access Point', category: 'cctv_network', item_type: 'hardware', unit: 'เครื่อง', cost_price: 4950, sell_price: 6200 },
+  { id: 'prod-9', name: 'ตู้ Rack 42U 600x1000mm พร้อม PDU & พัดลม', category: 'cctv_network', item_type: 'hardware', unit: 'ชุด', cost_price: 14200, sell_price: 18500 },
+  { id: 'prod-10', name: 'สายสัญญาณ LAN Link Cat6 UTP 305m (กล่อง)', category: 'cctv_network', item_type: 'hardware', unit: 'ชุด', cost_price: 2900, sell_price: 3850 },
+  { id: 'prod-11', name: 'ค่าบริการเดินสาย LAN ท่อร้อยสาย และจัดตู้ Rack Server (ต่อจุด)', category: 'service', item_type: 'service', unit: 'จุด', cost_price: 250, sell_price: 450 },
+  { id: 'prod-12', name: 'ค่าบริการติดตั้งเซ็ตอัพระบบกล้องวงจรปิด CCTV PoE (4 จุด)', category: 'service', item_type: 'service', unit: 'ชุด', cost_price: 1200, sell_price: 2500 },
+  { id: 'prod-13', name: 'ค่าบริการติดตั้งและอบรมการใช้งานโปรแกรม POS หน้าร้าน', category: 'service', item_type: 'service', unit: 'รายการ', cost_price: 600, sell_price: 1500 }
+];
 
 export const INITIAL_USERS: UserAccount[] = [
   {
@@ -15,10 +32,28 @@ export const INITIAL_USERS: UserAccount[] = [
     id: 'u-sales',
     username: 'sales',
     password: 'password123',
-    name: 'คุณแพรว (หัวหน้าฝ่ายขาย)',
+    name: 'เซลล์เอ',
     role: 'sales',
     badge: 'Sales Dept',
     phone: '081-111-2233'
+  },
+  {
+    id: 'u-sales-b',
+    username: 'salesb',
+    password: 'password123',
+    name: 'เซลล์บี',
+    role: 'sales',
+    badge: 'Sales Dept',
+    phone: '081-111-4455'
+  },
+  {
+    id: 'u-sales-c',
+    username: 'salesc',
+    password: 'password123',
+    name: 'เซลล์ซี',
+    role: 'sales',
+    badge: 'Sales Dept',
+    phone: '081-111-6677'
   },
   {
     id: 'u-acc',
@@ -103,6 +138,7 @@ export const INITIAL_ORDERS: Order[] = [
   {
     id: 'ord-001',
     sales_ref: 'SO-2026-101',
+    salesperson: 'เซลล์เอ',
     customer_name: 'สหกรณ์การเกษตรพุนพิน จำกัด',
     customer_phone: '077-311-224',
     district: 'พุนพิน',
@@ -116,15 +152,17 @@ export const INITIAL_ORDERS: Order[] = [
     bill_no: null,
     order_status: 'pending_purchasing',
     items_list: [
-      { model_name: 'Hikvision IP Camera 4MP ColorVu PoE Kit 4ch', quantity: 2 },
-      { model_name: 'Ubiquiti UniFi U6-Pro Wi-Fi 6 Access Point', quantity: 1 }
+      { model_name: 'Hikvision IP Camera 4MP ColorVu PoE Kit 4ch', quantity: 2, unit_price: 12900, unit_cost: 10400, item_type: 'hardware' },
+      { model_name: 'Ubiquiti UniFi U6-Pro Wi-Fi 6 Access Point', quantity: 1, unit_price: 6200, unit_cost: 4950, item_type: 'hardware' }
     ],
+    extra_cost: 1500,
     created_at: new Date(Date.now() - 3600000 * 2).toISOString()
   },
   // 2. เคส Printer Epson L14150 (สาย 4 กาญจนดิษฐ์) - อยู่ในสถานะ รอสั่งซื้อของเข้า (waiting_po)
   {
     id: 'ord-002',
     sales_ref: 'SO-2026-102',
+    salesperson: 'เซลล์บี',
     customer_name: 'โรงเรียนกาญจนดิษฐ์วิทยาคม',
     customer_phone: '077-371-155',
     district: 'กาญจนดิษฐ์',
@@ -138,14 +176,16 @@ export const INITIAL_ORDERS: Order[] = [
     bill_no: null,
     order_status: 'waiting_po',
     items_list: [
-      { model_name: 'Epson EcoTank L14150 A3+ Wi-Fi All-in-One Ink Tank Printer', quantity: 1, supplier: 'SIS Distribution', po_no: 'SIS/2569-441', item_type: 'hardware' }
+      { model_name: 'Epson EcoTank L14150 A3+ Wi-Fi All-in-One Ink Tank Printer', quantity: 1, supplier: 'SIS Distribution', po_no: 'SIS/2569-441', item_type: 'hardware', unit_price: 16500, unit_cost: 15200 }
     ],
+    extra_cost: 0,
     created_at: new Date(Date.now() - 3600000 * 5).toISOString()
   },
   // 2.5 เคส งานโครงการ / รับเหมาติดตั้ง Server & เดินสาย LAN (สาย 5 เมืองสุราษฎร์) - รับของ PO เข้าสต๊อกแล้ว (po_received_in_stock)
   {
     id: 'ord-005',
     sales_ref: 'SO-2026-105',
+    salesperson: 'เซลล์เอ',
     customer_name: 'บจก. สุราษฎร์ โลจิสติกส์ พาร์ค (สำนักงานใหญ่)',
     customer_phone: '077-960-888',
     district: 'เมืองสุราษฎร์ธานี',
@@ -159,17 +199,19 @@ export const INITIAL_ORDERS: Order[] = [
     bill_no: null,
     order_status: 'po_received_in_stock',
     items_list: [
-      { model_name: 'BossComputech Rack Server 1U Standard', quantity: 2, supplier: 'Synnex (Thailand)', po_no: 'SYN/2569-892', item_type: 'hardware' },
-      { model_name: 'ตู้ Rack 42U 600x1000mm พร้อม PDU & พัดลม', quantity: 1, supplier: 'PKT Computer & Supply', po_no: 'PKT/2569-115', item_type: 'hardware' },
-      { model_name: 'สายสัญญาณ LAN Link Cat6 UTP 305m (กล่อง)', quantity: 3, supplier: 'สต๊อกร้าน (Main Store)', po_no: 'STORE-STK', item_type: 'hardware' },
-      { model_name: 'ค่าบริการเดินสาย LAN ท่อร้อยสาย และจัดตู้ Rack Server (24 จุด)', quantity: 1, item_type: 'service' }
+      { model_name: 'BossComputech Rack Server 1U Standard', quantity: 2, supplier: 'Synnex (Thailand)', po_no: 'SYN/2569-892', item_type: 'hardware', unit_price: 65000, unit_cost: 54000 },
+      { model_name: 'ตู้ Rack 42U 600x1000mm พร้อม PDU & พัดลม', quantity: 1, supplier: 'PKT Computer & Supply', po_no: 'PKT/2569-115', item_type: 'hardware', unit_price: 18500, unit_cost: 14200 },
+      { model_name: 'สายสัญญาณ LAN Link Cat6 UTP 305m (กล่อง)', quantity: 3, supplier: 'สต๊อกร้าน (Main Store)', po_no: 'STORE-STK', item_type: 'hardware', unit_price: 3850, unit_cost: 2900 },
+      { model_name: 'ค่าบริการเดินสาย LAN ท่อร้อยสาย และจัดตู้ Rack Server (24 จุด)', quantity: 1, item_type: 'service', unit_price: 10800, unit_cost: 0 }
     ],
+    extra_cost: 6500,
     created_at: new Date(Date.now() - 3600000 * 12).toISOString()
   },
   // 3. เคส POS Terminal ร้านค้าในเมือง (สาย 5) - ตัดสต๊อกแล้ว ช่างเตรียมกำลังทำ (pending_prep)
   {
     id: 'ord-003',
     sales_ref: 'SO-2026-103',
+    salesperson: 'เซลล์บี',
     customer_name: 'ร้านอาหารริมน้ำสุราษฎร์ฟู้ดส์',
     customer_phone: '081-555-8899',
     district: 'เมืองสุราษฎร์ธานี',
@@ -183,14 +225,16 @@ export const INITIAL_ORDERS: Order[] = [
     bill_no: 'INV-2026-103',
     order_status: 'approved_for_prep',
     items_list: [
-      { model_name: 'BossComputech Mini POS Terminal X1', quantity: 1, supplier: 'สต๊อกร้าน (Main Store)', po_no: 'PKT/2569-083', prep_note: 'มีกล่องพร้อมลง Driver' }
+      { model_name: 'BossComputech Mini POS Terminal X1', quantity: 1, supplier: 'สต๊อกร้าน (Main Store)', po_no: 'PKT/2569-083', prep_note: 'มีกล่องพร้อมลง Driver', item_type: 'hardware', unit_price: 18900, unit_cost: 17600 }
     ],
+    extra_cost: 800,
     created_at: new Date(Date.now() - 3600000 * 8).toISOString()
   },
   // 4. เคส Workstation แพเขื่อน (สาย 2 บ้านตาขุน) - อยู่ในสต๊อกรอแปะวอยปล่อยของ (prepped_in_stock)
   {
     id: 'ord-004',
     sales_ref: 'SO-2026-104',
+    salesperson: 'เซลล์ซี',
     customer_name: 'แพเขื่อนเชี่ยวหลาน แกรนด์ริเวอร์',
     customer_phone: '088-777-6655',
     district: 'บ้านตาขุน',
@@ -204,9 +248,57 @@ export const INITIAL_ORDERS: Order[] = [
     bill_no: 'INV-2026-104',
     order_status: 'approved_for_prep',
     items_list: [
-      { model_name: 'BossComputech Core-i7 Workstation Pro', quantity: 1 }
+      { model_name: 'BossComputech Core-i7 Workstation Pro', quantity: 1, item_type: 'hardware', unit_price: 32500, unit_cost: 24800 }
     ],
+    extra_cost: 0,
     created_at: new Date(Date.now() - 86400000).toISOString()
+  },
+  // 5. เคส AI Edge Box (สาย 1 ไชยา) - ส่งมอบแล้ว (fulfilled) กำไรต่ำ (Low Margin < 10%)
+  {
+    id: 'ord-006',
+    sales_ref: 'SO-2026-106',
+    salesperson: 'เซลล์ซี',
+    customer_name: 'ร้านขายยาไชยาพาณิชย์',
+    customer_phone: '077-431-220',
+    district: 'ไชยา',
+    route_code: 'route_1',
+    delivery_location: 'ถ.ตลาดไชยา ต.ตลาดไชยา อ.ไชยา จ.สุราษฎร์ธานี',
+    delivery_date: new Date(Date.now() - 86400000 * 2).toISOString().split('T')[0],
+    bill_type: 'tax_invoice',
+    payment_term: 'cash',
+    delivery_mode: 'install',
+    site_notes: 'แข่งราคากับคู่แข่ง ลูกค้าต่อราคาแรง ต้องปิดการขาย',
+    bill_no: 'INV-2026-106',
+    order_status: 'fulfilled',
+    items_list: [
+      { model_name: 'BossComputech AI Edge Box Ultra', quantity: 1, supplier: 'Abshop', po_no: 'ABS/2569-301', item_type: 'hardware', unit_price: 24500, unit_cost: 22800 }
+    ],
+    extra_cost: 1200,
+    created_at: new Date(Date.now() - 86400000 * 3).toISOString()
+  },
+  // 6. เคส Workstation 2 เครื่อง (สาย 5) - ส่งมอบแล้ว (fulfilled) กำไรดี
+  {
+    id: 'ord-007',
+    sales_ref: 'SO-2026-107',
+    salesperson: 'เซลล์เอ',
+    customer_name: 'บจก. สุราษฎร์ดิจิทัล มีเดีย',
+    customer_phone: '077-212-889',
+    district: 'เมืองสุราษฎร์ธานี',
+    route_code: 'route_5',
+    delivery_location: 'อาคารสำนักงาน ถ.ศรีวิชัย ต.มะขามเตี้ย อ.เมือง จ.สุราษฎร์ธานี',
+    delivery_date: new Date(Date.now() - 86400000 * 4).toISOString().split('T')[0],
+    bill_type: 'tax_invoice',
+    payment_term: 'credit_30',
+    delivery_mode: 'install',
+    site_notes: 'ติดตั้งพร้อมลงโปรแกรมตัดต่อวิดีโอ 2 เครื่อง',
+    bill_no: 'INV-2026-107',
+    order_status: 'fulfilled',
+    items_list: [
+      { model_name: 'BossComputech Core-i7 Workstation Pro', quantity: 2, supplier: 'Synnex (Thailand)', po_no: 'SYN/2569-455', item_type: 'hardware', unit_price: 32500, unit_cost: 24800 },
+      { model_name: 'ค่าบริการติดตั้งและอบรมการใช้งานโปรแกรม POS หน้าร้าน', quantity: 1, item_type: 'service', unit_price: 1500, unit_cost: 0 }
+    ],
+    extra_cost: 2000,
+    created_at: new Date(Date.now() - 86400000 * 5).toISOString()
   }
 ];
 
