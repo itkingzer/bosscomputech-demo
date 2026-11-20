@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from './context/AppContext';
 import { LoginPage } from './components/LoginPage';
 import { DashboardView } from './components/DashboardView';
@@ -10,15 +10,15 @@ import { OnsiteView } from './components/OnsiteView';
 import { RepairView } from './components/RepairView';
 import { AdminUserManagement } from './components/AdminUserManagement';
 import { SettingsModal } from './components/SettingsModal';
-import { 
-  Cpu, LayoutDashboard, FilePlus2, Boxes, PackageCheck, 
-  Store, Truck, Wrench, Shield, LogOut, Settings, RotateCcw, 
+import {
+  Cpu, LayoutDashboard, FilePlus2, Boxes, PackageCheck,
+  Store, Truck, Wrench, Shield, LogOut, Settings, RotateCcw,
   ChevronRight, Menu, X, Sparkles, Sun, Moon
 } from 'lucide-react';
 
 export const App: React.FC = () => {
-  const { 
-    currentUser, logout, isSupabaseLive, 
+  const {
+    currentUser, logout, isSupabaseLive,
     orders, items, repairTickets, resetAllDemoData,
     theme, toggleTheme
   } = useApp();
@@ -35,6 +35,24 @@ export const App: React.FC = () => {
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  // Desktop drawer: allow collapsing the persistent sidebar (default open)
+  const [isDesktopSidebarOpen, setIsDesktopSidebarOpen] = useState(true);
+
+  // Mobile drawer: lock body scroll + close on Escape key
+  useEffect(() => {
+    if (isMobileSidebarOpen) {
+      const prevOverflow = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+      const onKey = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') setIsMobileSidebarOpen(false);
+      };
+      window.addEventListener('keydown', onKey);
+      return () => {
+        document.body.style.overflow = prevOverflow;
+        window.removeEventListener('keydown', onKey);
+      };
+    }
+  }, [isMobileSidebarOpen]);
 
   // Badge counts
   const pendingAccounting = orders.filter(o => o.order_status === 'pending_purchasing' || o.order_status === 'waiting_po' || o.order_status === 'po_received_in_stock').length;
@@ -80,28 +98,38 @@ export const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-[var(--bg-page)] text-[var(--text-primary)] flex relative overflow-x-hidden transition-colors duration-300">
-      
+
       {/* Background Liquid Light Orbs */}
       <div className="liquid-blob-1"></div>
       <div className="liquid-blob-2"></div>
 
-      {/* Mobile Sidebar Overlay */}
-      {isMobileSidebarOpen && (
-        <div 
-          onClick={() => setIsMobileSidebarOpen(false)}
-          className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 lg:hidden"
-        />
-      )}
+      {/* Mobile Sidebar Backdrop Overlay */}
+      <div
+        onClick={() => setIsMobileSidebarOpen(false)}
+        aria-hidden="true"
+        className={`
+          fixed inset-0 bg-black/60 backdrop-blur-sm z-40 lg:hidden
+          transition-opacity duration-300 ease-out
+          ${isMobileSidebarOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}
+        `}
+      />
 
       {/* ========================================================================= */}
       {/* SIDEBAR NAVIGATION (Liquid Glass Vertical Sidebar) */}
       {/* ========================================================================= */}
-      <aside className={`
-        fixed top-0 bottom-0 left-0 z-50 w-72 liquid-glass-sidebar flex flex-col justify-between transition-transform duration-300 ease-out
-        lg:translate-x-0 ${isMobileSidebarOpen ? 'translate-x-0' : '-translate-x-full'}
-      `}>
+      <aside
+        aria-label="เมนูนำทางหลัก"
+        aria-hidden={!isMobileSidebarOpen && !isDesktopSidebarOpen}
+        className={`
+          fixed top-0 bottom-0 left-0 z-50 w-[82vw] max-w-[19rem] sm:w-72 liquid-glass-sidebar flex flex-col justify-between
+          transition-transform duration-300 ease-out will-change-transform
+          lg:w-72 lg:max-w-none
+          ${isMobileSidebarOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'}
+          ${isDesktopSidebarOpen ? 'lg:translate-x-0' : 'lg:-translate-x-full'}
+        `}
+      >
         <div className="flex flex-col h-full">
-          
+
           {/* Brand Header */}
           <div className="p-5 border-b border-white/[0.06] flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -121,9 +149,13 @@ export const App: React.FC = () => {
               </div>
             </div>
 
-            <button 
-              onClick={() => setIsMobileSidebarOpen(false)}
-              className="lg:hidden p-1.5 rounded-lg text-slate-400 hover:text-white"
+            <button
+              onClick={() => {
+                setIsMobileSidebarOpen(false);
+                setIsDesktopSidebarOpen(false);
+              }}
+              aria-label="ปิดเมนู"
+              className="p-2.5 -mr-1 rounded-xl text-slate-400 hover:text-white hover:bg-white/[0.06] transition min-w-[44px] min-h-[44px] flex items-center justify-center"
             >
               <X className="w-5 h-5" />
             </button>
@@ -164,9 +196,9 @@ export const App: React.FC = () => {
                     setIsMobileSidebarOpen(false);
                   }}
                   className={`
-                    w-full flex items-center justify-between p-3 rounded-2xl transition-all duration-200 cursor-pointer group text-left
-                    ${isActive 
-                      ? 'liquid-glass-active font-bold shadow-lg shadow-[#FF6B00]/25' 
+                    w-full flex items-center justify-between p-3 min-h-[52px] rounded-2xl transition-all duration-200 cursor-pointer group text-left
+                    ${isActive
+                      ? 'liquid-glass-active font-bold shadow-lg shadow-[#FF6B00]/25'
                       : 'text-slate-300 hover:text-white hover:bg-white/[0.05] border border-transparent hover:border-white/[0.06]'
                     }
                   `}
@@ -174,8 +206,8 @@ export const App: React.FC = () => {
                   <div className="flex items-center gap-3 min-w-0">
                     <div className={`
                       p-2 rounded-xl transition-all
-                      ${isActive 
-                        ? 'bg-black/20 text-black' 
+                      ${isActive
+                        ? 'bg-black/20 text-black'
                         : 'bg-white/[0.05] text-[#FF6B00] group-hover:bg-[#FF6B00]/15'
                       }
                     `}>
@@ -194,8 +226,8 @@ export const App: React.FC = () => {
                   {nav.badge !== null && nav.badge > 0 && (
                     <span className={`
                       px-2 py-0.5 rounded-full text-[10px] font-bold ml-2 flex-shrink-0
-                      ${isActive 
-                        ? 'bg-black text-[#FF6B00]' 
+                      ${isActive
+                        ? 'bg-black text-[#FF6B00]'
                         : 'bg-[#FF6B00]/20 text-[#FF6B00] border border-[#FF6B00]/40 shadow-sm shadow-[#FF6B00]/20'
                       }
                     `}>
@@ -209,7 +241,7 @@ export const App: React.FC = () => {
 
           {/* Bottom Actions & DB Mode */}
           <div className="p-3 border-t border-white/[0.06] space-y-2">
-            
+
             {/* Live connection badge */}
             <button
               onClick={() => setIsSettingsOpen(true)}
@@ -227,7 +259,7 @@ export const App: React.FC = () => {
             {/* Logout button */}
             <button
               onClick={logout}
-              className="w-full flex items-center justify-center gap-2 p-2.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 text-xs font-semibold transition cursor-pointer"
+              className="w-full flex items-center justify-center gap-2 p-2.5 min-h-[44px] rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 text-xs font-semibold transition cursor-pointer"
             >
               <LogOut className="w-3.5 h-3.5" />
               <span>ออกจากระบบ</span>
@@ -240,28 +272,56 @@ export const App: React.FC = () => {
       {/* ========================================================================= */}
       {/* MAIN CONTENT AREA */}
       {/* ========================================================================= */}
-      <div className="flex-1 flex flex-col min-w-0 lg:pl-72 relative z-10">
-        
+      <div className={`flex-1 flex flex-col min-w-0 relative z-10 transition-[padding] duration-300 ease-out ${isDesktopSidebarOpen ? 'lg:pl-72' : 'lg:pl-0'}`}>
+
         {/* Top Floating App Bar */}
-        <header className="sticky top-0 z-30 px-4 sm:px-6 lg:px-8 py-3.5 liquid-glass border-b border-white/[0.06] flex items-center justify-between">
-          <div className="flex items-center gap-3">
+        <header className="sticky top-0 z-30 px-3 sm:px-6 lg:px-8 py-2.5 sm:py-3.5 liquid-glass border-b border-white/[0.06] flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
+            {/* Hamburger (mobile / tablet only) */}
             <button
               onClick={() => setIsMobileSidebarOpen(true)}
-              className="lg:hidden p-2 rounded-xl liquid-glass-card text-slate-300 hover:text-white"
+              aria-label="เปิดเมนูนำทาง"
+              aria-expanded={isMobileSidebarOpen}
+              className="lg:hidden p-2.5 -ml-1 rounded-xl liquid-glass-card text-slate-300 hover:text-white min-w-[44px] min-h-[44px] flex items-center justify-center flex-shrink-0"
             >
               <Menu className="w-5 h-5" />
             </button>
-            <div>
-              <h1 className="text-sm font-bold text-white flex items-center gap-2">
-                <span>{allNavItems.find(n => n.id === activeTab)?.label}</span>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/[0.06] text-slate-400 border border-white/[0.08] font-normal hidden sm:inline-block">
+
+            {/* Desktop sidebar toggle (collapse / expand) */}
+            <button
+              onClick={() => setIsDesktopSidebarOpen(v => !v)}
+              aria-label={isDesktopSidebarOpen ? 'ซ่อนเมนูด้านข้าง' : 'แสดงเมนูด้านข้าง'}
+              aria-expanded={isDesktopSidebarOpen}
+              title={isDesktopSidebarOpen ? 'ซ่อนเมนูด้านข้าง' : 'แสดงเมนูด้านข้าง'}
+              className="hidden lg:flex p-2.5 -ml-1 rounded-xl liquid-glass-card text-slate-300 hover:text-white transition min-w-[44px] min-h-[44px] items-center justify-center flex-shrink-0"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
+
+            {/* Page title — centered on mobile, left-aligned on desktop */}
+            <div className="min-w-0 flex-1 lg:flex-none text-center lg:text-left">
+              <h1 className="text-sm font-bold text-white flex items-center justify-center lg:justify-start gap-2">
+                <span className="truncate lg:whitespace-normal">{allNavItems.find(n => n.id === activeTab)?.label}</span>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/[0.06] text-slate-400 border border-white/[0.08] font-normal hidden lg:inline-block">
                   Role: {currentUser.role}
                 </span>
               </h1>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
+            {/* Demo / Live status badge (mobile / tablet only) */}
+            <button
+              onClick={() => setIsSettingsOpen(true)}
+              aria-label={isSupabaseLive ? 'สถานะ: Supabase Live' : 'สถานะ: Demo Local Mode'}
+              className={`lg:hidden flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-[10px] font-bold transition cursor-pointer min-h-[36px] ${isSupabaseLive
+                ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                : 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+                }`}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full animate-pulse ${isSupabaseLive ? 'bg-emerald-400' : 'bg-amber-400'}`}></span>
+              <span className="hidden xs:inline sm:inline">{isSupabaseLive ? 'LIVE' : 'DEMO'}</span>
+            </button>
             {/* Theme Toggle Button (Liquid Glass Dark / Light) */}
             <button
               onClick={toggleTheme}
@@ -285,7 +345,8 @@ export const App: React.FC = () => {
                 }
               }}
               title="รีเซ็ตข้อมูลตัวอย่าง"
-              className="p-2 rounded-xl liquid-glass-card text-slate-400 hover:text-[#FF6B00] transition cursor-pointer"
+              aria-label="รีเซ็ตข้อมูลตัวอย่าง"
+              className="hidden sm:flex p-2 rounded-xl liquid-glass-card text-slate-400 hover:text-[#FF6B00] transition cursor-pointer min-w-[40px] min-h-[40px] items-center justify-center"
             >
               <RotateCcw className="w-4 h-4" />
             </button>
@@ -293,7 +354,8 @@ export const App: React.FC = () => {
             <button
               onClick={() => setIsSettingsOpen(true)}
               title="ตั้งค่าระบบ"
-              className="p-2 rounded-xl liquid-glass-card text-slate-400 hover:text-[#FF6B00] transition cursor-pointer"
+              aria-label="ตั้งค่าระบบ"
+              className="hidden lg:flex p-2 rounded-xl liquid-glass-card text-slate-400 hover:text-[#FF6B00] transition cursor-pointer min-w-[40px] min-h-[40px] items-center justify-center"
             >
               <Settings className="w-4 h-4" />
             </button>
@@ -301,7 +363,7 @@ export const App: React.FC = () => {
         </header>
 
         {/* Dynamic Content Views */}
-        <main className="flex-1 px-4 sm:px-6 lg:px-8 py-6 max-w-7xl w-full mx-auto">
+        <main className="flex-1 px-3 sm:px-6 lg:px-8 py-4 sm:py-6 max-w-7xl w-full mx-auto min-w-0">
           {activeTab === 'dashboard' && <DashboardView />}
           {activeTab === 'sales' && <SalesView />}
           {activeTab === 'accounting' && <AccountingView />}
@@ -313,7 +375,7 @@ export const App: React.FC = () => {
         </main>
 
         {/* Bottom Footer */}
-        <footer className="px-6 py-4 border-t border-white/[0.05] text-center sm:text-left flex flex-col sm:flex-row items-center justify-between text-xs text-slate-500 gap-2 mt-auto">
+        <footer className="px-4 sm:px-6 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] border-t border-white/[0.05] text-center sm:text-left flex flex-col sm:flex-row items-center justify-between text-xs text-slate-500 gap-2 mt-auto">
           <div>
             © 2026 <strong>BossComputech Co., Ltd.</strong> All rights reserved.
           </div>

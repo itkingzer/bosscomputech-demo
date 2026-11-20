@@ -372,8 +372,8 @@ export const OnsiteView: React.FC = () => {
             <button
               onClick={() => setSelectedRouteFilter('all')}
               className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer whitespace-nowrap ${selectedRouteFilter === 'all'
-                  ? 'bg-white/20 text-white border border-white/40 shadow-sm font-bold'
-                  : 'bg-white/[0.04] text-slate-400 hover:text-white border border-white/[0.06]'
+                ? 'bg-white/20 text-white border border-white/40 shadow-sm font-bold'
+                : 'bg-white/[0.04] text-slate-400 hover:text-white border border-white/[0.06]'
                 }`}
             >
               ทั้งหมด
@@ -385,8 +385,8 @@ export const OnsiteView: React.FC = () => {
                   key={rCode}
                   onClick={() => setSelectedRouteFilter(rCode)}
                   className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${selectedRouteFilter === rCode
-                      ? `${r.badgeBg} ${r.badgeText} ${r.badgeBorder} border shadow-md font-bold`
-                      : 'bg-white/[0.04] text-slate-400 hover:text-slate-200 border border-white/[0.06]'
+                    ? `${r.badgeBg} ${r.badgeText} ${r.badgeBorder} border shadow-md font-bold`
+                    : 'bg-white/[0.04] text-slate-400 hover:text-slate-200 border border-white/[0.06]'
                     }`}
                 >
                   <span className="w-2 h-2 rounded-full" style={{ backgroundColor: r.color }}></span>
@@ -402,8 +402,8 @@ export const OnsiteView: React.FC = () => {
           <button
             onClick={() => setSelectedCategory('all')}
             className={`px-3 py-1.5 text-xs font-semibold rounded-xl transition cursor-pointer whitespace-nowrap ${selectedCategory === 'all'
-                ? 'bg-white/20 text-white border border-white/40 font-bold'
-                : 'bg-white/[0.03] text-slate-400 hover:text-white border border-white/[0.05]'
+              ? 'bg-white/20 text-white border border-white/40 font-bold'
+              : 'bg-white/[0.03] text-slate-400 hover:text-white border border-white/[0.05]'
               }`}
           >
             รวมทุกประเภท ({totalAssignedCount})
@@ -411,8 +411,8 @@ export const OnsiteView: React.FC = () => {
           <button
             onClick={() => setSelectedCategory('new_goods')}
             className={`px-3 py-1.5 text-xs font-semibold rounded-xl transition cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${selectedCategory === 'new_goods'
-                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 font-bold'
-                : 'bg-white/[0.03] text-slate-400 hover:text-emerald-300 border border-white/[0.05]'
+              ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 font-bold'
+              : 'bg-white/[0.03] text-slate-400 hover:text-emerald-300 border border-white/[0.05]'
               }`}
           >
             <Package className="w-3.5 h-3.5" />
@@ -421,8 +421,8 @@ export const OnsiteView: React.FC = () => {
           <button
             onClick={() => setSelectedCategory('repair_return')}
             className={`px-3 py-1.5 text-xs font-semibold rounded-xl transition cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${selectedCategory === 'repair_return'
-                ? 'bg-purple-500/20 text-purple-400 border border-purple-500/40 font-bold'
-                : 'bg-white/[0.03] text-slate-400 hover:text-purple-300 border border-white/[0.05]'
+              ? 'bg-purple-500/20 text-purple-400 border border-purple-500/40 font-bold'
+              : 'bg-white/[0.03] text-slate-400 hover:text-purple-300 border border-white/[0.05]'
               }`}
           >
             <RotateCcw className="w-3.5 h-3.5" />
@@ -431,8 +431,8 @@ export const OnsiteView: React.FC = () => {
           <button
             onClick={() => setSelectedCategory('pickup')}
             className={`px-3 py-1.5 text-xs font-semibold rounded-xl transition cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${selectedCategory === 'pickup'
-                ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40 font-bold'
-                : 'bg-white/[0.03] text-slate-400 hover:text-amber-300 border border-white/[0.05]'
+              ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40 font-bold'
+              : 'bg-white/[0.03] text-slate-400 hover:text-amber-300 border border-white/[0.05]'
               }`}
           >
             <Wrench className="w-3.5 h-3.5" />
@@ -681,11 +681,12 @@ export const OnsiteView: React.FC = () => {
       {/* MODAL 1: FORM บันทึกการรับเครื่องซ่อมกลับร้าน (Mobile-Friendly) */}
       {/* ========================================================================= */}
       {isPickupModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md overflow-y-auto">
-          <div className="w-full max-w-lg liquid-glass rounded-3xl p-6 sm:p-7 border border-[#FF6B00]/40 shadow-2xl my-8 relative">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/80 backdrop-blur-md overflow-y-auto">
+          <div className="w-[95vw] max-w-lg max-h-[90vh] overflow-y-auto liquid-glass rounded-2xl sm:rounded-3xl p-4 sm:p-7 border border-[#FF6B00]/40 shadow-2xl my-4 sm:my-8 relative">
             <button
               onClick={() => setIsPickupModalOpen(false)}
-              className="absolute right-5 top-5 text-slate-400 hover:text-white cursor-pointer"
+              aria-label="ปิดฟอร์มรับเครื่องซ่อม"
+              className="absolute right-3 top-3 sm:right-5 sm:top-5 p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/[0.06] cursor-pointer min-w-[44px] min-h-[44px] flex items-center justify-center"
             >
               <X className="w-5 h-5" />
             </button>
@@ -822,8 +823,8 @@ export const OnsiteView: React.FC = () => {
                         key={acc}
                         onClick={() => toggleAccessory(acc)}
                         className={`p-2 rounded-xl border text-left flex items-center gap-2 transition cursor-pointer ${isChecked
-                            ? 'bg-amber-500/15 border-amber-500/40 text-amber-300 font-semibold'
-                            : 'bg-white/[0.03] border-white/[0.06] text-slate-400 hover:text-white'
+                          ? 'bg-amber-500/15 border-amber-500/40 text-amber-300 font-semibold'
+                          : 'bg-white/[0.03] border-white/[0.06] text-slate-400 hover:text-white'
                           }`}
                       >
                         {isChecked ? (
@@ -870,17 +871,17 @@ export const OnsiteView: React.FC = () => {
               </div>
 
               {/* Buttons */}
-              <div className="flex items-center gap-3 pt-2">
+              <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center gap-2.5 pt-2">
                 <button
                   type="button"
                   onClick={() => setIsPickupModalOpen(false)}
-                  className="w-1/3 py-2.5 rounded-xl liquid-glass-card text-slate-400 hover:text-white text-xs font-semibold cursor-pointer"
+                  className="w-full sm:w-1/3 py-2.5 min-h-[44px] rounded-xl liquid-glass-card text-slate-400 hover:text-white text-xs font-semibold cursor-pointer"
                 >
                   ยกเลิก
                 </button>
                 <button
                   type="submit"
-                  className="w-2/3 py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 active:scale-95 text-black font-extrabold rounded-xl text-xs transition cursor-pointer shadow-xl shadow-amber-500/25 border border-white/20 flex items-center justify-center gap-1.5"
+                  className="w-full sm:w-2/3 py-2.5 min-h-[44px] bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 active:scale-95 text-black font-extrabold rounded-xl text-xs transition cursor-pointer shadow-xl shadow-amber-500/25 border border-white/20 flex items-center justify-center gap-1.5"
                 >
                   <CheckCircle className="w-4 h-4" />
                   <span>บันทึกการรับเครื่อง & ส่งเข้าห้องซ่อม</span>
@@ -895,11 +896,12 @@ export const OnsiteView: React.FC = () => {
       {/* MODAL 2: RECEIPT POPUP (พิมพ์ใบรับซ่อมให้ลูกค้าทันที) */}
       {/* ========================================================================= */}
       {receiptTicket && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md overflow-y-auto">
-          <div className="w-full max-w-md liquid-glass rounded-3xl p-6 border border-emerald-500/40 shadow-2xl my-8 relative text-xs">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/85 backdrop-blur-md overflow-y-auto">
+          <div className="w-[95vw] max-w-md max-h-[90vh] overflow-y-auto liquid-glass rounded-2xl sm:rounded-3xl p-4 sm:p-6 border border-emerald-500/40 shadow-2xl my-4 sm:my-8 relative text-xs">
             <button
               onClick={() => setReceiptTicket(null)}
-              className="absolute right-4 top-4 text-slate-400 hover:text-white cursor-pointer no-print"
+              aria-label="ปิดใบรับซ่อม"
+              className="absolute right-3 top-3 sm:right-4 sm:top-4 p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/[0.06] cursor-pointer no-print min-w-[44px] min-h-[44px] flex items-center justify-center"
             >
               <X className="w-5 h-5" />
             </button>

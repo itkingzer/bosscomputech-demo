@@ -519,7 +519,7 @@ export const SalesView: React.FC = () => {
               <button
                 type="button"
                 onClick={handleOpenCatalogModal}
-                className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold text-xs transition cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-[#FF6B00]/25 border border-white/20 active:scale-95"
+                className="w-full sm:w-auto px-4 py-2.5 min-h-[44px] rounded-xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold text-xs transition cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-[#FF6B00]/25 border border-white/20 active:scale-95"
               >
                 <Plus className="w-4 h-4" />
                 <span>+ เลือกสินค้า / บริการ (จากรายการที่สนใจ & แคตตาล็อก)</span>
@@ -600,7 +600,7 @@ export const SalesView: React.FC = () => {
           <div className="flex justify-end pt-2">
             <button
               type="submit"
-              className="px-6 py-3 bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold rounded-2xl text-xs transition cursor-pointer flex items-center gap-2 shadow-xl shadow-[#FF6B00]/25 border border-white/20 active:scale-95"
+              className="w-full sm:w-auto px-6 py-3 min-h-[44px] bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold rounded-2xl text-xs transition cursor-pointer flex items-center justify-center gap-2 shadow-xl shadow-[#FF6B00]/25 border border-white/20 active:scale-95"
             >
               <Send className="w-4 h-4" />
               <span>ส่งใบสั่งขาย (ใบขาว) เข้าฝ่ายจัดซื้อ & สต๊อก</span>
@@ -613,18 +613,18 @@ export const SalesView: React.FC = () => {
       {/* PRODUCT SELECTION & INTEREST MODAL (แคตตาล็อก & รายการที่เสนอ/สนใจ)         */}
       {/* ========================================================================= */}
       {isCatalogModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-fade-in">
-          <div className="liquid-glass rounded-3xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl border border-white/[0.12] overflow-hidden">
-            
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/75 backdrop-blur-md animate-fade-in">
+          <div className="liquid-glass rounded-2xl sm:rounded-3xl w-[95vw] max-w-4xl max-h-[90vh] flex flex-col shadow-2xl border border-white/[0.12] overflow-hidden">
+
             {/* Modal Header */}
-            <div className="p-5 sm:p-6 border-b border-white/[0.08] flex items-center justify-between">
-              <div className="flex items-center gap-3">
+            <div className="p-4 sm:p-6 border-b border-white/[0.08] flex items-start sm:items-center justify-between gap-2">
+              <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
                 <div className="p-2.5 rounded-2xl bg-[#FF6B00]/15 text-[#FF6B00] border border-[#FF6B00]/30">
                   <ShoppingBag className="w-6 h-6" />
                 </div>
-                <div>
-                  <h3 className="text-base font-bold text-white">เลือกสินค้า & บริการ (Product Selection & Interest Pool)</h3>
-                  <p className="text-xs text-slate-400">
+                <div className="min-w-0">
+                  <h3 className="text-sm sm:text-base font-bold text-white leading-tight">เลือกสินค้า & บริการ</h3>
+                  <p className="text-[11px] sm:text-xs text-slate-400 hidden sm:block">
                     ค้นหา ติ๊กเลือกหลายรายการเข้าบิล พร้อมปรับจำนวน และเพิ่มรายการสเปกพิเศษเข้าแคตตาล็อกได้ทันที
                   </p>
                 </div>
@@ -632,7 +632,8 @@ export const SalesView: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setIsCatalogModalOpen(false)}
-                className="p-2 rounded-xl text-slate-400 hover:text-white bg-white/[0.04] hover:bg-white/[0.08] transition"
+                aria-label="ปิดหน้าต่างเลือกสินค้า"
+                className="p-2.5 rounded-xl text-slate-400 hover:text-white bg-white/[0.04] hover:bg-white/[0.08] transition min-w-[44px] min-h-[44px] flex items-center justify-center flex-shrink-0"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -679,11 +680,10 @@ export const SalesView: React.FC = () => {
                     key={cat.id}
                     type="button"
                     onClick={() => setCategoryFilter(cat.id as any)}
-                    className={`px-3 py-1 rounded-xl text-[11px] font-semibold whitespace-nowrap transition cursor-pointer ${
-                      categoryFilter === cat.id
-                        ? 'bg-[#FF6B00] text-black shadow-md shadow-[#FF6B00]/25'
-                        : 'bg-white/[0.04] text-slate-300 hover:text-white hover:bg-white/[0.08]'
-                    }`}
+                    className={`px-3 py-1 rounded-xl text-[11px] font-semibold whitespace-nowrap transition cursor-pointer ${categoryFilter === cat.id
+                      ? 'bg-[#FF6B00] text-black shadow-md shadow-[#FF6B00]/25'
+                      : 'bg-white/[0.04] text-slate-300 hover:text-white hover:bg-white/[0.08]'
+                      }`}
                   >
                     {cat.label}
                   </button>
@@ -788,11 +788,10 @@ export const SalesView: React.FC = () => {
                           <tr
                             key={item.id}
                             onClick={() => handleToggleSelectModalItem(item)}
-                            className={`transition cursor-pointer ${
-                              isSelected
-                                ? 'bg-[#FF6B00]/10 hover:bg-[#FF6B00]/15'
-                                : 'hover:bg-white/[0.02]'
-                            }`}
+                            className={`transition cursor-pointer ${isSelected
+                              ? 'bg-[#FF6B00]/10 hover:bg-[#FF6B00]/15'
+                              : 'hover:bg-white/[0.02]'
+                              }`}
                           >
                             <td className="py-2.5 px-3 text-center">
                               <div className="flex items-center justify-center">
@@ -855,16 +854,16 @@ export const SalesView: React.FC = () => {
             </div>
 
             {/* Modal Footer */}
-            <div className="p-4 sm:p-5 border-t border-white/[0.08] flex flex-col sm:flex-row items-center justify-between gap-3 bg-white/[0.02]">
-              <div className="text-xs text-slate-300">
-                เลือกแล้ว <strong className="text-[#FF6B00] font-mono text-sm">{selectedCount}</strong> รายการ | ยอดรวมที่เลือก: <strong className="text-emerald-400 font-mono text-sm">{modalTotalAmount.toLocaleString('th-TH')} บาท</strong>
+            <div className="p-3 sm:p-5 border-t border-white/[0.08] flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 bg-white/[0.02] pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+              <div className="text-xs text-slate-300 text-center sm:text-left">
+                เลือกแล้ว <strong className="text-[#FF6B00] font-mono text-sm">{selectedCount}</strong> รายการ | ยอดรวม: <strong className="text-emerald-400 font-mono text-sm">{modalTotalAmount.toLocaleString('th-TH')} บาท</strong>
               </div>
 
               <div className="flex items-center gap-2.5 w-full sm:w-auto">
                 <button
                   type="button"
                   onClick={() => setIsCatalogModalOpen(false)}
-                  className="w-full sm:w-auto px-4 py-2 rounded-xl text-xs text-slate-400 hover:text-white bg-white/[0.04] hover:bg-white/[0.08] transition"
+                  className="w-full sm:w-auto px-4 py-2.5 rounded-xl text-xs text-slate-400 hover:text-white bg-white/[0.04] hover:bg-white/[0.08] transition min-h-[44px]"
                 >
                   ยกเลิก
                 </button>
@@ -872,11 +871,10 @@ export const SalesView: React.FC = () => {
                   type="button"
                   onClick={handleConfirmModalSelection}
                   disabled={selectedCount === 0}
-                  className={`w-full sm:w-auto px-6 py-2.5 rounded-xl text-xs font-extrabold transition cursor-pointer flex items-center justify-center gap-2 shadow-xl ${
-                    selectedCount > 0
-                      ? 'bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black shadow-[#FF6B00]/25 active:scale-95'
-                      : 'bg-white/10 text-slate-500 cursor-not-allowed'
-                  }`}
+                  className={`w-full sm:w-auto px-6 py-2.5 rounded-xl text-xs font-extrabold transition cursor-pointer flex items-center justify-center gap-2 shadow-xl min-h-[44px] ${selectedCount > 0
+                    ? 'bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black shadow-[#FF6B00]/25 active:scale-95'
+                    : 'bg-white/10 text-slate-500 cursor-not-allowed'
+                    }`}
                 >
                   <Check className="w-4 h-4" />
                   <span>เพิ่มรายการที่ติ๊ก ({selectedCount}) เข้าใบขาว</span>

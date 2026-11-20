@@ -3,9 +3,9 @@ import { useApp } from '../context/AppContext';
 import { Database, X } from 'lucide-react';
 
 export const SettingsModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpen, onClose }) => {
-  const { 
-    isSupabaseLive, supabaseUrl, supabaseKey, 
-    updateSupabaseConfig, disconnectSupabase 
+  const {
+    isSupabaseLive, supabaseUrl, supabaseKey,
+    updateSupabaseConfig, disconnectSupabase
   } = useApp();
 
   const [url, setUrl] = useState(supabaseUrl);
@@ -24,11 +24,12 @@ export const SettingsModal: React.FC<{ isOpen: boolean; onClose: () => void }> =
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-md flex items-center justify-center p-4">
-      <div className="liquid-glass rounded-3xl max-w-md w-full p-6 sm:p-7 shadow-2xl border border-white/[0.12] relative">
+    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-md flex items-center justify-center p-2 sm:p-4">
+      <div className="liquid-glass rounded-2xl sm:rounded-3xl w-[95vw] max-w-md max-h-[90vh] overflow-y-auto p-4 sm:p-7 shadow-2xl border border-white/[0.12] relative">
         <button
           onClick={onClose}
-          className="absolute top-5 right-5 text-slate-400 hover:text-white transition cursor-pointer"
+          aria-label="ปิดหน้าตั้งค่า"
+          className="absolute top-3 right-3 sm:top-5 sm:right-5 p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/[0.06] transition cursor-pointer min-w-[44px] min-h-[44px] flex items-center justify-center"
         >
           <X className="w-5 h-5" />
         </button>

@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { 
-  Wrench, CheckCircle, ShieldAlert, Send, AlertTriangle, 
-  XCircle, Clock, Printer, Plus, X, CheckSquare, Square, 
+import {
+  Wrench, CheckCircle, ShieldAlert, Send, AlertTriangle,
+  XCircle, Clock, Printer, Plus, X, CheckSquare, Square,
   ShieldCheck, FileText, User
 } from 'lucide-react';
 import { RepairStatus, RepairTicket, ROUTE_DEFINITIONS, getRouteByDistrict } from '../types';
@@ -52,39 +52,39 @@ export const RepairView: React.FC = () => {
     badgeClass: string;
     icon: React.ElementType;
   }[] = [
-    {
-      status: 'repaired',
-      label: '1. ซ่อมได้ (ซ่อมสำเร็จ)',
-      description: 'เปลี่ยนอะไหล่/แก้ไขจุดเสียเรียบร้อย พร้อมส่งมอบคืนลูกค้า',
-      badgeClass: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
-      icon: CheckCircle
-    },
-    {
-      status: 'unrepairable_warranty',
-      label: '2. ซ่อมไม่ได้ ส่งประกัน (เคลมศูนย์)',
-      description: 'อาการเสียระดับชิป/บอร์ด ส่งต่อศูนย์ตัวแทนเคลมประกัน',
-      badgeClass: 'bg-blue-500/15 text-blue-400 border-blue-500/30',
-      icon: Send
-    },
-    {
-      status: 'expired_warranty',
-      label: '3. หมดประกัน (เสนอราคาซ่อม/ซื้อใหม่)',
-      description: 'ตรวจพบว่าหมดประกันแล้ว เสนอราคาค่าอะไหล่ให้ลูกค้าตัดสินใจ',
-      badgeClass: 'bg-amber-500/15 text-amber-400 border-amber-500/30',
-      icon: Clock
-    },
-    {
-      status: 'unrepairable',
-      label: '4. ซ่อมไม่ได้ (ไม่คุ้มซ่อม/คืนเครื่อง)',
-      description: 'บอร์ดไหม้ ชิ้นส่วนเสียหายหนัก ไม่คุ้มค่าซ่อม แจ้งคืนเครื่อง',
-      badgeClass: 'bg-rose-500/15 text-rose-400 border-rose-500/30',
-      icon: XCircle
-    }
-  ];
+      {
+        status: 'repaired',
+        label: '1. ซ่อมได้ (ซ่อมสำเร็จ)',
+        description: 'เปลี่ยนอะไหล่/แก้ไขจุดเสียเรียบร้อย พร้อมส่งมอบคืนลูกค้า',
+        badgeClass: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
+        icon: CheckCircle
+      },
+      {
+        status: 'unrepairable_warranty',
+        label: '2. ซ่อมไม่ได้ ส่งประกัน (เคลมศูนย์)',
+        description: 'อาการเสียระดับชิป/บอร์ด ส่งต่อศูนย์ตัวแทนเคลมประกัน',
+        badgeClass: 'bg-blue-500/15 text-blue-400 border-blue-500/30',
+        icon: Send
+      },
+      {
+        status: 'expired_warranty',
+        label: '3. หมดประกัน (เสนอราคาซ่อม/ซื้อใหม่)',
+        description: 'ตรวจพบว่าหมดประกันแล้ว เสนอราคาค่าอะไหล่ให้ลูกค้าตัดสินใจ',
+        badgeClass: 'bg-amber-500/15 text-amber-400 border-amber-500/30',
+        icon: Clock
+      },
+      {
+        status: 'unrepairable',
+        label: '4. ซ่อมไม่ได้ (ไม่คุ้มซ่อม/คืนเครื่อง)',
+        description: 'บอร์ดไหม้ ชิ้นส่วนเสียหายหนัก ไม่คุ้มค่าซ่อม แจ้งคืนเครื่อง',
+        badgeClass: 'bg-rose-500/15 text-rose-400 border-rose-500/30',
+        icon: XCircle
+      }
+    ];
 
   // Auto Warranty Check for New Ticket Form
-  const matchedItemNew = sn.trim() 
-    ? items.find(i => i.serial_number && i.serial_number.toLowerCase() === sn.trim().toLowerCase()) 
+  const matchedItemNew = sn.trim()
+    ? items.find(i => i.serial_number && i.serial_number.toLowerCase() === sn.trim().toLowerCase())
     : null;
 
   let newFormWarrantyText = '';
@@ -286,13 +286,12 @@ export const RepairView: React.FC = () => {
                     </div>
 
                     <div className="flex items-center gap-2">
-                      <span className={`px-3 py-1 rounded-xl text-xs font-semibold border ${
-                        isWarrantyActive
-                          ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
-                          : isExpired
+                      <span className={`px-3 py-1 rounded-xl text-xs font-semibold border ${isWarrantyActive
+                        ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                        : isExpired
                           ? 'bg-rose-500/15 text-rose-400 border-rose-500/30'
                           : 'bg-white/[0.04] text-slate-400 border-white/[0.08]'
-                      }`}>
+                        }`}>
                         {warrantyText}
                       </span>
 
@@ -350,11 +349,10 @@ export const RepairView: React.FC = () => {
                           <div
                             key={opt.status}
                             onClick={() => setSelectedOutcome({ ...selectedOutcome, [ticket.id]: opt.status })}
-                            className={`p-3 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${
-                              isSelected
-                                ? `${opt.badgeClass} ring-2 ring-white/20 shadow-lg scale-[1.01]`
-                                : 'bg-white/[0.02] border-white/[0.06] text-slate-400 hover:border-white/[0.15] hover:text-slate-200'
-                            }`}
+                            className={`p-3 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${isSelected
+                              ? `${opt.badgeClass} ring-2 ring-white/20 shadow-lg scale-[1.01]`
+                              : 'bg-white/[0.02] border-white/[0.06] text-slate-400 hover:border-white/[0.15] hover:text-slate-200'
+                              }`}
                           >
                             <div className="flex items-center gap-2 mb-1.5">
                               <Icon className="w-4 h-4 flex-shrink-0" />
@@ -430,11 +428,12 @@ export const RepairView: React.FC = () => {
       {/* MODAL 1: FORM เปิดใบรับซ่อมใหม่ (REP-2569-XXX) */}
       {/* ========================================================================= */}
       {isNewTicketOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md overflow-y-auto">
-          <div className="w-full max-w-lg liquid-glass rounded-3xl p-6 sm:p-7 border border-[#FF6B00]/40 shadow-2xl my-8 relative text-xs">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/80 backdrop-blur-md overflow-y-auto">
+          <div className="w-[95vw] max-w-lg max-h-[90vh] overflow-y-auto liquid-glass rounded-2xl sm:rounded-3xl p-4 sm:p-7 border border-[#FF6B00]/40 shadow-2xl my-4 sm:my-8 relative text-xs">
             <button
               onClick={() => setIsNewTicketOpen(false)}
-              className="absolute right-5 top-5 text-slate-400 hover:text-white cursor-pointer"
+              aria-label="ปิดฟอร์มเปิดใบรับซ่อม"
+              className="absolute right-3 top-3 sm:right-5 sm:top-5 p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/[0.06] cursor-pointer min-w-[44px] min-h-[44px] flex items-center justify-center"
             >
               <X className="w-5 h-5" />
             </button>
@@ -540,11 +539,10 @@ export const RepairView: React.FC = () => {
                         type="button"
                         key={acc}
                         onClick={() => toggleAccessory(acc)}
-                        className={`p-2 rounded-xl border text-left flex items-center gap-2 transition cursor-pointer ${
-                          isChecked
-                            ? 'bg-amber-500/15 border-amber-500/40 text-amber-300 font-semibold'
-                            : 'bg-white/[0.03] border-white/[0.06] text-slate-400 hover:text-white'
-                        }`}
+                        className={`p-2 rounded-xl border text-left flex items-center gap-2 transition cursor-pointer ${isChecked
+                          ? 'bg-amber-500/15 border-amber-500/40 text-amber-300 font-semibold'
+                          : 'bg-white/[0.03] border-white/[0.06] text-slate-400 hover:text-white'
+                          }`}
                       >
                         {isChecked ? (
                           <CheckSquare className="w-4 h-4 text-amber-400 flex-shrink-0" />
@@ -582,17 +580,17 @@ export const RepairView: React.FC = () => {
                 />
               </div>
 
-              <div className="flex items-center gap-3 pt-2">
+              <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center gap-2.5 pt-2 sticky bottom-0 bg-[var(--bg-page)]/0">
                 <button
                   type="button"
                   onClick={() => setIsNewTicketOpen(false)}
-                  className="w-1/3 py-2.5 rounded-xl liquid-glass-card text-slate-400 hover:text-white font-semibold cursor-pointer"
+                  className="w-full sm:w-1/3 py-2.5 min-h-[44px] rounded-xl liquid-glass-card text-slate-400 hover:text-white font-semibold cursor-pointer"
                 >
                   ยกเลิก
                 </button>
                 <button
                   type="submit"
-                  className="w-2/3 py-2.5 bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold rounded-xl text-xs transition cursor-pointer shadow-lg shadow-[#FF6B00]/25 border border-white/20 active:scale-95"
+                  className="w-full sm:w-2/3 py-2.5 min-h-[44px] bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold rounded-xl text-xs transition cursor-pointer shadow-lg shadow-[#FF6B00]/25 border border-white/20 active:scale-95"
                 >
                   เปิดใบรับซ่อม & บันทึกเข้าระบบ
                 </button>
@@ -606,11 +604,12 @@ export const RepairView: React.FC = () => {
       {/* MODAL 2: STANDARD COMPANY REPAIR RECEIPT (CSS PRINT READY) */}
       {/* ========================================================================= */}
       {receiptTicket && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md overflow-y-auto">
-          <div className="w-full max-w-xl liquid-glass rounded-3xl p-6 sm:p-7 border border-[#FF6B00]/40 shadow-2xl my-8 relative text-xs">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/85 backdrop-blur-md overflow-y-auto">
+          <div className="w-[95vw] max-w-xl max-h-[90vh] overflow-y-auto liquid-glass rounded-2xl sm:rounded-3xl p-4 sm:p-7 border border-[#FF6B00]/40 shadow-2xl my-4 sm:my-8 relative text-xs">
             <button
               onClick={() => setReceiptTicket(null)}
-              className="absolute right-5 top-5 text-slate-400 hover:text-white cursor-pointer no-print"
+              aria-label="ปิดใบรับซ่อม"
+              className="absolute right-3 top-3 sm:right-5 sm:top-5 p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/[0.06] cursor-pointer no-print min-w-[44px] min-h-[44px] flex items-center justify-center"
             >
               <X className="w-5 h-5" />
             </button>
@@ -665,8 +664,8 @@ export const RepairView: React.FC = () => {
               <div className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.08] print:border-black text-xs">
                 <span className="text-slate-400 print:text-gray-700 font-semibold block mb-1">อุปกรณ์ที่นำมาด้วย:</span>
                 <p className="text-white print:text-black font-medium">
-                  {receiptTicket.accessories && receiptTicket.accessories.length > 0 
-                    ? receiptTicket.accessories.join(', ') 
+                  {receiptTicket.accessories && receiptTicket.accessories.length > 0
+                    ? receiptTicket.accessories.join(', ')
                     : 'ไม่มีอุปกรณ์ติดมา (ตัวเครื่องเปล่า)'}
                   {receiptTicket.accessories_other ? ` (เพิ่มเติม: ${receiptTicket.accessories_other})` : ''}
                 </p>

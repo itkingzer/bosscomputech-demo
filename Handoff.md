@@ -57,7 +57,36 @@
 - **สาย 5 (ในเมือง / รอบเมือง):** เมืองสุราษฎร์ธานี
 - **สาย 6 (ต่างจังหวัด / ชั่วคราว):** ต่างจังหวัด / งานเหมาพิเศษ (กรอกจังหวัดเพิ่มเติมได้)
 
-## 4. Verification
-- `npm run build` ผ่าน 100% (0 errors)
+## 4. Mobile-First Responsive Upgrade (Mobile / Tablet App-Grade UX)
+
+### 4.1 Navigation — Slide-out Drawer Sidebar
+- **Desktop (`lg` ≥ 1024px):** Sidebar 6 ฝ่ายด้านซ้ายแสดงค้างไว้เป็นค่าเริ่มต้น (`lg:translate-x-0`, `lg:pl-72`) และ **พับ/กางได้** ด้วยปุ่ม ☰ บน Header (desktop-only):
+  - กดปุ่ม ☰ (desktop) หรือปุ่ม X ใน Sidebar → Sidebar เลื่อนออก (`lg:-translate-x-full`) และ main content ขยายเต็ม (`lg:pl-0`) พร้อม transition นุ่มนวล
+  - กดปุ่ม ☰ อีกครั้ง → Sidebar เลื่อนกลับมา (`lg:translate-x-0`) และ main content หดกลับ (`lg:pl-72`)
+  - State: `isDesktopSidebarOpen` (default `true`), ปุ่มมี `aria-label` / `aria-expanded`
+- **Mobile / Tablet (< `lg`):** ซ่อน Sidebar แล้วแสดง **Top Header Bar** แทน ประกอบด้วย:
+  - ปุ่ม **Hamburger ☰** ทางซ้าย (min 44×44px, `aria-label` / `aria-expanded`)
+  - **ชื่อหน้าปัจจุบัน** ตรงกลาง (truncate กันล้น)
+  - **ป้ายสถานะ Demo / Live** ทางขวา (แตะเพื่อเปิด Settings) — LIVE = emerald, DEMO = amber
+- **Drawer behavior:**
+  - กด ☰ → Sidebar เลื่อนออกจากซ้าย (`translate-x-0` ↔ `-translate-x-full`, `duration-300 ease-out`, `will-change-transform`)
+  - **Backdrop Overlay** สีดำโปร่งแสง (`bg-black/60 backdrop-blur-sm`) fade in/out
+  - ปิดอัตโนมัติเมื่อ: เลือกเมนูฝ่ายใดฝ่ายหนึ่ง / แตะพื้นที่ว่างด้านนอก / กดปุ่ม X / กด `Escape`
+  - ล็อก body scroll ขณะเปิด (`document.body.style.overflow = 'hidden'`)
+  - Drawer กว้าง `w-[82vw] max-w-[19rem]` บนมือถือ (ไม่บังจอทั้งใบ)
+
+### 4.2 Layout — ทุกหน้า (Sales, จัดซื้อ/สต๊อก, ช่างเตรียม, หน้าร้าน, ช่าง Onsite, ช่างซ่อม)
+- **No Horizontal Page Overflow:** `html, body { max-width:100%; overflow-x:hidden }` + `overflow-wrap:break-word` กัน S/N / URL ยาวล้น; ทุกตารางข้อมูลครอบด้วย `overflow-x-auto` (momentum scroll บน iOS)
+- **Touch-Friendly Forms:** global CSS (`@media max-width:1023px`) บังคับ `input/select/textarea { min-height:44px; font-size:16px }` (กัน iOS auto-zoom), `button { min-height:40px }`, checkbox/radio 20×20px; Grid ฟอร์มเป็น `grid-cols-1` บนมือถือแล้วทุกหน้า
+- **Modals (ทุกตัว):** เปลี่ยนเป็น `w-[95vw] max-h-[90vh] overflow-y-auto` + `p-2 sm:p-4` บนมือถือ, ปุ่มยืนยัน/ยกเลิกเป็น `flex-col-reverse` เต็มความกว้าง (`min-h-[44px]`) ไม่ตกขอบจอ:
+  - Sales: Product Selection Modal
+  - Onsite: Repair Pickup Form + Receipt Modal
+  - Repair: New Ticket Form + Company Receipt Modal
+  - Settings Modal, Admin Add-User Modal
+- **Safe areas:** footer + modal footers ใช้ `env(safe-area-inset-bottom)` รองรับจอมีรอยบาก
+- **Accessibility:** ปุ่ม icon-only ทุกตัวมี `aria-label`; รองรับ `prefers-reduced-motion`
+
+## 5. Verification
+- `npm run build` ผ่าน 100% (0 errors) — `tsc -b && vite build` สำเร็จ
 - Vite dev server running on port 5173
 - Mock data ครบทุกสถานะ รวมถึงเคสงานโครงการและวงจร PO 3 ขั้นตอน

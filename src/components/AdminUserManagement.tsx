@@ -164,8 +164,8 @@ export const AdminUserManagement: React.FC = () => {
 
       {/* Add User Modal */}
       {showAddModal && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="liquid-glass rounded-3xl max-w-md w-full p-6 sm:p-7 shadow-2xl border border-white/[0.12] relative">
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-md flex items-center justify-center p-2 sm:p-4">
+          <div className="liquid-glass rounded-2xl sm:rounded-3xl w-[95vw] max-w-md max-h-[90vh] overflow-y-auto p-4 sm:p-7 shadow-2xl border border-white/[0.12] relative">
             <h3 className="text-base font-bold text-white mb-1 flex items-center gap-2">
               <UserPlus className="w-5 h-5 text-[#FF6B00]" />
               เพิ่มผู้ใช้งานใหม่
