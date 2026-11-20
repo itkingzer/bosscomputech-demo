@@ -3,8 +3,12 @@ import { useApp } from '../context/AppContext';
 import {
   UserCheck, TicketPlus, FileSpreadsheet, Send, Wrench,
   Download, Printer, CheckCircle, PlusCircle, AlertCircle, Clock, XCircle,
-  MapPin, Navigation, Truck, Package, RotateCcw
+  MapPin, Navigation, Truck, Package, RotateCcw, Check, ClipboardList, StickyNote
 } from 'lucide-react';
+import {
+  Modal, modalInputClass, modalLabelClass,
+  modalPrimaryBtnClass, modalSecondaryBtnClass
+} from './ui/Modal';
 import {
   IntakeChannel, RepairStatus, ROUTE_DEFINITIONS, RouteCode, getRouteByDistrict
 } from '../types';
@@ -36,6 +40,79 @@ const DISTRICT_OPTIONS = [
   { district: 'ต่างจังหวัด / งานเหมาพิเศษ', zone: 'สาย 6 (ต่างจังหวัด / ชั่วคราว)' }
 ];
 
+// ---------------------------------------------------------------------------
+// Multi-Select Checkbox List for Onsite Technician assignment (used inside the
+// "มอบหมายงาน / ส่ง Job" modal). Mobile-friendly: min-h-[44px] tap targets.
+// ---------------------------------------------------------------------------
+interface TechOption {
+  name: string;
+  activeJobs: number;
+}
+
+interface TechCheckboxListProps {
+  options: TechOption[];
+  selected: string[];
+  onToggle: (techName: string) => void;
+}
+
+const TechCheckboxList: React.FC<TechCheckboxListProps> = ({ options, selected, onToggle }) => {
+  if (options.length === 0) {
+    return (
+      <div className="px-3 py-4 text-center text-[11px] rounded-xl border border-dashed
+        text-slate-500 border-slate-300 dark:text-slate-400 dark:border-slate-700">
+        ยังไม่มีช่าง Onsite ในระบบ
+      </div>
+    );
+  }
+
+  return (
+    <div
+      role="group"
+      aria-label="เลือกช่าง Onsite"
+      className="rounded-2xl border overflow-hidden divide-y
+        border-slate-200 divide-slate-200
+        dark:border-slate-700 dark:divide-slate-700"
+    >
+      {options.map(opt => {
+        const isPicked = selected.includes(opt.name);
+        return (
+          <button
+            key={opt.name}
+            type="button"
+            role="checkbox"
+            aria-checked={isPicked}
+            onClick={() => onToggle(opt.name)}
+            className={`w-full min-h-[44px] flex items-center gap-2.5 px-3 py-2.5 text-left transition cursor-pointer
+              ${isPicked
+                ? 'bg-[#FF6B00]/10 dark:bg-[#FF6B00]/15'
+                : 'bg-white hover:bg-slate-50 dark:bg-slate-800/40 dark:hover:bg-slate-700/60'}`}
+          >
+            <span
+              className={`w-5 h-5 shrink-0 rounded-md border-2 flex items-center justify-center transition
+                ${isPicked
+                  ? 'bg-[#FF6B00] border-[#FF6B00]'
+                  : 'bg-white border-slate-400 dark:bg-slate-900 dark:border-slate-500'}`}
+            >
+              {isPicked && <Check className="w-3.5 h-3.5 text-white" strokeWidth={3} />}
+            </span>
+            <span className="flex-1 min-w-0 text-xs font-bold truncate text-slate-900 dark:text-white">
+              {opt.name}
+            </span>
+            <span
+              className={`shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap
+                ${opt.activeJobs > 0
+                  ? 'bg-amber-500/15 text-amber-600 border border-amber-500/30 dark:text-amber-400'
+                  : 'bg-slate-500/10 text-slate-500 border border-slate-500/20 dark:text-slate-400'}`}
+            >
+              งาน {opt.activeJobs}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+};
+
 export const FrontdeskView: React.FC = () => {
   const {
     items, orders, repairTickets, assignOnsite,
@@ -64,6 +141,29 @@ export const FrontdeskView: React.FC = () => {
   const [selectedRepairTech, setSelectedRepairTech] = useState<Record<string, string>>({});
   const [batchTechName, setBatchTechName] = useState('');
   const [toast, setToast] = useState('');
+
+  // "มอบหมายงาน / ส่ง Job" modal state
+  const [dispatchItemId, setDispatchItemId] = useState<string | null>(null);
+  const [dispatchRoute, setDispatchRoute] = useState<RouteCode | ''>('');
+  const [dispatchNotes, setDispatchNotes] = useState('');
+  const [dispatchTechs, setDispatchTechs] = useState<string[]>([]);
+
+  const openDispatchModal = (itemId: string) => {
+    const item = items.find(i => i.id === itemId);
+    const order = item?.order_id ? orders.find(o => o.id === item.order_id) : null;
+    setDispatchItemId(itemId);
+    setDispatchRoute((order?.route_code as RouteCode) || '');
+    setDispatchNotes('');
+    setDispatchTechs(selectedTechs[itemId] || []);
+  };
+
+  const closeDispatchModal = () => setDispatchItemId(null);
+
+  const toggleDispatchTech = (techName: string) => {
+    setDispatchTechs(prev =>
+      prev.includes(techName) ? prev.filter(n => n !== techName) : [...prev, techName]
+    );
+  };
 
   // Toggle a technician in/out of an item's assignment list (multi-select).
   const toggleItemTech = (itemId: string, techName: string) => {
@@ -94,6 +194,24 @@ export const FrontdeskView: React.FC = () => {
   const returnReadyTickets = repairTickets.filter(r => r.status === 'repaired' && !r.assigned_onsite_tech && (!r.assigned_techs || r.assigned_techs.length === 0));
   const onsiteIntakeTickets = repairTickets.filter(r => r.intake_channel === 'onsite_pickup' && r.status === 'open' && !r.assigned_onsite_tech && (!r.assigned_techs || r.assigned_techs.length === 0));
   const onsiteTechs = users.filter(u => u.role === 'onsite');
+
+  // Active job count per technician (items + repair tickets currently assigned & not yet closed).
+  const getActiveJobCount = (techName: string) => {
+    const itemJobs = items.filter(
+      i => (i.assigned_techs || []).includes(techName) && i.status !== 'repaired_ready_return'
+    ).length;
+    const ticketJobs = repairTickets.filter(
+      r => ((r.assigned_techs || []).includes(techName) || r.assigned_onsite_tech === techName)
+        && r.status !== 'returned_closed'
+    ).length;
+    return itemJobs + ticketJobs;
+  };
+
+  // Options for the multi-select dropdown (falls back to a default tech when none exist).
+  const techOptions: TechOption[] = (onsiteTechs.length > 0
+    ? onsiteTechs.map(t => t.name)
+    : ['ช่างเอ (สายส่งด่วน Onsite)']
+  ).map(name => ({ name, activeJobs: getActiveJobCount(name) }));
 
   // Filtered by selected route
   const filteredReadyItems = readyItems.filter(item => {
@@ -136,11 +254,13 @@ export const FrontdeskView: React.FC = () => {
   const currentIntakeRoute = getRouteByDistrict(district);
   const intakeRouteMeta = ROUTE_DEFINITIONS[currentIntakeRoute];
 
-  const handleDispatch = (itemId: string) => {
+  const handleDispatch = (itemId: string, pickedTechs?: string[], notes?: string) => {
     const defaultTech = onsiteTechs[0]?.name || 'ช่างเอ (สายส่งด่วน Onsite)';
-    const picked = selectedTechs[itemId] && selectedTechs[itemId].length > 0
-      ? selectedTechs[itemId]
-      : [defaultTech];
+    const picked = pickedTechs && pickedTechs.length > 0
+      ? pickedTechs
+      : (selectedTechs[itemId] && selectedTechs[itemId].length > 0
+        ? selectedTechs[itemId]
+        : [defaultTech]);
 
     // Warranty sticker: if the item was prepped into stock awaiting dispatch
     // (prepped_in_stock) and has no void_date yet, stamp today's date on dispatch.
@@ -152,8 +272,20 @@ export const FrontdeskView: React.FC = () => {
 
     // Multi-technician assignment via assigned_techs: string[]
     assignOnsite(itemId, picked);
-    setToast(`จ่ายงานสำเร็จ! มอบหมายส่งสินค้าให้ ${picked.join(', ')} เรียบร้อยแล้ว`);
+    const noteSuffix = notes && notes.trim() ? ` • หมายเหตุ: ${notes.trim()}` : '';
+    setToast(`จ่ายงานสำเร็จ! มอบหมายส่งสินค้าให้ ${picked.join(', ')} เรียบร้อยแล้ว${noteSuffix}`);
     setTimeout(() => setToast(''), 3500);
+  };
+
+  // Confirm from the dispatch modal
+  const confirmDispatch = () => {
+    if (!dispatchItemId) return;
+    const picked = dispatchTechs.length > 0
+      ? dispatchTechs
+      : [onsiteTechs[0]?.name || 'ช่างเอ (สายส่งด่วน Onsite)'];
+    setSelectedTechs(prev => ({ ...prev, [dispatchItemId]: picked }));
+    handleDispatch(dispatchItemId, picked, dispatchNotes);
+    closeDispatchModal();
   };
 
   const handleDispatchRepair = (ticketId: string) => {
@@ -337,7 +469,7 @@ export const FrontdeskView: React.FC = () => {
       <div className="flex gap-2 pb-1 overflow-x-auto">
         <button
           onClick={() => setActiveTab('dispatch')}
-          className={`px-4 py-2.5 text-xs font-semibold rounded-2xl transition-all cursor-pointer whitespace-nowrap ${activeTab === 'dispatch'
+          className={`px-4 py-2.5 text-xs font-semibold rounded-2xl transition-all duration-150 active:scale-[0.97] cursor-pointer whitespace-nowrap ${activeTab === 'dispatch'
             ? 'liquid-glass-active font-extrabold shadow-lg shadow-[#FF6B00]/25'
             : 'liquid-glass-card text-slate-400 hover:text-white'
             }`}
@@ -346,7 +478,7 @@ export const FrontdeskView: React.FC = () => {
         </button>
         <button
           onClick={() => setActiveTab('intake')}
-          className={`px-4 py-2.5 text-xs font-semibold rounded-2xl transition-all cursor-pointer whitespace-nowrap ${activeTab === 'intake'
+          className={`px-4 py-2.5 text-xs font-semibold rounded-2xl transition-all duration-150 active:scale-[0.97] cursor-pointer whitespace-nowrap ${activeTab === 'intake'
             ? 'liquid-glass-active font-extrabold shadow-lg shadow-[#FF6B00]/25'
             : 'liquid-glass-card text-slate-400 hover:text-white'
             }`}
@@ -355,7 +487,7 @@ export const FrontdeskView: React.FC = () => {
         </button>
         <button
           onClick={() => setActiveTab('reports')}
-          className={`px-4 py-2.5 text-xs font-semibold rounded-2xl transition-all cursor-pointer whitespace-nowrap ${activeTab === 'reports'
+          className={`px-4 py-2.5 text-xs font-semibold rounded-2xl transition-all duration-150 active:scale-[0.97] cursor-pointer whitespace-nowrap ${activeTab === 'reports'
             ? 'liquid-glass-active font-extrabold shadow-lg shadow-[#FF6B00]/25'
             : 'liquid-glass-card text-slate-400 hover:text-white'
             }`}
@@ -410,7 +542,7 @@ export const FrontdeskView: React.FC = () => {
             <div className="flex items-center gap-2 overflow-x-auto pb-1">
               <button
                 onClick={() => setSelectedRoute('all')}
-                className={`px-3.5 py-2 rounded-xl text-xs font-semibold transition cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${selectedRoute === 'all'
+                className={`px-3.5 py-2 rounded-xl text-xs font-semibold transition-all duration-150 active:scale-[0.97] cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${selectedRoute === 'all'
                   ? 'bg-white/20 text-white border border-white/40 shadow-sm font-bold'
                   : 'bg-white/[0.04] text-slate-400 hover:text-white border border-white/[0.06]'
                   }`}
@@ -432,7 +564,7 @@ export const FrontdeskView: React.FC = () => {
                   <button
                     key={rCode}
                     onClick={() => setSelectedRoute(rCode)}
-                    className={`px-3.5 py-2 rounded-xl text-xs font-semibold transition cursor-pointer whitespace-nowrap flex items-center gap-2 ${selectedRoute === rCode
+                    className={`px-3.5 py-2 rounded-xl text-xs font-semibold transition-all duration-150 active:scale-[0.97] cursor-pointer whitespace-nowrap flex items-center gap-2 ${selectedRoute === rCode
                       ? `${r.badgeBg} ${r.badgeText} ${r.badgeBorder} border shadow-lg font-bold`
                       : 'bg-white/[0.04] text-slate-400 hover:text-slate-200 border border-white/[0.06]'
                       }`}
@@ -532,42 +664,32 @@ export const FrontdeskView: React.FC = () => {
                                   <div className="text-[11px] text-slate-500 truncate max-w-xs data-meta">{order?.delivery_location || '-'}</div>
                                 </td>
                                 <td className="py-3 px-3">
-                                  {/* Multi-technician assignment: toggle chips (assigned_techs: string[]) */}
-                                  <div className="flex flex-wrap gap-1 max-w-[14rem]">
-                                    {(onsiteTechs.length > 0
-                                      ? onsiteTechs.map(t => t.name)
-                                      : ['ช่างเอ (สายส่งด่วน Onsite)']
-                                    ).map((techName) => {
-                                      const isPicked = (selectedTechs[item.id] || []).includes(techName);
-                                      return (
-                                        <button
-                                          key={techName}
-                                          type="button"
-                                          onClick={() => toggleItemTech(item.id, techName)}
-                                          className={`px-2 py-0.5 rounded-lg text-[11px] font-semibold border transition cursor-pointer whitespace-nowrap ${isPicked
-                                            ? 'bg-blue-500/20 text-blue-300 border-blue-500/40'
-                                            : 'bg-white/[0.04] text-slate-400 border-white/[0.08] hover:text-white'
-                                            }`}
+                                  {/* Assigned technicians summary (assignment happens in the dispatch modal) */}
+                                  {(selectedTechs[item.id] || []).length > 0 ? (
+                                    <div className="flex flex-wrap gap-1 max-w-[14rem]">
+                                      {(selectedTechs[item.id] || []).map(name => (
+                                        <span
+                                          key={name}
+                                          className="inline-flex items-center px-2 py-0.5 rounded-lg text-[10px] font-bold
+                                            bg-blue-500/15 text-blue-600 border border-blue-500/30
+                                            dark:bg-blue-500/20 dark:text-blue-300 dark:border-blue-500/40"
                                         >
-                                          {isPicked ? '✓ ' : ''}{techName}
-                                        </button>
-                                      );
-                                    })}
-                                  </div>
-                                  {(selectedTechs[item.id] || []).length > 1 && (
-                                    <div className="text-[10px] text-blue-300 mt-1">
-                                      ทีม {selectedTechs[item.id].length} คน
+                                          {name}
+                                        </span>
+                                      ))}
                                     </div>
+                                  ) : (
+                                    <span className="text-[11px] text-slate-500">ยังไม่เลือกช่าง</span>
                                   )}
                                 </td>
                                 <td className="py-3 px-3 text-right whitespace-nowrap">
                                   {canDispatch ? (
                                     <button
-                                      onClick={() => handleDispatch(item.id)}
-                                      className="px-3 py-1 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-400 text-white font-semibold rounded-xl text-xs transition cursor-pointer shadow-md shadow-blue-500/20 whitespace-nowrap inline-flex items-center gap-1"
+                                      onClick={() => openDispatchModal(item.id)}
+                                      className="px-3 py-1.5 min-h-[36px] bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-400 hover:brightness-105 text-white font-semibold rounded-xl text-xs transition-all duration-150 active:scale-[0.97] cursor-pointer shadow-md shadow-blue-500/20 whitespace-nowrap inline-flex items-center gap-1"
                                     >
                                       <Send className="w-3 h-3" />
-                                      <span>จ่ายงาน</span>
+                                      <span>มอบหมายงาน / ส่ง Job</span>
                                     </button>
                                   ) : (
                                     <span className="px-2.5 py-1 rounded-xl bg-white/[0.05] text-slate-400 border border-white/[0.08] text-[11px] font-medium whitespace-nowrap inline-flex items-center gap-1">
@@ -1070,7 +1192,7 @@ export const FrontdeskView: React.FC = () => {
             <div className="flex items-center gap-2">
               <button
                 onClick={exportCSV}
-                className="px-3.5 py-2 rounded-2xl liquid-glass-card hover:border-emerald-500/50 text-emerald-400 text-xs font-semibold transition cursor-pointer flex items-center gap-1.5"
+                className="px-3.5 py-2 rounded-2xl liquid-glass-card hover:border-emerald-500/50 text-emerald-400 text-xs font-semibold transition-all duration-150 active:scale-[0.97] cursor-pointer flex items-center gap-1.5"
               >
                 <Download className="w-4 h-4" />
                 <span>ดาวน์โหลด CSV</span>
@@ -1166,6 +1288,133 @@ export const FrontdeskView: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: มอบหมายงาน / ส่ง Job (Dispatch Job Modal) */}
+      {/* ========================================================================= */}
+      {(() => {
+        const item = dispatchItemId ? items.find(i => i.id === dispatchItemId) : null;
+        const order = item?.order_id ? orders.find(o => o.id === item.order_id) : null;
+        const routeMeta = dispatchRoute ? ROUTE_DEFINITIONS[dispatchRoute] : null;
+
+        return (
+          <Modal
+            open={!!dispatchItemId && !!item}
+            onClose={closeDispatchModal}
+            ariaLabel="มอบหมายงาน / ส่ง Job"
+            title="มอบหมายงาน / ส่ง Job"
+            subtitle="เลือกสายรถ ช่างผู้รับงาน และระบุหมายเหตุการส่งมอบ"
+            icon={
+              <div className="p-2 rounded-xl bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/30">
+                <ClipboardList className="w-5 h-5" />
+              </div>
+            }
+            maxWidthClass="max-w-xl"
+            accentClass="border-blue-500/40"
+            footer={
+              <div className="flex flex-col-reverse sm:flex-row gap-2">
+                <button type="button" onClick={closeDispatchModal} className={`sm:w-1/3 ${modalSecondaryBtnClass}`}>
+                  ยกเลิก
+                </button>
+                <button type="button" onClick={confirmDispatch} className={`sm:w-2/3 ${modalPrimaryBtnClass}`}>
+                  <Send className="w-4 h-4" />
+                  <span>ยืนยันมอบหมายงาน / ส่ง Job</span>
+                </button>
+              </div>
+            }
+          >
+            {item && (
+              <div className="space-y-4">
+                {/* Job summary */}
+                <div className="p-3 rounded-2xl border bg-slate-50 border-slate-200 dark:bg-white/[0.03] dark:border-white/[0.08] space-y-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono font-extrabold text-sm text-[#FF6B00]">{item.serial_number}</span>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 border border-emerald-500/30 dark:text-emerald-400">
+                      พร้อมจัดส่ง
+                    </span>
+                  </div>
+                  <div className="text-sm font-bold text-slate-900 dark:text-white">{item.model_name}</div>
+                  <div className="text-[11px] text-slate-600 dark:text-slate-400">
+                    ลูกค้า: <strong className="text-slate-900 dark:text-white">{order?.customer_name || '-'}</strong>
+                  </div>
+                  <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                    {order?.delivery_location || '-'}
+                  </div>
+                </div>
+
+                {/* Route selector */}
+                <div>
+                  <label className={modalLabelClass}>สายรถ (Route)</label>
+                  <select
+                    value={dispatchRoute}
+                    onChange={(e) => setDispatchRoute(e.target.value as RouteCode | '')}
+                    className={modalInputClass}
+                  >
+                    <option value="">-- เลือกสายรถ --</option>
+                    {(Object.keys(ROUTE_DEFINITIONS) as RouteCode[]).map((rCode) => (
+                      <option key={rCode} value={rCode}>
+                        {ROUTE_DEFINITIONS[rCode].name}
+                      </option>
+                    ))}
+                  </select>
+                  {routeMeta && (
+                    <div className={`mt-1.5 p-2 rounded-xl border flex items-center gap-2 text-[11px] font-bold ${routeMeta.badgeBg} ${routeMeta.badgeBorder} ${routeMeta.badgeText}`}>
+                      <span className="w-2 h-2 rounded-full" style={{ backgroundColor: routeMeta.color }}></span>
+                      <span>{routeMeta.name}</span>
+                      <span className="opacity-75 font-normal">• {order?.district || '-'}</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Technician multi-select */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className={`${modalLabelClass} mb-0`}>
+                      ช่าง Onsite ผู้รับงาน (เลือกได้หลายคน)
+                    </label>
+                    {dispatchTechs.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setDispatchTechs([])}
+                        className="text-[10px] font-semibold text-slate-500 hover:text-rose-500 transition cursor-pointer"
+                      >
+                        ล้างที่เลือก
+                      </button>
+                    )}
+                  </div>
+                  <TechCheckboxList
+                    options={techOptions}
+                    selected={dispatchTechs}
+                    onToggle={toggleDispatchTech}
+                  />
+                  {dispatchTechs.length === 0 && (
+                    <p className="mt-1 text-[10px] text-amber-600 dark:text-amber-400">
+                      * ไม่เลือกช่าง ระบบจะมอบหมายให้ช่างคนแรกโดยอัตโนมัติ
+                    </p>
+                  )}
+                </div>
+
+                {/* Delivery notes */}
+                <div>
+                  <label className={modalLabelClass}>
+                    <span className="inline-flex items-center gap-1">
+                      <StickyNote className="w-3.5 h-3.5" />
+                      หมายเหตุการส่งมอบ (ถ้ามี)
+                    </span>
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={dispatchNotes}
+                    onChange={(e) => setDispatchNotes(e.target.value)}
+                    placeholder="เช่น โทรนัดก่อนเข้าพื้นที่, ส่งช่วงเช้า, ติดตั้งชั้น 2"
+                    className={modalInputClass}
+                  />
+                </div>
+              </div>
+            )}
+          </Modal>
+        );
+      })()}
     </div>
   );
 };

@@ -3,6 +3,55 @@
 /* Map Tailwind's `dark:` variant to the app's `html.dark` class toggle */
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* ========================================================================= */
+/* LIGHTWEIGHT UI MICRO-ANIMATIONS (pure CSS, 150ms–300ms)                   */
+/* ========================================================================= */
+
+/* Register custom animation utilities so `animate-fade-in`, `animate-modal-pop`
+   and `animate-slide-up` work as first-class Tailwind classes. */
+@theme {
+  --animate-fade-in: fadeIn 200ms ease-out both;
+  --animate-modal-pop: modalPop 200ms ease-out both;
+  --animate-slide-up: slideUp 250ms ease-out both;
+}
+
+/* Subtle opacity fade — backdrops, tab switches, toasts */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+/* Modal dialog entrance — gentle pop + lift */
+@keyframes modalPop {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(0.5rem);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* Page / view / card entrance — soft upward slide */
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(0.75rem);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @layer base {
   :root {
     --bg-page: #08090C;
@@ -117,6 +166,67 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+
+  /* Kill entrance transforms entirely so nothing "jumps" into place */
+  .animate-fade-in,
+  .animate-modal-pop,
+  .animate-slide-up {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+
+  /* Neutralise tactile press / hover lifts */
+  .active\:scale-\[0\.97\]:active,
+  .active\:scale-\[0\.99\]:active,
+  .hover\:-translate-y-0\.5:hover {
+    transform: none !important;
+  }
+}
+
+/* ========================================================================= */
+/* LOADING SKELETON (subtle shimmer for Supabase sync / fetch states)        */
+/* ========================================================================= */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background-color: rgba(148, 163, 184, 0.16);
+  border-radius: 0.75rem;
+}
+
+.skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg,
+      transparent 0%,
+      rgba(255, 255, 255, 0.12) 50%,
+      transparent 100%);
+  animation: skeletonShimmer 1.4s ease-in-out infinite;
+}
+
+html.light .skeleton {
+  background-color: rgba(148, 163, 184, 0.22);
+}
+
+html.light .skeleton::after {
+  background: linear-gradient(90deg,
+      transparent 0%,
+      rgba(255, 255, 255, 0.7) 50%,
+      transparent 100%);
+}
+
+@keyframes skeletonShimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton::after {
+    animation: none !important;
   }
 }
 

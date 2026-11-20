@@ -35,12 +35,15 @@ export const SettingsModal: React.FC<{ isOpen: boolean; onClose: () => void }> =
   };
 
   return createPortal(
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-md flex items-center justify-center p-2 sm:p-4">
-      <div className="liquid-glass rounded-2xl sm:rounded-3xl w-[95vw] max-w-md max-h-[90vh] overflow-y-auto p-4 sm:p-7 shadow-2xl border border-white/[0.12] relative">
+    <div className="fixed inset-0 z-[9999] bg-black/70 backdrop-blur-md flex items-end sm:items-center justify-center sm:p-4 animate-fade-in">
+      <div className="liquid-glass rounded-t-3xl sm:rounded-3xl w-full sm:w-[95vw] max-w-md max-h-[92dvh] sm:max-h-[90vh] overflow-y-auto overscroll-contain p-4 sm:p-7 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-2xl border border-white/[0.12] relative animate-modal-pop">
+        <div className="sm:hidden flex justify-center pt-1 pb-3">
+          <span className="h-1.5 w-10 rounded-full bg-white/20" />
+        </div>
         <button
           onClick={onClose}
           aria-label="ปิดหน้าตั้งค่า"
-          className="absolute top-3 right-3 sm:top-5 sm:right-5 p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/[0.06] transition cursor-pointer min-w-[44px] min-h-[44px] flex items-center justify-center"
+          className="absolute top-3 right-3 sm:top-5 sm:right-5 p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/[0.06] transition-all duration-150 active:scale-[0.97] cursor-pointer min-w-[44px] min-h-[44px] flex items-center justify-center"
         >
           <X className="w-5 h-5" />
         </button>
@@ -89,7 +92,7 @@ export const SettingsModal: React.FC<{ isOpen: boolean; onClose: () => void }> =
           <div className="flex items-center gap-2 pt-2">
             <button
               type="submit"
-              className="flex-1 py-3 bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] hover:to-[#FF6B00] text-black font-extrabold rounded-2xl text-xs transition cursor-pointer shadow-lg shadow-[#FF6B00]/25 border border-white/20"
+              className="flex-1 py-3 bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] hover:to-[#FF6B00] hover:brightness-105 text-black font-extrabold rounded-2xl text-xs transition-all duration-150 active:scale-[0.97] cursor-pointer shadow-lg shadow-[#FF6B00]/25 border border-white/20"
             >
               บันทึกการเชื่อมต่อ
             </button>
@@ -102,7 +105,7 @@ export const SettingsModal: React.FC<{ isOpen: boolean; onClose: () => void }> =
                   setKey('');
                   onClose();
                 }}
-                className="px-3.5 py-3 rounded-2xl border border-white/[0.08] hover:border-rose-500/50 hover:text-rose-400 text-slate-400 transition cursor-pointer"
+                className="px-3.5 py-3 rounded-2xl border border-white/[0.08] hover:border-rose-500/50 hover:text-rose-400 text-slate-400 transition-all duration-150 active:scale-[0.97] cursor-pointer"
               >
                 ตัดการเชื่อมต่อ
               </button>

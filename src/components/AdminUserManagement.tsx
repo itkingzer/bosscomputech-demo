@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useApp } from '../context/AppContext';
 import { Users, UserPlus, Trash2, Shield, Database, CheckCircle } from 'lucide-react';
 import { UserRole } from '../types';
@@ -91,7 +92,7 @@ export const AdminUserManagement: React.FC = () => {
                 showNotice('รีเซ็ตข้อมูลตัวอย่างทั้งหมดเรียบร้อยแล้ว');
               }
             }}
-            className="px-3.5 py-2.5 rounded-2xl liquid-glass-card hover:border-rose-500/50 hover:text-rose-400 text-slate-400 text-xs transition cursor-pointer flex items-center gap-1.5"
+            className="px-3.5 py-2.5 rounded-2xl liquid-glass-card hover:border-rose-500/50 hover:text-rose-400 text-slate-400 text-xs transition-all duration-150 active:scale-[0.97] cursor-pointer flex items-center gap-1.5"
           >
             <Database className="w-4 h-4" />
             <span>รีเซ็ตเดโม่</span>
@@ -163,9 +164,12 @@ export const AdminUserManagement: React.FC = () => {
       </div>
 
       {/* Add User Modal */}
-      {showAddModal && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-md flex items-center justify-center p-2 sm:p-4">
-          <div className="liquid-glass rounded-2xl sm:rounded-3xl w-[95vw] max-w-md max-h-[90vh] overflow-y-auto p-4 sm:p-7 shadow-2xl border border-white/[0.12] relative">
+      {showAddModal && createPortal(
+        <div className="fixed inset-0 z-[9999] bg-black/70 backdrop-blur-md flex items-end sm:items-center justify-center sm:p-4 animate-fade-in">
+          <div className="liquid-glass rounded-t-3xl sm:rounded-3xl w-full sm:w-[95vw] max-w-md max-h-[92dvh] sm:max-h-[90vh] overflow-y-auto overscroll-contain p-4 sm:p-7 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-2xl border border-white/[0.12] relative animate-modal-pop">
+            <div className="sm:hidden flex justify-center pt-1 pb-3">
+              <span className="h-1.5 w-10 rounded-full bg-white/20" />
+            </div>
             <h3 className="text-base font-bold text-white mb-1 flex items-center gap-2">
               <UserPlus className="w-5 h-5 text-[#FF6B00]" />
               เพิ่มผู้ใช้งานใหม่
@@ -242,7 +246,8 @@ export const AdminUserManagement: React.FC = () => {
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

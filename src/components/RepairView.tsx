@@ -3,12 +3,16 @@ import { useApp } from '../context/AppContext';
 import {
   Wrench, CheckCircle, ShieldAlert, Send, AlertTriangle,
   XCircle, Clock, Printer, Plus, X, CheckSquare, Square,
-  ShieldCheck, FileText, User, Camera
+  ShieldCheck, FileText, User, Camera, ClipboardList, ArrowRight
 } from 'lucide-react';
 import { RepairStatus, RepairTicket, ROUTE_DEFINITIONS, getRouteByDistrict } from '../types';
 import { ListControls, useListControls } from './ListControls';
 import { ActivityTimeline, LatestUpdateBadge } from './ActivityTimeline';
 import { BarcodeScannerModal } from './BarcodeScannerModal';
+import {
+  Modal, modalInputClass, modalLabelClass,
+  modalPrimaryBtnClass, modalSecondaryBtnClass
+} from './ui/Modal';
 
 const ACCESSORY_PRESETS = [
   'Adapter / หม้อแปลง',
@@ -46,6 +50,9 @@ export const RepairView: React.FC = () => {
 
   // Modal 2: Standard Company Repair Receipt Print Modal
   const [receiptTicket, setReceiptTicket] = useState<RepairTicket | null>(null);
+
+  // Modal 3: Repair Detail & Action Modal (opened from a compact ticket card)
+  const [activeTicketId, setActiveTicketId] = useState<string | null>(null);
 
   const activeRepairs = repairTickets.filter(r => r.status === 'open' || r.status === 'in_progress');
 
@@ -277,46 +284,45 @@ export const RepairView: React.FC = () => {
                   : `อยู่ในประกัน 1 ปี (ติดวอยเมื่อ ${matchedItem.void_date})`;
               }
 
-              const currentSelectedOutcome = selectedOutcome[ticket.id] || 'repaired';
-
               return (
                 <div
                   key={ticket.id}
-                  className="p-5 rounded-2xl liquid-glass-card space-y-4 border border-white/[0.08]"
+                  className="p-5 rounded-2xl liquid-glass-card flex flex-col justify-between space-y-4 border border-white/[0.08] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md"
                 >
-                  {/* Ticket Header & S/N info */}
-                  <div className="flex flex-col md:flex-row md:items-center justify-between pb-3 border-b border-white/[0.08] gap-2">
-                    <div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-mono font-extrabold text-base text-white data-key">{ticket.ticket_no}</span>
-                        <span className="font-mono font-extrabold text-[#FF6B00] px-2.5 py-0.5 rounded-full bg-[#FF6B00]/15 border border-[#FF6B00]/30 text-sm data-key">
-                          S/N: {ticket.walkin_sn || 'ไม่ระบุ'}
-                        </span>
-                        {ticket.device_model && (
-                          <span className="px-2 py-0.5 rounded-md bg-white/[0.05] text-slate-300 text-xs">
-                            รุ่น: {ticket.device_model}
-                          </span>
-                        )}
-                        {ticket.intake_channel === 'onsite_pickup' && (
-                          <span className="px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-400 border border-amber-500/30 text-[10px] font-semibold">
-                            รับจากหน้างาน Onsite
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-xs text-slate-300 mt-1 data-meta">
-                        ลูกค้า: <strong className="text-white text-base font-bold">{ticket.customer_name}</strong> ({ticket.customer_phone || '-'}) • {ticket.district || '-'}
-                      </p>
-                      <div className="mt-2">
-                        <LatestUpdateBadge
-                          logs={ticket.activity_logs}
-                          fallbackTimestamp={ticket.delivered_at || ticket.started_at || ticket.updated_at || ticket.created_at}
-                          fallbackActor={ticket.received_by}
-                        />
-                      </div>
+                  <div>
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <span className="font-mono font-extrabold text-base text-white data-key">{ticket.ticket_no}</span>
+                      <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-semibold border ${ticket.status === 'in_progress'
+                        ? 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+                        : 'bg-sky-500/15 text-sky-400 border-sky-500/30'
+                        }`}>
+                        {ticket.status === 'in_progress' ? 'กำลังซ่อม' : 'รอรับงาน'}
+                      </span>
                     </div>
 
-                    <div className="flex items-center gap-2">
-                      <span className={`px-3 py-1 rounded-xl text-xs font-semibold border ${isWarrantyActive
+                    <div className="flex items-center gap-2 flex-wrap mb-2">
+                      <span className="font-mono font-bold text-[#FF6B00] px-2 py-0.5 rounded-md bg-[#FF6B00]/15 border border-[#FF6B00]/30 text-[11px] data-key">
+                        S/N: {ticket.walkin_sn || 'ไม่ระบุ'}
+                      </span>
+                      {ticket.device_model && (
+                        <span className="px-2 py-0.5 rounded-md bg-white/[0.05] text-slate-300 text-[10px]">
+                          {ticket.device_model}
+                        </span>
+                      )}
+                      {ticket.intake_channel === 'onsite_pickup' && (
+                        <span className="px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-400 border border-amber-500/30 text-[10px] font-semibold">
+                          Onsite
+                        </span>
+                      )}
+                    </div>
+
+                    <p className="text-xs text-slate-300 data-meta">
+                      ลูกค้า: <strong className="text-white font-bold">{ticket.customer_name}</strong>
+                    </p>
+                    <p className="text-xs text-rose-300 font-semibold mt-1 line-clamp-2">{ticket.fault_symptom}</p>
+
+                    <div className="mt-2">
+                      <span className={`inline-block px-2 py-0.5 rounded-md text-[10px] font-semibold border ${isWarrantyActive
                         ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
                         : isExpired
                           ? 'bg-rose-500/15 text-rose-400 border-rose-500/30'
@@ -324,133 +330,25 @@ export const RepairView: React.FC = () => {
                         }`}>
                         {warrantyText}
                       </span>
-
-                      {/* Print Receipt Button */}
-                      <button
-                        onClick={() => handlePrintModal(ticket)}
-                        className="px-3 py-1.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] text-slate-200 text-xs font-semibold cursor-pointer flex items-center gap-1 border border-white/[0.1] transition"
-                        title="พิมพ์ใบรับซ่อมมาตรฐานของบริษัท"
-                      >
-                        <Printer className="w-3.5 h-3.5 text-amber-400" />
-                        <span>พิมพ์ใบรับซ่อม</span>
-                      </button>
                     </div>
                   </div>
 
-                  {/* Customer Reported Symptom & Accessories */}
-                  <div className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/[0.06] text-xs space-y-2">
-                    <div>
-                      <span className="text-slate-400 font-medium data-meta">อาการเสียที่ได้รับแจ้ง:</span>
-                      <p className="text-rose-300 font-semibold text-sm mt-0.5">{ticket.fault_symptom}</p>
-                    </div>
-
-                    {(ticket.picked_up_by || (ticket.accessories && ticket.accessories.length > 0)) && (
-                      <div className="pt-2 border-t border-white/[0.05] grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
-                        {ticket.picked_up_by && (
-                          <div>
-                            <span className="text-slate-400">ผู้รับเครื่อง: </span>
-                            <span className="text-amber-400 font-semibold">{ticket.picked_up_by}</span>
-                          </div>
-                        )}
-                        {ticket.accessories && ticket.accessories.length > 0 && (
-                          <div>
-                            <span className="text-slate-400">อุปกรณ์ที่ติดมาด้วย: </span>
-                            <span className="text-white font-medium">
-                              {ticket.accessories.join(', ')}
-                              {ticket.accessories_other ? ` (${ticket.accessories_other})` : ''}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* SELECTABLE OUTCOME OPTIONS (ข้อสรุปผลงานซ่อม) */}
-                  <div className="space-y-2 pt-1">
-                    <label className="block text-xs font-bold text-white">
-                      เลือกข้อสรุปผลการตรวจซ่อม (Select Repair Outcome) *
-                    </label>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
-                      {outcomeOptions.map((opt) => {
-                        const Icon = opt.icon;
-                        const isSelected = currentSelectedOutcome === opt.status;
-
-                        return (
-                          <div
-                            key={opt.status}
-                            onClick={() => setSelectedOutcome({ ...selectedOutcome, [ticket.id]: opt.status })}
-                            className={`p-3 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between ${isSelected
-                              ? `${opt.badgeClass} ring-2 ring-white/20 shadow-lg scale-[1.01]`
-                              : 'bg-white/[0.02] border-white/[0.06] text-slate-400 hover:border-white/[0.15] hover:text-slate-200'
-                              }`}
-                          >
-                            <div className="flex items-center gap-2 mb-1.5">
-                              <Icon className="w-4 h-4 flex-shrink-0" />
-                              <span className="font-bold text-xs">{opt.label}</span>
-                            </div>
-                            <p className="text-[10px] leading-relaxed opacity-85">
-                              {opt.description}
-                            </p>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {/* Diagnosis, Parts Used & Cost */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2">
-                    <div>
-                      <label className="block text-[11px] font-medium text-slate-300 mb-1">
-                        รายละเอียดการซ่อม / ผลการวินิจฉัย:
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="เช่น ซ่อมภาคจ่ายไฟ, ลง Windows ใหม่, ทำความสะอาด"
-                        value={repairDetails[ticket.id] || ''}
-                        onChange={(e) => setRepairDetails({ ...repairDetails, [ticket.id]: e.target.value })}
-                        className="w-full liquid-glass-input rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-medium text-slate-300 mb-1">
-                        อะไหล่ที่ใช้ (Parts Used):
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="เช่น Power Supply 250W, SSD 500GB (หรือ -)"
-                        value={partsUsed[ticket.id] || ''}
-                        onChange={(e) => setPartsUsed({ ...partsUsed, [ticket.id]: e.target.value })}
-                        className="w-full liquid-glass-input rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-medium text-slate-300 mb-1">
-                        ค่าใช้จ่าย / ค่าซ่อม (บาท):
-                      </label>
-                      <input
-                        type="number"
-                        placeholder="0 (ฟรีในประกัน) หรือระบุราคา"
-                        value={costInputs[ticket.id] || ''}
-                        onChange={(e) => setCostInputs({ ...costInputs, [ticket.id]: e.target.value })}
-                        className="w-full liquid-glass-input rounded-xl px-3 py-2 text-xs text-[#FF6B00] font-bold focus:outline-none"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Complete Button */}
-                  <div className="pt-2 flex justify-end">
+                  <div className="pt-3 border-t border-white/[0.08] flex items-center gap-2">
                     <button
-                      onClick={() => handleComplete(ticket.id)}
-                      className="px-5 py-2.5 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 text-black font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center gap-1.5 shadow-lg shadow-emerald-500/25 border border-white/20 active:scale-95"
+                      onClick={() => setActiveTicketId(ticket.id)}
+                      className="flex-1 py-2.5 bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] hover:brightness-105 text-black font-extrabold rounded-xl text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-[#FF6B00]/25 border border-white/20 active:scale-[0.97]"
                     >
-                      <CheckCircle className="w-4 h-4" />
-                      <span>บันทึกผลการซ่อม & ส่งต่อหน้าร้าน</span>
+                      <ClipboardList className="w-4 h-4" />
+                      <span>เปิดจัดการงานซ่อม</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
                     </button>
-                  </div>
-
-                  {/* Activity Timeline */}
-                  <div className="pt-3 border-t border-white/[0.08]">
-                    <ActivityTimeline logs={ticket.activity_logs} />
+                    <button
+                      onClick={() => handlePrintModal(ticket)}
+                      className="px-3 py-2.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] text-slate-200 text-xs font-semibold cursor-pointer flex items-center gap-1 border border-white/[0.1] transition"
+                      title="พิมพ์ใบรับซ่อมมาตรฐานของบริษัท"
+                    >
+                      <Printer className="w-3.5 h-3.5 text-amber-400" />
+                    </button>
                   </div>
                 </div>
               );
@@ -460,206 +358,365 @@ export const RepairView: React.FC = () => {
       </div>
 
       {/* ========================================================================= */}
-      {/* MODAL 1: FORM เปิดใบรับซ่อมใหม่ (REP-2569-XXX) */}
+      {/* MODAL 3: REPAIR DETAIL & ACTION (portal + z-[9999]) */}
       {/* ========================================================================= */}
-      {isNewTicketOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/80 backdrop-blur-md overflow-y-auto">
-          <div className="w-[95vw] max-w-lg max-h-[90vh] overflow-y-auto liquid-glass rounded-2xl sm:rounded-3xl p-4 sm:p-7 border border-[#FF6B00]/40 shadow-2xl my-4 sm:my-8 relative text-xs">
-            <button
-              onClick={() => setIsNewTicketOpen(false)}
-              aria-label="ปิดฟอร์มเปิดใบรับซ่อม"
-              className="absolute right-3 top-3 sm:right-5 sm:top-5 p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/[0.06] cursor-pointer min-w-[44px] min-h-[44px] flex items-center justify-center"
-            >
-              <X className="w-5 h-5" />
-            </button>
+      {(() => {
+        if (!activeTicketId) return null;
+        const ticket = repairTickets.find(t => t.id === activeTicketId);
+        if (!ticket) return null;
 
-            <div className="flex items-center gap-2 mb-4">
-              <div className="p-2 rounded-xl bg-[#FF6B00]/20 text-[#FF6B00] border border-[#FF6B00]/30">
-                <FileText className="w-5 h-5" />
-              </div>
-              <div>
-                <h3 className="text-base font-bold text-white">
-                  เปิดใบรับซ่อมใหม่ (REP-2569-XXX)
-                </h3>
-                <p className="text-xs text-slate-400">
-                  บริษัท บอส คอมพิวเทค แอนด์ เซอร์วิส จำกัด - รับซ่อมหน้าร้าน
-                </p>
-              </div>
-            </div>
+        const matchedItem = items.find(
+          i => i.serial_number && ticket.walkin_sn && i.serial_number.toLowerCase() === ticket.walkin_sn.toLowerCase()
+        );
+        let warrantyText = 'ไม่พบประวัติวอยเดิมในระบบ (นอกประกัน)';
+        let warrantyClass = 'bg-slate-100 text-slate-500 border-slate-200 dark:bg-white/[0.04] dark:text-slate-400 dark:border-white/[0.08]';
+        if (matchedItem && matchedItem.void_date) {
+          const vDate = new Date(matchedItem.void_date);
+          const expDate = new Date(vDate);
+          expDate.setFullYear(expDate.getFullYear() + 1);
+          if (new Date() > expDate) {
+            warrantyText = `หมดประกันแล้ว (ติดวอยเมื่อ ${matchedItem.void_date})`;
+            warrantyClass = 'bg-rose-500/15 text-rose-500 dark:text-rose-400 border-rose-500/30';
+          } else {
+            warrantyText = `อยู่ในประกัน 1 ปี (ติดวอยเมื่อ ${matchedItem.void_date})`;
+            warrantyClass = 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30';
+          }
+        }
 
-            <form onSubmit={handleCreateTicketSubmit} className="space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-slate-300 font-medium mb-1">ชื่อลูกค้า / บริษัท *</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="เช่น คุณสมชาย, บจก. สุราษฎร์ไอที"
-                    value={custName}
-                    onChange={(e) => setCustName(e.target.value)}
-                    className="w-full liquid-glass-input rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-slate-300 font-medium mb-1">เบอร์โทรติดต่อ</label>
-                  <input
-                    type="text"
-                    placeholder="08x-xxx-xxxx"
-                    value={custPhone}
-                    onChange={(e) => setCustPhone(e.target.value)}
-                    className="w-full liquid-glass-input rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
-                  />
-                </div>
-              </div>
+        const currentSelectedOutcome = selectedOutcome[ticket.id] || 'repaired';
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-slate-300 font-medium mb-1">อำเภอ / พื้นที่ *</label>
-                  <select
-                    value={district}
-                    onChange={(e) => setDistrict(e.target.value)}
-                    className="w-full liquid-glass-input rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
-                  >
-                    {DISTRICT_OPTIONS.map(d => (
-                      <option key={d} value={d} className="bg-[#12141A]">{d}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-slate-300 font-medium mb-1">รุ่นสินค้า / ยี่ห้อ</label>
-                  <input
-                    type="text"
-                    placeholder="เช่น Epson L14150, PC Workstation"
-                    value={deviceModel}
-                    onChange={(e) => setDeviceModel(e.target.value)}
-                    className="w-full liquid-glass-input rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
-                  />
-                </div>
+        return (
+          <Modal
+            open
+            onClose={() => setActiveTicketId(null)}
+            ariaLabel="Repair Detail"
+            title={ticket.ticket_no}
+            subtitle={`S/N: ${ticket.walkin_sn || 'ไม่ระบุ'}${ticket.device_model ? ` • ${ticket.device_model}` : ''}`}
+            icon={<Wrench className="w-5 h-5" />}
+            maxWidthClass="max-w-3xl"
+            footer={
+              <div className="flex items-center justify-between gap-2">
+                <button
+                  onClick={() => handlePrintModal(ticket)}
+                  className={modalSecondaryBtnClass + ' flex items-center gap-1.5'}
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>พิมพ์ใบรับซ่อม</span>
+                </button>
+                <button
+                  onClick={() => { handleComplete(ticket.id); setActiveTicketId(null); }}
+                  className={modalPrimaryBtnClass + ' flex items-center gap-1.5'}
+                >
+                  <CheckCircle className="w-4 h-4" />
+                  <span>บันทึกผลการซ่อม & ส่งต่อหน้าร้าน</span>
+                </button>
               </div>
-
-              <div>
-                <label className="block text-slate-300 font-medium mb-1">
-                  Serial Number (S/N)
-                </label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    placeholder="เช่น BC-2026-002 (ตรวจสถานะประกันอัตโนมัติ)"
-                    value={sn}
-                    onChange={(e) => setSn(e.target.value)}
-                    className="flex-1 liquid-glass-input rounded-xl px-3 py-2 text-xs text-[#FF6B00] font-mono focus:outline-none"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setIsScannerOpen(true)}
-                    title="สแกนด้วยกล้อง"
-                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#FF6B00]/15 text-[#FF6B00] border border-[#FF6B00]/30 hover:bg-[#FF6B00]/25 transition cursor-pointer text-[11px] font-bold flex-shrink-0"
-                  >
-                    <Camera className="w-4 h-4" />
-                    <span>สแกน</span>
-                  </button>
+            }
+          >
+            <div className="space-y-4">
+              {/* Customer & warranty */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <div className="p-3 rounded-xl bg-slate-100 dark:bg-white/[0.04] border border-slate-200 dark:border-white/[0.08]">
+                  <div className={modalLabelClass}>ลูกค้า</div>
+                  <div className="font-bold text-slate-900 dark:text-white mt-0.5">{ticket.customer_name}</div>
+                  <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                    {ticket.customer_phone || '-'} • {ticket.district || '-'}
+                  </div>
                 </div>
-              </div>
-
-              {/* Warranty Check Preview */}
-              {newFormWarrantyText && (
-                <div className={`p-2.5 rounded-xl border text-[11px] font-medium flex items-center justify-between ${newFormWarrantyClass}`}>
-                  <span className="flex items-center gap-1.5">
-                    <ShieldCheck className="w-3.5 h-3.5" />
-                    <span>{newFormWarrantyText}</span>
+                <div className="p-3 rounded-xl bg-slate-100 dark:bg-white/[0.04] border border-slate-200 dark:border-white/[0.08]">
+                  <div className={modalLabelClass}>สถานะประกัน</div>
+                  <span className={`inline-block mt-1 px-2 py-0.5 rounded-md text-[10px] font-semibold border ${warrantyClass}`}>
+                    {warrantyText}
                   </span>
-                  <span className="text-[10px] opacity-80">เช็คจากระบบ</span>
                 </div>
-              )}
+              </div>
 
-              {/* Accessories Checkboxes */}
-              <div>
-                <label className="block text-slate-300 font-semibold mb-1.5">
-                  อุปกรณ์ที่ติดมาด้วย (Accessories Checklist) *
+              {/* Symptom & accessories */}
+              <div className="p-3.5 rounded-xl bg-slate-100 dark:bg-white/[0.03] border border-slate-200 dark:border-white/[0.06] text-xs space-y-2">
+                <div>
+                  <span className="text-slate-500 dark:text-slate-400 font-medium">อาการเสียที่ได้รับแจ้ง:</span>
+                  <p className="text-rose-500 dark:text-rose-300 font-semibold text-sm mt-0.5">{ticket.fault_symptom}</p>
+                </div>
+                {(ticket.picked_up_by || (ticket.accessories && ticket.accessories.length > 0)) && (
+                  <div className="pt-2 border-t border-slate-200 dark:border-white/[0.05] grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+                    {ticket.picked_up_by && (
+                      <div>
+                        <span className="text-slate-500 dark:text-slate-400">ผู้รับเครื่อง: </span>
+                        <span className="text-amber-600 dark:text-amber-400 font-semibold">{ticket.picked_up_by}</span>
+                      </div>
+                    )}
+                    {ticket.accessories && ticket.accessories.length > 0 && (
+                      <div>
+                        <span className="text-slate-500 dark:text-slate-400">อุปกรณ์ที่ติดมาด้วย: </span>
+                        <span className="text-slate-900 dark:text-white font-medium">
+                          {ticket.accessories.join(', ')}
+                          {ticket.accessories_other ? ` (${ticket.accessories_other})` : ''}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Outcome options */}
+              <div className="space-y-2">
+                <label className="block text-xs font-bold text-slate-900 dark:text-white">
+                  เลือกข้อสรุปผลการตรวจซ่อม (Select Repair Outcome) *
                 </label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {ACCESSORY_PRESETS.map((acc) => {
-                    const isChecked = selectedAccessories.includes(acc);
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  {outcomeOptions.map((opt) => {
+                    const Icon = opt.icon;
+                    const isSelected = currentSelectedOutcome === opt.status;
                     return (
-                      <button
-                        type="button"
-                        key={acc}
-                        onClick={() => toggleAccessory(acc)}
-                        className={`p-2 rounded-xl border text-left flex items-center gap-2 transition cursor-pointer ${isChecked
-                          ? 'bg-amber-500/15 border-amber-500/40 text-amber-300 font-semibold'
-                          : 'bg-white/[0.03] border-white/[0.06] text-slate-400 hover:text-white'
+                      <div
+                        key={opt.status}
+                        onClick={() => setSelectedOutcome({ ...selectedOutcome, [ticket.id]: opt.status })}
+                        className={`p-3 rounded-xl border transition-all cursor-pointer flex flex-col justify-between ${isSelected
+                          ? `${opt.badgeClass} ring-2 ring-[#FF6B00]/40 shadow-lg`
+                          : 'bg-slate-50 dark:bg-white/[0.02] border-slate-200 dark:border-white/[0.06] text-slate-500 dark:text-slate-400 hover:border-slate-300 dark:hover:border-white/[0.15]'
                           }`}
                       >
-                        {isChecked ? (
-                          <CheckSquare className="w-4 h-4 text-amber-400 flex-shrink-0" />
-                        ) : (
-                          <Square className="w-4 h-4 text-slate-500 flex-shrink-0" />
-                        )}
-                        <span className="text-xs">{acc}</span>
-                      </button>
+                        <div className="flex items-center gap-2 mb-1.5">
+                          <Icon className="w-4 h-4 flex-shrink-0" />
+                          <span className="font-bold text-xs">{opt.label}</span>
+                        </div>
+                        <p className="text-[10px] leading-relaxed opacity-85">{opt.description}</p>
+                      </div>
                     );
                   })}
                 </div>
+              </div>
 
-                <div className="mt-2">
+              {/* Diagnosis / parts / cost */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div>
+                  <label className={modalLabelClass}>รายละเอียดการซ่อม / ผลการวินิจฉัย</label>
                   <input
                     type="text"
-                    placeholder="อุปกรณ์อื่นๆ เพิ่มเติม (เช่น สาย USB, ตลับหมึก, อะแดปเตอร์)"
-                    value={accessoriesOther}
-                    onChange={(e) => setAccessoriesOther(e.target.value)}
-                    className="w-full liquid-glass-input rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
+                    placeholder="เช่น ซ่อมภาคจ่ายไฟ, ลง Windows ใหม่"
+                    value={repairDetails[ticket.id] || ''}
+                    onChange={(e) => setRepairDetails({ ...repairDetails, [ticket.id]: e.target.value })}
+                    className={modalInputClass}
+                  />
+                </div>
+                <div>
+                  <label className={modalLabelClass}>อะไหล่ที่ใช้ (Parts Used)</label>
+                  <input
+                    type="text"
+                    placeholder="เช่น Power Supply 250W, SSD 500GB"
+                    value={partsUsed[ticket.id] || ''}
+                    onChange={(e) => setPartsUsed({ ...partsUsed, [ticket.id]: e.target.value })}
+                    className={modalInputClass}
+                  />
+                </div>
+                <div>
+                  <label className={modalLabelClass}>ค่าใช้จ่าย / ค่าซ่อม (บาท)</label>
+                  <input
+                    type="number"
+                    placeholder="0 (ฟรีในประกัน)"
+                    value={costInputs[ticket.id] || ''}
+                    onChange={(e) => setCostInputs({ ...costInputs, [ticket.id]: e.target.value })}
+                    className={modalInputClass + ' font-bold text-[#FF6B00]'}
                   />
                 </div>
               </div>
 
-              <div>
-                <label className="block text-slate-300 font-semibold mb-1">
-                  อาการเสียที่ได้รับแจ้ง *
-                </label>
-                <textarea
-                  rows={3}
-                  required
-                  placeholder="เช่น เปิดไม่ติด, กระดาษติด, สีไม่ออก"
-                  value={faultSymptom}
-                  onChange={(e) => setFaultSymptom(e.target.value)}
-                  className="w-full liquid-glass-input rounded-2xl px-3 py-2 text-white focus:outline-none"
+              {/* Activity */}
+              <div className="pt-3 border-t border-slate-200 dark:border-white/[0.08] space-y-2">
+                <LatestUpdateBadge
+                  logs={ticket.activity_logs}
+                  fallbackTimestamp={ticket.delivered_at || ticket.started_at || ticket.updated_at || ticket.created_at}
+                  fallbackActor={ticket.received_by}
                 />
+                <ActivityTimeline logs={ticket.activity_logs} />
               </div>
+            </div>
+          </Modal>
+        );
+      })()}
 
-              <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center gap-2.5 pt-2 sticky bottom-0 bg-[var(--bg-page)]/0">
-                <button
-                  type="button"
-                  onClick={() => setIsNewTicketOpen(false)}
-                  className="w-full sm:w-1/3 py-2.5 min-h-[44px] rounded-xl liquid-glass-card text-slate-400 hover:text-white font-semibold cursor-pointer"
-                >
-                  ยกเลิก
-                </button>
-                <button
-                  type="submit"
-                  className="w-full sm:w-2/3 py-2.5 min-h-[44px] bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold rounded-xl text-xs transition cursor-pointer shadow-lg shadow-[#FF6B00]/25 border border-white/20 active:scale-95"
-                >
-                  เปิดใบรับซ่อม & บันทึกเข้าระบบ
-                </button>
-              </div>
-            </form>
+      {/* ========================================================================= */}
+      {/* MODAL 1: FORM เปิดใบรับซ่อมใหม่ (REP-2569-XXX) */}
+      {/* ========================================================================= */}
+      <Modal
+        open={isNewTicketOpen}
+        onClose={() => setIsNewTicketOpen(false)}
+        ariaLabel="เปิดใบรับซ่อมใหม่"
+        title="เปิดใบรับซ่อมใหม่ (REP-2569-XXX)"
+        subtitle="บริษัท บอส คอมพิวเทค แอนด์ เซอร์วิส จำกัด - รับซ่อมหน้าร้าน"
+        icon={<FileText className="w-5 h-5" />}
+        maxWidthClass="max-w-lg"
+      >
+        <form onSubmit={handleCreateTicketSubmit} className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-slate-300 font-medium mb-1">ชื่อลูกค้า / บริษัท *</label>
+              <input
+                type="text"
+                required
+                placeholder="เช่น คุณสมชาย, บจก. สุราษฎร์ไอที"
+                value={custName}
+                onChange={(e) => setCustName(e.target.value)}
+                className="w-full liquid-glass-input rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-slate-300 font-medium mb-1">เบอร์โทรติดต่อ</label>
+              <input
+                type="text"
+                placeholder="08x-xxx-xxxx"
+                value={custPhone}
+                onChange={(e) => setCustPhone(e.target.value)}
+                className="w-full liquid-glass-input rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
+              />
+            </div>
           </div>
-        </div>
-      )}
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-slate-300 font-medium mb-1">อำเภอ / พื้นที่ *</label>
+              <select
+                value={district}
+                onChange={(e) => setDistrict(e.target.value)}
+                className="w-full liquid-glass-input rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
+              >
+                {DISTRICT_OPTIONS.map(d => (
+                  <option key={d} value={d} className="bg-[#12141A]">{d}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-slate-300 font-medium mb-1">รุ่นสินค้า / ยี่ห้อ</label>
+              <input
+                type="text"
+                placeholder="เช่น Epson L14150, PC Workstation"
+                value={deviceModel}
+                onChange={(e) => setDeviceModel(e.target.value)}
+                className="w-full liquid-glass-input rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-slate-300 font-medium mb-1">
+              Serial Number (S/N)
+            </label>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                placeholder="เช่น BC-2026-002 (ตรวจสถานะประกันอัตโนมัติ)"
+                value={sn}
+                onChange={(e) => setSn(e.target.value)}
+                className="flex-1 liquid-glass-input rounded-xl px-3 py-2 text-xs text-[#FF6B00] font-mono focus:outline-none"
+              />
+              <button
+                type="button"
+                onClick={() => setIsScannerOpen(true)}
+                title="สแกนด้วยกล้อง"
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#FF6B00]/15 text-[#FF6B00] border border-[#FF6B00]/30 hover:bg-[#FF6B00]/25 transition-all duration-150 active:scale-[0.97] cursor-pointer text-[11px] font-bold flex-shrink-0"
+              >
+                <Camera className="w-4 h-4" />
+                <span>สแกน</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Warranty Check Preview */}
+          {newFormWarrantyText && (
+            <div className={`p-2.5 rounded-xl border text-[11px] font-medium flex items-center justify-between ${newFormWarrantyClass}`}>
+              <span className="flex items-center gap-1.5">
+                <ShieldCheck className="w-3.5 h-3.5" />
+                <span>{newFormWarrantyText}</span>
+              </span>
+              <span className="text-[10px] opacity-80">เช็คจากระบบ</span>
+            </div>
+          )}
+
+          {/* Accessories Checkboxes */}
+          <div>
+            <label className="block text-slate-300 font-semibold mb-1.5">
+              อุปกรณ์ที่ติดมาด้วย (Accessories Checklist) *
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {ACCESSORY_PRESETS.map((acc) => {
+                const isChecked = selectedAccessories.includes(acc);
+                return (
+                  <button
+                    type="button"
+                    key={acc}
+                    onClick={() => toggleAccessory(acc)}
+                    className={`p-2 rounded-xl border text-left flex items-center gap-2 transition cursor-pointer ${isChecked
+                      ? 'bg-amber-500/15 border-amber-500/40 text-amber-300 font-semibold'
+                      : 'bg-white/[0.03] border-white/[0.06] text-slate-400 hover:text-white'
+                      }`}
+                  >
+                    {isChecked ? (
+                      <CheckSquare className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                    ) : (
+                      <Square className="w-4 h-4 text-slate-500 flex-shrink-0" />
+                    )}
+                    <span className="text-xs">{acc}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="mt-2">
+              <input
+                type="text"
+                placeholder="อุปกรณ์อื่นๆ เพิ่มเติม (เช่น สาย USB, ตลับหมึก, อะแดปเตอร์)"
+                value={accessoriesOther}
+                onChange={(e) => setAccessoriesOther(e.target.value)}
+                className="w-full liquid-glass-input rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-slate-300 font-semibold mb-1">
+              อาการเสียที่ได้รับแจ้ง *
+            </label>
+            <textarea
+              rows={3}
+              required
+              placeholder="เช่น เปิดไม่ติด, กระดาษติด, สีไม่ออก"
+              value={faultSymptom}
+              onChange={(e) => setFaultSymptom(e.target.value)}
+              className="w-full liquid-glass-input rounded-2xl px-3 py-2 text-white focus:outline-none"
+            />
+          </div>
+
+          <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center gap-2.5 pt-2 sticky bottom-0 bg-[var(--bg-page)]/0">
+            <button
+              type="button"
+              onClick={() => setIsNewTicketOpen(false)}
+              className="w-full sm:w-1/3 py-2.5 min-h-[44px] rounded-xl liquid-glass-card text-slate-400 hover:text-white font-semibold cursor-pointer"
+            >
+              ยกเลิก
+            </button>
+            <button
+              type="submit"
+              className="w-full sm:w-2/3 py-2.5 min-h-[44px] bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold rounded-xl text-xs transition cursor-pointer shadow-lg shadow-[#FF6B00]/25 border border-white/20 active:scale-95"
+            >
+              เปิดใบรับซ่อม & บันทึกเข้าระบบ
+            </button>
+          </div>
+        </form>
+      </Modal>
 
       {/* ========================================================================= */}
       {/* MODAL 2: STANDARD COMPANY REPAIR RECEIPT (CSS PRINT READY) */}
       {/* ========================================================================= */}
-      {receiptTicket && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/85 backdrop-blur-md overflow-y-auto">
-          <div className="w-[95vw] max-w-xl max-h-[90vh] overflow-y-auto liquid-glass rounded-2xl sm:rounded-3xl p-4 sm:p-7 border border-[#FF6B00]/40 shadow-2xl my-4 sm:my-8 relative text-xs">
-            <button
-              onClick={() => setReceiptTicket(null)}
-              aria-label="ปิดใบรับซ่อม"
-              className="absolute right-3 top-3 sm:right-5 sm:top-5 p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/[0.06] cursor-pointer no-print min-w-[44px] min-h-[44px] flex items-center justify-center"
-            >
-              <X className="w-5 h-5" />
-            </button>
-
+      <Modal
+        open={!!receiptTicket}
+        onClose={() => setReceiptTicket(null)}
+        ariaLabel="ใบรับซ่อม"
+        hideHeader
+        maxWidthClass="max-w-xl"
+        panelClassName="print:shadow-none"
+      >
+        {receiptTicket && (
+          <>
             {/* Printable Standard Company Document */}
             <div id="company-repair-receipt" className="space-y-4 print:text-black">
               {/* Company Header */}
@@ -760,9 +817,9 @@ export const RepairView: React.FC = () => {
                 ปิดหน้าต่าง
               </button>
             </div>
-          </div>
-        </div>
-      )}
+          </>
+        )}
+      </Modal>
 
       {/* Reusable camera barcode/QR scanner for device S/N intake */}
       <BarcodeScannerModal

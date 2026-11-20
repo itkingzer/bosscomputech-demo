@@ -7,7 +7,7 @@ import {
 import { ItemStatus } from '../types';
 
 export const DashboardView: React.FC = () => {
-  const { orders, items, repairTickets } = useApp();
+  const { orders, items, repairTickets, isSyncing } = useApp();
   const [searchTerm, setSearchTerm] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -119,59 +119,72 @@ export const DashboardView: React.FC = () => {
     <div className="space-y-6">
       {/* Top Metrics Cards with Liquid Glass */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3.5">
-        <div className="liquid-glass-card p-4 rounded-2xl relative overflow-hidden group">
-          <div className="text-xs text-slate-400 font-medium mb-1 flex items-center justify-between">
-            <span>รอจัดซื้อ/เช็กสต๊อก</span>
-            <Clock className="w-3.5 h-3.5 text-amber-400" />
-          </div>
-          <div className="text-2xl font-extrabold text-amber-400 data-key">{pendingPurchasing}</div>
-          <div className="text-xs font-medium text-slate-500 mt-1 data-meta">ออเดอร์ใหม่ฝ่ายขาย</div>
-        </div>
+        {isSyncing ? (
+          /* Skeleton placeholders while Supabase data is being fetched */
+          Array.from({ length: 6 }).map((_, idx) => (
+            <div key={`sk-${idx}`} className="liquid-glass-card p-4 rounded-2xl relative overflow-hidden">
+              <div className="skeleton h-3 w-3/4 mb-2.5" />
+              <div className="skeleton h-6 w-1/2 mb-2" />
+              <div className="skeleton h-2.5 w-2/3" />
+            </div>
+          ))
+        ) : (
+          <>
+            <div className="liquid-glass-card p-4 rounded-2xl relative overflow-hidden group">
+              <div className="text-xs text-slate-400 font-medium mb-1 flex items-center justify-between">
+                <span>รอจัดซื้อ/เช็กสต๊อก</span>
+                <Clock className="w-3.5 h-3.5 text-amber-400" />
+              </div>
+              <div className="text-2xl font-extrabold text-amber-400 data-key">{pendingPurchasing}</div>
+              <div className="text-xs font-medium text-slate-500 mt-1 data-meta">ออเดอร์ใหม่ฝ่ายขาย</div>
+            </div>
 
-        <div className="liquid-glass-card p-4 rounded-2xl relative overflow-hidden group">
-          <div className="text-xs text-slate-400 font-medium mb-1 flex items-center justify-between">
-            <span>รอช่างเตรียม</span>
-            <Package className="w-3.5 h-3.5 text-[#FF6B00]" />
-          </div>
-          <div className="text-2xl font-extrabold text-[#FF6B00] data-key">{pendingPrep}</div>
-          <div className="text-xs font-medium text-slate-500 mt-1 data-meta">ชิ้น รอใส่ S/N</div>
-        </div>
+            <div className="liquid-glass-card p-4 rounded-2xl relative overflow-hidden group">
+              <div className="text-xs text-slate-400 font-medium mb-1 flex items-center justify-between">
+                <span>รอช่างเตรียม</span>
+                <Package className="w-3.5 h-3.5 text-[#FF6B00]" />
+              </div>
+              <div className="text-2xl font-extrabold text-[#FF6B00] data-key">{pendingPrep}</div>
+              <div className="text-xs font-medium text-slate-500 mt-1 data-meta">ชิ้น รอใส่ S/N</div>
+            </div>
 
-        <div className="liquid-glass-card p-4 rounded-2xl relative overflow-hidden group">
-          <div className="text-xs text-slate-400 font-medium mb-1 flex items-center justify-between">
-            <span>พร้อมจัดคิวส่ง</span>
-            <ClipboardList className="w-3.5 h-3.5 text-blue-400" />
-          </div>
-          <div className="text-2xl font-extrabold text-blue-400 data-key">{readyDispatch}</div>
-          <div className="text-xs font-medium text-slate-500 mt-1 data-meta">หน้าร้านรอจ่ายงาน</div>
-        </div>
+            <div className="liquid-glass-card p-4 rounded-2xl relative overflow-hidden group">
+              <div className="text-xs text-slate-400 font-medium mb-1 flex items-center justify-between">
+                <span>พร้อมจัดคิวส่ง</span>
+                <ClipboardList className="w-3.5 h-3.5 text-blue-400" />
+              </div>
+              <div className="text-2xl font-extrabold text-blue-400 data-key">{readyDispatch}</div>
+              <div className="text-xs font-medium text-slate-500 mt-1 data-meta">หน้าร้านรอจ่ายงาน</div>
+            </div>
 
-        <div className="liquid-glass-card p-4 rounded-2xl relative overflow-hidden group">
-          <div className="text-xs text-slate-400 font-medium mb-1 flex items-center justify-between">
-            <span>กำลังส่ง Onsite</span>
-            <Truck className="w-3.5 h-3.5 text-purple-400" />
-          </div>
-          <div className="text-2xl font-extrabold text-purple-400 data-key">{assignedOnsite}</div>
-          <div className="text-xs font-medium text-slate-500 mt-1 data-meta">ช่างกำลังไปส่ง/ติดวอย</div>
-        </div>
+            <div className="liquid-glass-card p-4 rounded-2xl relative overflow-hidden group">
+              <div className="text-xs text-slate-400 font-medium mb-1 flex items-center justify-between">
+                <span>กำลังส่ง Onsite</span>
+                <Truck className="w-3.5 h-3.5 text-purple-400" />
+              </div>
+              <div className="text-2xl font-extrabold text-purple-400 data-key">{assignedOnsite}</div>
+              <div className="text-xs font-medium text-slate-500 mt-1 data-meta">ช่างกำลังไปส่ง/ติดวอย</div>
+            </div>
 
-        <div className="liquid-glass-card p-4 rounded-2xl relative overflow-hidden group">
-          <div className="text-xs text-slate-400 font-medium mb-1 flex items-center justify-between">
-            <span>กำลังซ่อมในร้าน</span>
-            <Wrench className="w-3.5 h-3.5 text-rose-400" />
-          </div>
-          <div className="text-2xl font-extrabold text-rose-400 data-key">{inRepair}</div>
-          <div className="text-xs font-medium text-slate-500 mt-1 data-meta">ตรวจเช็คบนโต๊ะช่าง</div>
-        </div>
+            <div className="liquid-glass-card p-4 rounded-2xl relative overflow-hidden group">
+              <div className="text-xs text-slate-400 font-medium mb-1 flex items-center justify-between">
+                <span>กำลังซ่อมในร้าน</span>
+                <Wrench className="w-3.5 h-3.5 text-rose-400" />
+              </div>
+              <div className="text-2xl font-extrabold text-rose-400 data-key">{inRepair}</div>
+              <div className="text-xs font-medium text-slate-500 mt-1 data-meta">ตรวจเช็คบนโต๊ะช่าง</div>
+            </div>
 
-        <div className="liquid-glass-card p-4 rounded-2xl relative overflow-hidden group">
-          <div className="text-xs text-slate-400 font-medium mb-1 flex items-center justify-between">
-            <span>ส่งมอบสมบูรณ์</span>
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-          </div>
-          <div className="text-2xl font-extrabold text-emerald-400 data-key">{delivered}</div>
-          <div className="text-xs font-medium text-slate-500 mt-1 data-meta">ติดวอย & ปิดงานแล้ว</div>
-        </div>
+            <div className="liquid-glass-card p-4 rounded-2xl relative overflow-hidden group">
+              <div className="text-xs text-slate-400 font-medium mb-1 flex items-center justify-between">
+                <span>ส่งมอบสมบูรณ์</span>
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+              </div>
+              <div className="text-2xl font-extrabold text-emerald-400 data-key">{delivered}</div>
+              <div className="text-xs font-medium text-slate-500 mt-1 data-meta">ติดวอย & ปิดงานแล้ว</div>
+            </div>
+          </>
+        )}
       </div>
 
       {/* S/N Traceability Card in Liquid Glass Container */}
@@ -200,7 +213,7 @@ export const DashboardView: React.FC = () => {
             <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
             <button
               type="submit"
-              className="absolute right-1.5 top-1.5 px-3 py-1.5 bg-[#FF6B00] hover:bg-[#E65A00] text-black font-bold rounded-xl text-xs transition cursor-pointer shadow-md shadow-[#FF6B00]/25"
+              className="absolute right-1.5 top-1.5 px-3 py-1.5 bg-[#FF6B00] hover:bg-[#E65A00] hover:brightness-105 text-black font-bold rounded-xl text-xs transition-all duration-150 active:scale-[0.97] cursor-pointer shadow-md shadow-[#FF6B00]/25"
             >
               ค้นหา
             </button>
@@ -217,7 +230,7 @@ export const DashboardView: React.FC = () => {
                 setSearchTerm(s);
                 setSearchQuery(s);
               }}
-              className="text-xs px-2.5 py-1 rounded-xl bg-white/[0.04] border border-white/[0.08] hover:border-[#FF6B00]/50 text-[#FF6B00] font-mono transition cursor-pointer"
+              className="text-xs px-2.5 py-1 rounded-xl bg-white/[0.04] border border-white/[0.08] hover:border-[#FF6B00]/50 text-[#FF6B00] font-mono transition-all duration-150 active:scale-[0.97] cursor-pointer"
             >
               {s}
             </button>

@@ -13,14 +13,15 @@ import { SettingsModal } from './components/SettingsModal';
 import { ProfitDashboardView } from './components/ProfitDashboardView';
 import { CompletedLogsView } from './components/CompletedLogsView';
 import {
-  Cpu, LayoutDashboard, FilePlus2, Boxes, PackageCheck,
+  LayoutDashboard, FilePlus2, Boxes, PackageCheck,
   Store, Truck, Wrench, Shield, LogOut, Settings, RotateCcw,
   ChevronRight, Menu, X, Sparkles, Sun, Moon, TrendingUp, History
 } from 'lucide-react';
+import companyLogo from './assets/BossCom.jpg';
 
 export const App: React.FC = () => {
   const {
-    currentUser, logout, isSupabaseLive,
+    currentUser, logout, isSupabaseLive, isSyncing,
     orders, items, repairTickets, resetAllDemoData,
     theme, toggleTheme
   } = useApp();
@@ -142,7 +143,7 @@ export const App: React.FC = () => {
         onClick={() => setIsMobileSidebarOpen(false)}
         aria-hidden="true"
         className={`
-          fixed inset-0 bg-black/60 backdrop-blur-sm z-50 lg:hidden
+          fixed inset-0 bg-black/60 backdrop-blur-sm z-40 lg:hidden
           transition-opacity duration-300 ease-out
           ${isMobileSidebarOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}
         `}
@@ -155,7 +156,7 @@ export const App: React.FC = () => {
         aria-label="เมนูนำทางหลัก"
         aria-hidden={!isMobileSidebarOpen && !isDesktopSidebarOpen}
         className={`
-          fixed top-0 bottom-0 left-0 z-[60] w-[82vw] max-w-[19rem] sm:w-72 liquid-glass-sidebar flex flex-col justify-between
+          fixed top-0 bottom-0 left-0 z-40 w-[82vw] max-w-[19rem] sm:w-72 liquid-glass-sidebar flex flex-col justify-between
           transition-transform duration-300 ease-out will-change-transform
           lg:w-72 lg:max-w-none
           ${isMobileSidebarOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'}
@@ -166,16 +167,18 @@ export const App: React.FC = () => {
 
           {/* Brand Header */}
           <div className="p-5 border-b border-white/[0.06] flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-[#FF6B00] to-[#993A00] flex items-center justify-center font-bold text-white shadow-lg shadow-[#FF6B00]/30 border border-white/20">
-                <Cpu className="w-5 h-5 text-white" />
-              </div>
-              <div>
+            <div className="flex items-center gap-3 min-w-0">
+              <img
+                src={companyLogo}
+                alt="Boss Computech Logo"
+                className="w-10 h-10 rounded-full object-cover ring-1 ring-white/20 shadow-lg flex-shrink-0"
+              />
+              <div className="min-w-0">
                 <div className="flex items-center gap-1.5">
-                  <span className="font-extrabold text-base tracking-wider text-white">
-                    BOSS<span className="text-[#FF6B00]">COMP</span>
+                  <span className="font-extrabold text-[13px] leading-tight tracking-tight text-white">
+                    Boss Computech <span className="text-[#FF6B00]">and Service Co., Ltd.</span>
                   </span>
-                  <span className="text-[9px] uppercase px-1.5 py-0.5 rounded-full bg-[#FF6B00]/15 text-[#FF6B00] border border-[#FF6B00]/30 font-bold">
+                  <span className="text-[9px] uppercase px-1.5 py-0.5 rounded-full bg-[#FF6B00]/15 text-[#FF6B00] border border-[#FF6B00]/30 font-bold flex-shrink-0">
                     Liquid
                   </span>
                 </div>
@@ -189,7 +192,7 @@ export const App: React.FC = () => {
                 setIsDesktopSidebarOpen(false);
               }}
               aria-label="ปิดเมนู"
-              className="p-2.5 -mr-1 rounded-xl text-slate-400 hover:text-white hover:bg-white/[0.06] transition min-w-[44px] min-h-[44px] flex items-center justify-center"
+              className="p-2.5 -mr-1 rounded-xl text-slate-400 hover:text-white hover:bg-white/[0.06] transition-all duration-150 active:scale-[0.97] min-w-[44px] min-h-[44px] flex items-center justify-center"
             >
               <X className="w-5 h-5" />
             </button>
@@ -229,8 +232,10 @@ export const App: React.FC = () => {
                     setActiveTab(nav.id);
                     setIsMobileSidebarOpen(false);
                   }}
+                  aria-current={isActive ? 'page' : undefined}
                   className={`
-                    w-full flex items-center justify-between p-3 min-h-[52px] rounded-2xl transition-all duration-200 cursor-pointer group text-left
+                    w-full flex items-center justify-between p-3 min-h-[52px] rounded-2xl transition-all duration-200 ease-out cursor-pointer group text-left
+                    active:scale-[0.97] hover:brightness-105
                     ${isActive
                       ? 'liquid-glass-active font-bold shadow-lg shadow-[#FF6B00]/25'
                       : 'text-slate-300 hover:text-white hover:bg-white/[0.05] border border-transparent hover:border-white/[0.06]'
@@ -279,21 +284,21 @@ export const App: React.FC = () => {
             {/* Live connection badge */}
             <button
               onClick={() => setIsSettingsOpen(true)}
-              className="w-full flex items-center justify-between px-3 py-2 rounded-xl bg-white/[0.03] hover:bg-white/[0.06] border border-white/[0.06] text-xs transition cursor-pointer"
+              className="w-full flex items-center justify-between px-3 py-2 rounded-xl bg-white/[0.03] hover:bg-white/[0.06] border border-white/[0.06] text-xs transition-all duration-150 active:scale-[0.97] cursor-pointer"
             >
               <div className="flex items-center gap-2">
                 <span className={`w-2 h-2 rounded-full ${isSupabaseLive ? 'bg-emerald-400' : 'bg-amber-400'} animate-pulse`}></span>
                 <span className={`text-[11px] font-medium ${isSupabaseLive ? 'text-emerald-400' : 'text-amber-400'}`}>
-                  {isSupabaseLive ? 'Supabase Live' : 'Demo Local Mode'}
+                  {isSyncing ? 'กำลังซิงค์ข้อมูล...' : isSupabaseLive ? 'Supabase Live' : 'Demo Local Mode'}
                 </span>
               </div>
-              <Settings className="w-3.5 h-3.5 text-slate-400" />
+              <Settings className={`w-3.5 h-3.5 text-slate-400 ${isSyncing ? 'animate-spin' : ''}`} />
             </button>
 
             {/* Logout button */}
             <button
               onClick={logout}
-              className="w-full flex items-center justify-center gap-2 p-2.5 min-h-[44px] rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 text-xs font-semibold transition cursor-pointer"
+              className="w-full flex items-center justify-center gap-2 p-2.5 min-h-[44px] rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 text-xs font-semibold transition-all duration-150 active:scale-[0.97] hover:brightness-105 cursor-pointer"
             >
               <LogOut className="w-3.5 h-3.5" />
               <span>ออกจากระบบ</span>
@@ -332,14 +337,24 @@ export const App: React.FC = () => {
               <Menu className="w-5 h-5" />
             </button>
 
-            {/* Page title — centered on mobile, left-aligned on desktop */}
-            <div className="min-w-0 flex-1 lg:flex-none text-center lg:text-left">
-              <h1 className="text-sm font-bold text-white flex items-center justify-center lg:justify-start gap-2">
-                <span className="truncate lg:whitespace-normal">{allNavItems.find(n => n.id === activeTab)?.label}</span>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/[0.06] text-slate-400 border border-white/[0.08] font-normal hidden lg:inline-block">
-                  Role: {currentUser.role}
-                </span>
-              </h1>
+            {/* Brand logo + page title — centered on mobile, left-aligned on desktop */}
+            <div className="min-w-0 flex-1 lg:flex-none text-center lg:text-left flex items-center justify-center lg:justify-start gap-2.5">
+              <img
+                src={companyLogo}
+                alt="Boss Computech Logo"
+                className="w-8 h-8 sm:w-9 sm:h-9 rounded-full object-cover ring-1 ring-white/20 shadow-md flex-shrink-0"
+              />
+              <div className="min-w-0">
+                <div className="text-[10px] sm:text-[11px] font-extrabold text-white leading-tight truncate">
+                  Boss Computech <span className="text-[#FF6B00]">and Service Co., Ltd.</span>
+                </div>
+                <h1 className="text-[10px] sm:text-xs font-medium text-slate-400 flex items-center justify-center lg:justify-start gap-2">
+                  <span className="truncate lg:whitespace-normal">{allNavItems.find(n => n.id === activeTab)?.label}</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/[0.06] text-slate-400 border border-white/[0.08] font-normal hidden lg:inline-block">
+                    Role: {currentUser.role}
+                  </span>
+                </h1>
+              </div>
             </div>
           </div>
 
@@ -348,13 +363,13 @@ export const App: React.FC = () => {
             <button
               onClick={() => setIsSettingsOpen(true)}
               aria-label={isSupabaseLive ? 'สถานะ: Supabase Live' : 'สถานะ: Demo Local Mode'}
-              className={`lg:hidden flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-[10px] font-bold transition cursor-pointer min-h-[36px] ${isSupabaseLive
+              className={`lg:hidden flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-[10px] font-bold transition-all duration-150 active:scale-[0.97] cursor-pointer min-h-[36px] ${isSupabaseLive
                 ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
                 : 'bg-amber-500/15 text-amber-400 border-amber-500/30'
                 }`}
             >
               <span className={`w-1.5 h-1.5 rounded-full animate-pulse ${isSupabaseLive ? 'bg-emerald-400' : 'bg-amber-400'}`}></span>
-              <span className="hidden xs:inline sm:inline">{isSupabaseLive ? 'LIVE' : 'DEMO'}</span>
+              <span className="hidden xs:inline sm:inline">{isSyncing ? 'SYNC' : isSupabaseLive ? 'LIVE' : 'DEMO'}</span>
             </button>
             {/* Theme Toggle Button (Liquid Glass Dark / Light) */}
             <button
@@ -396,18 +411,21 @@ export const App: React.FC = () => {
           </div>
         </header>
 
-        {/* Dynamic Content Views */}
+        {/* Dynamic Content Views — keyed by activeTab so each switch replays a
+            fast 250ms slide-up instead of snapping abruptly. */}
         <main className="flex-1 px-3 sm:px-6 lg:px-8 py-4 sm:py-6 max-w-7xl w-full mx-auto min-w-0 overflow-y-auto">
-          {activeTab === 'dashboard' && <DashboardView />}
-          {activeTab === 'sales' && <SalesView />}
-          {activeTab === 'profit' && <ProfitDashboardView />}
-          {activeTab === 'accounting' && <AccountingView />}
-          {activeTab === 'prep' && <PrepView />}
-          {activeTab === 'frontdesk' && <FrontdeskView />}
-          {activeTab === 'onsite' && <OnsiteView />}
-          {activeTab === 'repair' && <RepairView />}
-          {activeTab === 'completed-logs' && <CompletedLogsView />}
-          {activeTab === 'admin' && currentUser.role === 'admin' && <AdminUserManagement />}
+          <div key={activeTab} className="animate-slide-up">
+            {activeTab === 'dashboard' && <DashboardView />}
+            {activeTab === 'sales' && <SalesView />}
+            {activeTab === 'profit' && <ProfitDashboardView />}
+            {activeTab === 'accounting' && <AccountingView />}
+            {activeTab === 'prep' && <PrepView />}
+            {activeTab === 'frontdesk' && <FrontdeskView />}
+            {activeTab === 'onsite' && <OnsiteView />}
+            {activeTab === 'repair' && <RepairView />}
+            {activeTab === 'completed-logs' && <CompletedLogsView />}
+            {activeTab === 'admin' && currentUser.role === 'admin' && <AdminUserManagement />}
+          </div>
         </main>
 
         {/* Bottom Footer */}

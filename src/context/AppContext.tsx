@@ -83,6 +83,8 @@ interface AppContextType {
 
   // Settings & DB
   isSupabaseLive: boolean;
+  /** True while remote Supabase data is being fetched/refreshed (drives skeleton UI) */
+  isSyncing: boolean;
   supabaseUrl: string;
   supabaseKey: string;
   updateSupabaseConfig: (url: string, key: string) => void;
@@ -147,6 +149,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [supabaseUrl, setSupabaseUrl] = useState(() => localStorage.getItem('boss_sb_url') || '');
   const [supabaseKey, setSupabaseKey] = useState(() => localStorage.getItem('boss_sb_key') || '');
   const [isSupabaseLive, setIsSupabaseLive] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
   const [supabaseClient, setSupabaseClient] = useState<SupabaseClient | null>(null);
 
   // Theme state: dark / light
@@ -213,18 +216,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setIsSupabaseLive(true);
 
         const loadRemote = async () => {
-          const [o, i, r, p, sp] = await Promise.all([
-            client.from('orders').select('*').order('created_at', { ascending: false }),
-            client.from('items').select('*').order('created_at', { ascending: false }),
-            client.from('repair_tickets').select('*').order('created_at', { ascending: false }),
-            client.from('products').select('*').order('created_at', { ascending: false }),
-            client.from('stock_pos').select('*').order('created_at', { ascending: false })
-          ]);
-          if (o.data) setOrders(o.data);
-          if (i.data) setItems(i.data);
-          if (r.data) setRepairTickets(r.data);
-          if (p.data) setProducts(p.data as Product[]);
-          if (sp.data) setStockPOs(sp.data as StockPO[]);
+          setIsSyncing(true);
+          try {
+            const [o, i, r, p, sp] = await Promise.all([
+              client.from('orders').select('*').order('created_at', { ascending: false }),
+              client.from('items').select('*').order('created_at', { ascending: false }),
+              client.from('repair_tickets').select('*').order('created_at', { ascending: false }),
+              client.from('products').select('*').order('created_at', { ascending: false }),
+              client.from('stock_pos').select('*').order('created_at', { ascending: false })
+            ]);
+            if (o.data) setOrders(o.data);
+            if (i.data) setItems(i.data);
+            if (r.data) setRepairTickets(r.data);
+            if (p.data) setProducts(p.data as Product[]);
+            if (sp.data) setStockPOs(sp.data as StockPO[]);
+          } finally {
+            setIsSyncing(false);
+          }
         };
         loadRemote();
 
@@ -245,6 +253,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     } else {
       setIsSupabaseLive(false);
+      setIsSyncing(false);
       setSupabaseClient(null);
     }
   }, [supabaseUrl, supabaseKey]);
@@ -1348,6 +1357,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       completeRepairTicket,
       closeRepairTicket,
       isSupabaseLive,
+      isSyncing,
       supabaseUrl,
       supabaseKey,
       updateSupabaseConfig,

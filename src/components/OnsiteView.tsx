@@ -1,14 +1,19 @@
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useApp } from '../context/AppContext';
 import {
   MapPin, ShieldCheck, CheckCircle, Truck, Package,
   RotateCcw, Wrench, Printer,
-  CheckSquare, Square, X, Smartphone, UserCheck, Layers, Lock,
-  ChevronDown, ChevronUp
+  CheckSquare, Square, X, Smartphone, UserCheck, Layers,
+  ClipboardList, ArrowRight, Phone, Calendar
 } from 'lucide-react';
 import { ROUTE_DEFINITIONS, RouteCode, RepairTicket, Item, getRouteByDistrict } from '../types';
 import { ListControls, useListControls } from './ListControls';
 import { ActivityTimeline, LatestUpdateBadge } from './ActivityTimeline';
+import {
+  Modal, modalInputClass, modalLabelClass,
+  modalPrimaryBtnClass, modalSecondaryBtnClass
+} from './ui/Modal';
 
 // ---------------------------------------------------------------------------
 // Helpers: group identical items into a single stacked card
@@ -115,7 +120,6 @@ export const OnsiteView: React.FC = () => {
   const [selectedTechNameFilter, setSelectedTechNameFilter] = useState<string>(currentUser?.role === 'onsite' ? currentUser.name : 'all');
   const [selectedCategory, setSelectedCategory] = useState<'all' | 'new_goods' | 'repair_return' | 'pickup'>('all');
   const [deliveryNotes, setDeliveryNotes] = useState<Record<string, string>>({});
-  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   const [toast, setToast] = useState('');
 
   // Modal State for Onsite Pickup Form
@@ -136,6 +140,10 @@ export const OnsiteView: React.FC = () => {
 
   // Receipt Modal State
   const [receiptTicket, setReceiptTicket] = useState<RepairTicket | null>(null);
+
+  // Onsite Job Detail Modal State (card-to-modal)
+  // kind: 'new_goods' | 'repair_return' | 'pickup'
+  const [activeJob, setActiveJob] = useState<{ kind: 'new_goods' | 'repair_return' | 'pickup'; key: string } | null>(null);
 
   const onsiteTechUsers = users.filter(u => u.role === 'onsite');
 
@@ -213,16 +221,11 @@ export const OnsiteView: React.FC = () => {
     initialSort: 'newest',
   });
 
-  const toggleGroup = (key: string) => {
-    setExpandedGroups(prev => ({ ...prev, [key]: !prev[key] }));
-  };
-
   const handleAcceptGroup = (group: ItemGroup) => {
     const techName = currentUser?.name || 'ช่าง Onsite';
     group.items.forEach(it => {
       if (!it.assigned_prep_tech) acceptOnsiteJob(it.id, techName);
     });
-    setExpandedGroups(prev => ({ ...prev, [group.key]: true }));
     setToast(`ช่าง "${techName}" รับงานทั้งชุด ${group.items.length} เครื่องเรียบร้อยแล้ว`);
     setTimeout(() => setToast(''), 3500);
   };
@@ -454,7 +457,7 @@ export const OnsiteView: React.FC = () => {
             <span className="text-slate-400 font-medium whitespace-nowrap mr-1">สายรถ:</span>
             <button
               onClick={() => setSelectedRouteFilter('all')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer whitespace-nowrap ${selectedRouteFilter === 'all'
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all duration-150 active:scale-[0.97] cursor-pointer whitespace-nowrap ${selectedRouteFilter === 'all'
                 ? 'bg-white/20 text-white border border-white/40 shadow-sm font-bold'
                 : 'bg-white/[0.04] text-slate-400 hover:text-white border border-white/[0.06]'
                 }`}
@@ -467,7 +470,7 @@ export const OnsiteView: React.FC = () => {
                 <button
                   key={rCode}
                   onClick={() => setSelectedRouteFilter(rCode)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${selectedRouteFilter === rCode
+                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all duration-150 active:scale-[0.97] cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${selectedRouteFilter === rCode
                     ? `${r.badgeBg} ${r.badgeText} ${r.badgeBorder} border shadow-md font-bold`
                     : 'bg-white/[0.04] text-slate-400 hover:text-slate-200 border border-white/[0.06]'
                     }`}
@@ -484,7 +487,7 @@ export const OnsiteView: React.FC = () => {
         <div className="flex items-center gap-2 pb-4 overflow-x-auto">
           <button
             onClick={() => setSelectedCategory('all')}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-xl transition cursor-pointer whitespace-nowrap ${selectedCategory === 'all'
+            className={`px-3 py-1.5 text-xs font-semibold rounded-xl transition-all duration-150 active:scale-[0.97] cursor-pointer whitespace-nowrap ${selectedCategory === 'all'
               ? 'bg-white/20 text-white border border-white/40 font-bold'
               : 'bg-white/[0.03] text-slate-400 hover:text-white border border-white/[0.05]'
               }`}
@@ -493,7 +496,7 @@ export const OnsiteView: React.FC = () => {
           </button>
           <button
             onClick={() => setSelectedCategory('new_goods')}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-xl transition cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${selectedCategory === 'new_goods'
+            className={`px-3 py-1.5 text-xs font-semibold rounded-xl transition-all duration-150 active:scale-[0.97] cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${selectedCategory === 'new_goods'
               ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 font-bold'
               : 'bg-white/[0.03] text-slate-400 hover:text-emerald-300 border border-white/[0.05]'
               }`}
@@ -503,7 +506,7 @@ export const OnsiteView: React.FC = () => {
           </button>
           <button
             onClick={() => setSelectedCategory('repair_return')}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-xl transition cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${selectedCategory === 'repair_return'
+            className={`px-3 py-1.5 text-xs font-semibold rounded-xl transition-all duration-150 active:scale-[0.97] cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${selectedCategory === 'repair_return'
               ? 'bg-purple-500/20 text-purple-400 border border-purple-500/40 font-bold'
               : 'bg-white/[0.03] text-slate-400 hover:text-purple-300 border border-white/[0.05]'
               }`}
@@ -513,7 +516,7 @@ export const OnsiteView: React.FC = () => {
           </button>
           <button
             onClick={() => setSelectedCategory('pickup')}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-xl transition cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${selectedCategory === 'pickup'
+            className={`px-3 py-1.5 text-xs font-semibold rounded-xl transition-all duration-150 active:scale-[0.97] cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${selectedCategory === 'pickup'
               ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40 font-bold'
               : 'bg-white/[0.03] text-slate-400 hover:text-amber-300 border border-white/[0.05]'
               }`}
@@ -555,39 +558,30 @@ export const OnsiteView: React.FC = () => {
                     ? firstItem.assigned_techs
                     : (firstItem.assigned_onsite_tech ? [firstItem.assigned_onsite_tech] : []);
                   const isAccepted = group.items.every(it => !!it.assigned_prep_tech);
-                  const isExpanded = !!expandedGroups[group.key];
                   const deliveryLabel = DELIVERY_MODE_LABEL[group.delivery_mode || 'install'] || 'ส่งพร้อมติดตั้ง';
 
                   return (
                     <div
                       key={'new-' + group.key}
-                      className={`p-5 rounded-2xl liquid-glass-card flex flex-col justify-between space-y-4 relative overflow-hidden border ${isAccepted ? 'border-emerald-500/30' : 'border-white/[0.08]'}`}
+                      className={`p-4 rounded-2xl liquid-glass-card flex flex-col justify-between gap-3 relative overflow-hidden border transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md ${isAccepted ? 'border-emerald-500/30' : 'border-white/[0.08]'}`}
                     >
-                      {isAccepted && <div className="absolute top-0 left-0 right-0 h-1 bg-emerald-500" />}
+                      <div className={`absolute top-0 left-0 right-0 h-1 ${isAccepted ? 'bg-emerald-500' : 'bg-[#FF6B00]'}`} />
 
-                      <div>
-                        {/* Step badges */}
-                        <div className="flex items-center gap-1.5 flex-wrap mb-3">
-                          <StepBadge step={1} label="รอกดรับงาน" active={!isAccepted} done={isAccepted} />
-                          <StepBadge step={2} label="กำลังเตรียม/ติดโลโก้" active={isAccepted} />
-                          <StepBadge step={3} label="พร้อมส่ง/ติดวอย" active={false} />
-                        </div>
-
-                        <div className="flex items-center justify-between mb-2">
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between gap-2">
                           <span className={`text-[11px] font-extrabold px-2.5 py-1 rounded-lg border flex items-center gap-1 ${isAccepted ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40' : 'bg-white/[0.05] text-slate-400 border-white/[0.1]'}`}>
                             <Package className="w-3 h-3" />
-                            <span>{isAccepted ? '[ส่งของใหม่ - กำลังส่งมอบ]' : '[ส่งของใหม่ - รอกดรับงาน]'}</span>
+                            <span>{isAccepted ? 'ส่งของใหม่ • กำลังส่งมอบ' : 'ส่งของใหม่ • รอกดรับงาน'}</span>
                           </span>
                           {group.items.length > 1 && (
-                            <span className="px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[11px] font-extrabold flex items-center gap-1">
+                            <span className="px-2 py-0.5 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-extrabold flex items-center gap-1">
                               <Layers className="w-3 h-3" />
-                              จำนวน {group.items.length} เครื่อง
+                              {group.items.length} เครื่อง
                             </span>
                           )}
                         </div>
 
-                        {/* Route & Delivery Mode */}
-                        <div className="flex items-center gap-1.5 flex-wrap mb-2">
+                        <div className="flex items-center gap-1.5 flex-wrap">
                           {rMeta && (
                             <div className={`px-2 py-0.5 rounded-md text-[10px] font-bold border inline-flex items-center gap-1 ${rMeta.badgeBg} ${rMeta.badgeBorder} ${rMeta.badgeText}`}>
                               <span>{rMeta.shortName}</span>
@@ -599,9 +593,15 @@ export const OnsiteView: React.FC = () => {
                           </span>
                         </div>
 
-                        {/* Team Teammates Display */}
+                        <h4 className="text-base font-bold text-white truncate">{group.model_name}</h4>
+                        <p className="text-xs text-slate-300 font-medium data-meta truncate">ลูกค้า: <strong className="text-white font-bold">{order ? order.customer_name : '-'}</strong></p>
+                        <p className="text-xs text-slate-500 flex items-start gap-1 data-meta">
+                          <MapPin className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0 mt-0.5" />
+                          <span className="line-clamp-2">{order ? order.delivery_location : '-'}</span>
+                        </p>
+
                         {teamTechs.length > 0 && (
-                          <div className="mb-2 p-1.5 rounded-xl bg-white/[0.04] border border-white/[0.08] text-[11px] text-slate-300 flex items-center gap-1.5 flex-wrap">
+                          <div className="p-1.5 rounded-xl bg-white/[0.04] border border-white/[0.08] text-[11px] text-slate-300 flex items-center gap-1.5 flex-wrap">
                             <span className="text-slate-400 font-medium">ทีมงาน:</span>
                             {teamTechs.map((name, idx) => (
                               <span key={idx} className="px-2 py-0.2 rounded-md bg-[#FF6B00]/15 text-[#FF6B00] border border-[#FF6B00]/30 font-semibold text-[10px]">
@@ -611,96 +611,23 @@ export const OnsiteView: React.FC = () => {
                           </div>
                         )}
 
-                        <h4 className="text-base font-bold text-white mb-1">{group.model_name}</h4>
-                        <p className="text-xs text-slate-300 font-medium data-meta">ลูกค้า: <strong className="text-white font-bold">{order ? order.customer_name : '-'}</strong></p>
-                        <p className="text-xs text-slate-500 mt-1 flex items-start gap-1 data-meta">
-                          <MapPin className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0 mt-0.5" />
-                          <span>{order ? order.delivery_location : '-'}</span>
-                        </p>
-
-                        {isAccepted && (
-                          <div className="mt-2 text-[10px] text-emerald-400 flex items-center gap-1">
-                            <UserCheck className="w-3.5 h-3.5" />
-                            <span>ผู้รับงาน: {firstItem.assigned_prep_tech} ({new Date(firstItem.prep_accepted_at || Date.now()).toLocaleTimeString('th-TH')})</span>
-                          </div>
-                        )}
-
-                        <div className="mt-3 pt-2 border-t border-white/[0.08]">
+                        <div className="pt-2 border-t border-white/[0.08]">
                           <LatestUpdateBadge
                             logs={firstItem.activity_logs}
                             fallbackTimestamp={firstItem.delivered_at || firstItem.dispatched_at || firstItem.assigned_at || firstItem.updated_at || firstItem.created_at}
                             fallbackActor={firstItem.assigned_prep_tech}
                           />
-                          <ActivityTimeline logs={firstItem.activity_logs} />
                         </div>
                       </div>
 
-                      {/* GATE: Accept first, or unlocked controls */}
-                      <div className="pt-3 border-t border-white/[0.08] space-y-3">
-                        {!isAccepted ? (
-                          <>
-                            <div className="p-2.5 rounded-xl bg-white/[0.03] border border-white/[0.06] text-[11px] text-slate-400 flex items-center gap-1.5">
-                              <Lock className="w-3.5 h-3.5 text-slate-500" />
-                              <span>กดรับงานก่อนจึงจะบันทึกส่งมอบได้</span>
-                            </div>
-                            <button
-                              onClick={() => handleAcceptGroup(group)}
-                              className="w-full py-3 bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] active:scale-95 text-black font-extrabold rounded-xl text-sm transition cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-[#FF6B00]/25 border border-white/20"
-                            >
-                              <UserCheck className="w-4 h-4" />
-                              <span>กดรับงานนี้ (Accept Job)</span>
-                            </button>
-                          </>
-                        ) : (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => toggleGroup(group.key)}
-                              className="w-full py-1.5 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] text-slate-300 text-[11px] font-semibold border border-white/[0.1] transition cursor-pointer flex items-center justify-center gap-1"
-                            >
-                              {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                              <span>{isExpanded ? 'ซ่อนรายการส่งมอบ' : `เปิดรายการส่งมอบ (${group.items.length} เครื่อง)`}</span>
-                            </button>
-
-                            {isExpanded && (
-                              <>
-                                <div className="space-y-2">
-                                  {group.items.map((item, idx) => (
-                                    <div key={item.id} className="p-2.5 rounded-xl bg-white/[0.03] border border-white/[0.06] space-y-2">
-                                      <div className="flex items-center justify-between">
-                                        <span className="text-[10px] font-bold text-slate-400">#{idx + 1}</span>
-                                        <span className="text-xs font-mono font-extrabold text-[#FF6B00] data-key">{item.serial_number}</span>
-                                      </div>
-                                      <div className="flex items-center justify-between text-[10px] text-slate-400">
-                                        <span>วอยรับประกัน:</span>
-                                        <span className="font-mono text-emerald-400 font-bold flex items-center gap-1">
-                                          <ShieldCheck className="w-3 h-3" />
-                                          {item.void_date || 'ระบุแล้ว'}
-                                        </span>
-                                      </div>
-                                      <input
-                                        type="text"
-                                        placeholder="บันทึกการส่งมอบ / เซ็นรับ"
-                                        value={deliveryNotes[item.id] || ''}
-                                        onChange={(e) => setDeliveryNotes({ ...deliveryNotes, [item.id]: e.target.value })}
-                                        className="w-full liquid-glass-input rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none"
-                                      />
-                                    </div>
-                                  ))}
-                                </div>
-
-                                <button
-                                  onClick={() => handleDeliveryConfirmGroup(group)}
-                                  className="w-full py-2.5 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 active:scale-95 text-black font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-500/25 border border-white/20"
-                                >
-                                  <CheckCircle className="w-4 h-4" />
-                                  <span>ส่งมอบของใหม่สำเร็จทั้งชุด ({group.items.length})</span>
-                                </button>
-                              </>
-                            )}
-                          </>
-                        )}
-                      </div>
+                      <button
+                        onClick={() => setActiveJob({ kind: 'new_goods', key: group.key })}
+                        className="w-full py-2.5 bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] hover:brightness-105 active:scale-[0.97] text-black font-extrabold rounded-xl text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-[#FF6B00]/25 border border-white/20"
+                      >
+                        <ClipboardList className="w-4 h-4" />
+                        <span>เปิดจัดการงาน</span>
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </button>
                     </div>
                   );
                 })}
@@ -716,28 +643,35 @@ export const OnsiteView: React.FC = () => {
                   return (
                     <div
                       key={'rep-return-' + ticket.id}
-                      className="p-5 rounded-2xl liquid-glass-card flex flex-col justify-between space-y-4 relative overflow-hidden border-purple-500/30"
+                      className="p-4 rounded-2xl liquid-glass-card flex flex-col justify-between gap-3 relative overflow-hidden border-purple-500/30 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md"
                     >
                       <div className="absolute top-0 left-0 right-0 h-1 bg-purple-500" />
 
-                      <div>
-                        <div className="flex items-center justify-between mb-2">
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between gap-2">
                           <span className="text-[11px] font-extrabold px-2.5 py-1 rounded-lg bg-purple-500/20 text-purple-400 border border-purple-500/40 flex items-center gap-1">
                             <RotateCcw className="w-3 h-3" />
-                            <span>[ส่งคืนงานซ่อม]</span>
+                            <span>ส่งคืนงานซ่อม</span>
                           </span>
-                          <span className="text-sm font-mono font-extrabold text-slate-300 data-key">{ticket.ticket_no}</span>
+                          <span className="text-xs font-mono font-extrabold text-slate-300 data-key">{ticket.ticket_no}</span>
                         </div>
 
                         {rMeta && (
-                          <div className={`mb-2 px-2 py-0.5 rounded-md text-[10px] font-bold border inline-flex items-center gap-1 ${rMeta.badgeBg} ${rMeta.badgeBorder} ${rMeta.badgeText}`}>
+                          <div className={`px-2 py-0.5 rounded-md text-[10px] font-bold border inline-flex items-center gap-1 ${rMeta.badgeBg} ${rMeta.badgeBorder} ${rMeta.badgeText}`}>
                             <span>{rMeta.name}</span>
                             <span>• {ticket.district || ''}</span>
                           </div>
                         )}
 
+                        <h4 className="text-base font-bold text-white truncate data-key">S/N: {ticket.walkin_sn}</h4>
+                        <p className="text-xs text-slate-300 font-medium data-meta truncate">ลูกค้า: <strong className="text-white font-bold">{ticket.customer_name}</strong></p>
+                        <p className="text-xs text-slate-500 flex items-start gap-1 data-meta">
+                          <MapPin className="w-3.5 h-3.5 text-purple-400 flex-shrink-0 mt-0.5" />
+                          <span className="line-clamp-2">{ticket.delivery_location || ticket.customer_phone || '-'}</span>
+                        </p>
+
                         {teamTechs.length > 0 && (
-                          <div className="mb-2 p-1.5 rounded-xl bg-white/[0.04] border border-white/[0.08] text-[11px] text-slate-300 flex items-center gap-1.5 flex-wrap">
+                          <div className="p-1.5 rounded-xl bg-white/[0.04] border border-white/[0.08] text-[11px] text-slate-300 flex items-center gap-1.5 flex-wrap">
                             <span className="text-slate-400 font-medium">ทีมงาน:</span>
                             {teamTechs.map((name, idx) => (
                               <span key={idx} className="px-2 py-0.2 rounded-md bg-purple-500/20 text-purple-300 border border-purple-500/30 font-semibold text-[10px]">
@@ -747,35 +681,27 @@ export const OnsiteView: React.FC = () => {
                           </div>
                         )}
 
-                        <h4 className="text-base font-bold text-white mb-0.5 data-key">S/N: {ticket.walkin_sn}</h4>
-                        <p className="text-xs text-slate-300 font-medium data-meta">ลูกค้า: <strong className="text-white font-bold">{ticket.customer_name}</strong></p>
-                        <p className="text-xs text-slate-500 mt-1 flex items-start gap-1 data-meta">
-                          <MapPin className="w-3.5 h-3.5 text-purple-400 flex-shrink-0 mt-0.5" />
-                          <span>{ticket.delivery_location || ticket.customer_phone || '-'}</span>
-                        </p>
-                        <div className="mt-2 p-2 rounded-xl bg-purple-500/10 border border-purple-500/20 text-[11px] text-purple-300">
+                        <div className="p-2 rounded-xl bg-purple-500/10 border border-purple-500/20 text-[11px] text-purple-300 line-clamp-2">
                           <strong>ผลการซ่อม:</strong> {ticket.repair_detail || 'เปลี่ยนอะไหล่และเทสผ่านแล้ว'}
                         </div>
 
-                        <div className="mt-3 pt-2 border-t border-white/[0.08]">
+                        <div className="pt-2 border-t border-white/[0.08]">
                           <LatestUpdateBadge
                             logs={ticket.activity_logs}
                             fallbackTimestamp={ticket.delivered_at || ticket.assigned_at || ticket.updated_at || ticket.created_at}
                             fallbackActor={ticket.received_by}
                           />
-                          <ActivityTimeline logs={ticket.activity_logs} />
                         </div>
                       </div>
 
-                      <div className="pt-3 border-t border-white/[0.08] space-y-3">
-                        <button
-                          onClick={() => handleReturnConfirm(ticket.id, ticket.ticket_no)}
-                          className="w-full py-2.5 bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-500 active:scale-95 text-white font-bold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-purple-600/25 border border-white/20"
-                        >
-                          <CheckCircle className="w-4 h-4" />
-                          <span>ส่งคืนเครื่องซ่อมถึงมือลูกค้า (ปิดงาน)</span>
-                        </button>
-                      </div>
+                      <button
+                        onClick={() => setActiveJob({ kind: 'repair_return', key: ticket.id })}
+                        className="w-full py-2.5 bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-500 hover:brightness-105 active:scale-[0.97] text-white font-bold rounded-xl text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-purple-600/25 border border-white/20"
+                      >
+                        <ClipboardList className="w-4 h-4" />
+                        <span>เปิดจัดการงาน</span>
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </button>
                     </div>
                   );
                 })}
@@ -791,28 +717,35 @@ export const OnsiteView: React.FC = () => {
                   return (
                     <div
                       key={'pickup-' + ticket.id}
-                      className="p-5 rounded-2xl liquid-glass-card flex flex-col justify-between space-y-4 relative overflow-hidden border-amber-500/30"
+                      className="p-4 rounded-2xl liquid-glass-card flex flex-col justify-between gap-3 relative overflow-hidden border-amber-500/30 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md"
                     >
                       <div className="absolute top-0 left-0 right-0 h-1 bg-amber-500" />
 
-                      <div>
-                        <div className="flex items-center justify-between mb-2">
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between gap-2">
                           <span className="text-[11px] font-extrabold px-2.5 py-1 rounded-lg bg-amber-500/20 text-amber-400 border border-amber-500/40 flex items-center gap-1">
                             <Wrench className="w-3 h-3" />
-                            <span>[ออกซ่อม/รับเครื่องกลับร้าน]</span>
+                            <span>ออกซ่อม/รับเครื่องกลับร้าน</span>
                           </span>
-                          <span className="text-sm font-mono font-extrabold text-amber-400 data-key">{ticket.ticket_no}</span>
+                          <span className="text-xs font-mono font-extrabold text-amber-400 data-key">{ticket.ticket_no}</span>
                         </div>
 
                         {rMeta && (
-                          <div className={`mb-2 px-2 py-0.5 rounded-md text-[10px] font-bold border inline-flex items-center gap-1 ${rMeta.badgeBg} ${rMeta.badgeBorder} ${rMeta.badgeText}`}>
+                          <div className={`px-2 py-0.5 rounded-md text-[10px] font-bold border inline-flex items-center gap-1 ${rMeta.badgeBg} ${rMeta.badgeBorder} ${rMeta.badgeText}`}>
                             <span>{rMeta.name}</span>
                             <span>• {ticket.district || ''}</span>
                           </div>
                         )}
 
+                        <h4 className="text-base font-bold text-white truncate data-key">S/N: {ticket.walkin_sn}</h4>
+                        <p className="text-xs text-slate-300 font-medium data-meta truncate">ลูกค้า: <strong className="text-white font-bold">{ticket.customer_name}</strong></p>
+                        <p className="text-xs text-slate-500 flex items-start gap-1 data-meta">
+                          <MapPin className="w-3.5 h-3.5 text-amber-400 flex-shrink-0 mt-0.5" />
+                          <span className="line-clamp-2">{ticket.delivery_location || ticket.customer_phone || '-'}</span>
+                        </p>
+
                         {teamTechs.length > 0 && (
-                          <div className="mb-2 p-1.5 rounded-xl bg-white/[0.04] border border-white/[0.08] text-[11px] text-slate-300 flex items-center gap-1.5 flex-wrap">
+                          <div className="p-1.5 rounded-xl bg-white/[0.04] border border-white/[0.08] text-[11px] text-slate-300 flex items-center gap-1.5 flex-wrap">
                             <span className="text-slate-400 font-medium">ทีมงาน:</span>
                             {teamTechs.map((name, idx) => (
                               <span key={idx} className="px-2 py-0.2 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold text-[10px]">
@@ -822,35 +755,27 @@ export const OnsiteView: React.FC = () => {
                           </div>
                         )}
 
-                        <h4 className="text-base font-bold text-white mb-0.5 data-key">S/N: {ticket.walkin_sn}</h4>
-                        <p className="text-xs text-slate-300 font-medium data-meta">ลูกค้า: <strong className="text-white font-bold">{ticket.customer_name}</strong></p>
-                        <p className="text-xs text-slate-500 mt-1 flex items-start gap-1 data-meta">
-                          <MapPin className="w-3.5 h-3.5 text-amber-400 flex-shrink-0 mt-0.5" />
-                          <span>{ticket.delivery_location || ticket.customer_phone || '-'}</span>
-                        </p>
-                        <div className="mt-2 p-2 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-300">
+                        <div className="p-2 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-300 line-clamp-2">
                           <strong>อาการเสีย:</strong> {ticket.fault_symptom}
                         </div>
 
-                        <div className="mt-3 pt-2 border-t border-white/[0.08]">
+                        <div className="pt-2 border-t border-white/[0.08]">
                           <LatestUpdateBadge
                             logs={ticket.activity_logs}
                             fallbackTimestamp={ticket.started_at || ticket.assigned_at || ticket.updated_at || ticket.created_at}
                             fallbackActor={ticket.received_by}
                           />
-                          <ActivityTimeline logs={ticket.activity_logs} />
                         </div>
                       </div>
 
-                      <div className="pt-3 border-t border-white/[0.08] space-y-2">
-                        <button
-                          onClick={() => handleOpenPickupForJob(ticket)}
-                          className="w-full py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 active:scale-95 text-black font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-amber-500/25 border border-white/20"
-                        >
-                          <Smartphone className="w-4 h-4" />
-                          <span>บันทึกรับเครื่อง & ระบุอุปกรณ์ที่ติดมา</span>
-                        </button>
-                      </div>
+                      <button
+                        onClick={() => setActiveJob({ kind: 'pickup', key: ticket.id })}
+                        className="w-full py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:brightness-105 active:scale-[0.97] text-black font-extrabold rounded-xl text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-amber-500/25 border border-white/20"
+                      >
+                        <ClipboardList className="w-4 h-4" />
+                        <span>เปิดจัดการงาน</span>
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </button>
                     </div>
                   );
                 })}
@@ -860,11 +785,298 @@ export const OnsiteView: React.FC = () => {
       </div>
 
       {/* ========================================================================= */}
+      {/* MODAL 0: ONSITE JOB DETAIL & ACTION (card-to-modal, portal + z-[9999]) */}
+      {/* ========================================================================= */}
+      {(() => {
+        if (!activeJob) return null;
+
+        // Resolve the active job across all three lists
+        let jobGroup: ItemGroup | null = null;
+        let jobTicket: RepairTicket | null = null;
+
+        if (activeJob.kind === 'new_goods') {
+          jobGroup = groupItems(assignedNewGoods).find(g => g.key === activeJob.key) || null;
+          if (!jobGroup) return null;
+        } else if (activeJob.kind === 'repair_return') {
+          jobTicket = assignedRepairedReturns.find(t => t.id === activeJob.key) || null;
+          if (!jobTicket) return null;
+        } else {
+          jobTicket = assignedPickups.find(t => t.id === activeJob.key) || null;
+          if (!jobTicket) return null;
+        }
+
+        const closeModal = () => setActiveJob(null);
+
+        // ---------- NEW GOODS JOB ----------
+        if (jobGroup) {
+          const group = jobGroup;
+          const order = orders.find(o => o.id === group.order_id);
+          const rMeta = order?.route_code ? ROUTE_DEFINITIONS[order.route_code] : null;
+          const firstItem = group.items[0];
+          const teamTechs = firstItem.assigned_techs && firstItem.assigned_techs.length > 0
+            ? firstItem.assigned_techs
+            : (firstItem.assigned_onsite_tech ? [firstItem.assigned_onsite_tech] : []);
+          const isAccepted = group.items.every(it => !!it.assigned_prep_tech);
+          const deliveryLabel = DELIVERY_MODE_LABEL[group.delivery_mode || 'install'] || 'ส่งพร้อมติดตั้ง';
+
+          return (
+            <Modal
+              open
+              onClose={closeModal}
+              ariaLabel="รายละเอียดงาน Onsite"
+              title={`งานส่งของใหม่ • ${group.model_name}`}
+              subtitle={`${order?.customer_name || '-'}${rMeta ? ` • ${rMeta.shortName}` : ''}`}
+              icon={<Package className="w-5 h-5" />}
+              maxWidthClass="max-w-2xl"
+              accentClass="border-emerald-500/40"
+              footer={
+                !isAccepted ? (
+                  <button
+                    onClick={() => { handleAcceptGroup(group); }}
+                    className={modalPrimaryBtnClass + ' w-full flex items-center justify-center gap-2'}
+                  >
+                    <UserCheck className="w-4 h-4" />
+                    <span>กดรับงานนี้ (Accept Job)</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => { handleDeliveryConfirmGroup(group); closeModal(); }}
+                    className="w-full py-3 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 active:scale-95 text-black font-extrabold rounded-xl text-sm transition cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/25 border border-white/20"
+                  >
+                    <CheckCircle className="w-4 h-4" />
+                    <span>ยืนยันส่งมอบของใหม่สำเร็จทั้งชุด ({group.items.length})</span>
+                  </button>
+                )
+              }
+            >
+              <div className="space-y-4">
+                {/* Step badges */}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <StepBadge step={1} label="รอกดรับงาน" active={!isAccepted} done={isAccepted} />
+                  <StepBadge step={2} label="กำลังเตรียม/ติดโลโก้" active={isAccepted} />
+                  <StepBadge step={3} label="พร้อมส่ง/ติดวอย" active={false} />
+                </div>
+
+                {/* Route & delivery mode */}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {rMeta && (
+                    <div className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border inline-flex items-center gap-1 ${rMeta.badgeBg} ${rMeta.badgeBorder} ${rMeta.badgeText}`}>
+                      <span>{rMeta.shortName}</span>
+                      <span>• {order?.district || ''}</span>
+                    </div>
+                  )}
+                  <span className="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-blue-500/15 text-blue-600 dark:text-blue-300 border border-blue-500/30">
+                    {deliveryLabel}
+                  </span>
+                  {group.items.length > 1 && (
+                    <span className="px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-600 dark:text-emerald-300 border border-emerald-500/40 text-[11px] font-extrabold flex items-center gap-1">
+                      <Layers className="w-3 h-3" />
+                      จำนวน {group.items.length} เครื่อง
+                    </span>
+                  )}
+                </div>
+
+                {/* Customer / location */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                  <div className="p-3 rounded-xl bg-slate-50 dark:bg-white/[0.03] border border-slate-200 dark:border-white/[0.08]">
+                    <p className="text-slate-500 dark:text-slate-400 font-medium mb-0.5">ลูกค้า</p>
+                    <p className="font-bold text-slate-900 dark:text-white">{order ? order.customer_name : '-'}</p>
+                    {order?.customer_phone && (
+                      <p className="text-slate-500 dark:text-slate-400 mt-1 flex items-center gap-1">
+                        <Phone className="w-3 h-3" /> {order.customer_phone}
+                      </p>
+                    )}
+                  </div>
+                  <div className="p-3 rounded-xl bg-slate-50 dark:bg-white/[0.03] border border-slate-200 dark:border-white/[0.08]">
+                    <p className="text-slate-500 dark:text-slate-400 font-medium mb-0.5">สถานที่ส่งมอบ</p>
+                    <p className="font-semibold text-slate-900 dark:text-white flex items-start gap-1">
+                      <MapPin className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0 mt-0.5" />
+                      <span>{order ? order.delivery_location : '-'}</span>
+                    </p>
+                  </div>
+                </div>
+
+                {/* Team */}
+                {teamTechs.length > 0 && (
+                  <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-white/[0.03] border border-slate-200 dark:border-white/[0.08] text-xs flex items-center gap-1.5 flex-wrap">
+                    <span className="text-slate-500 dark:text-slate-400 font-medium">ทีมงาน:</span>
+                    {teamTechs.map((name, idx) => (
+                      <span key={idx} className="px-2 py-0.5 rounded-md bg-[#FF6B00]/15 text-[#FF6B00] border border-[#FF6B00]/30 font-semibold text-[10px]">
+                        {name}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {isAccepted && (
+                  <div className="text-[11px] text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                    <UserCheck className="w-3.5 h-3.5" />
+                    <span>ผู้รับงาน: {firstItem.assigned_prep_tech} ({new Date(firstItem.prep_accepted_at || Date.now()).toLocaleTimeString('th-TH')})</span>
+                  </div>
+                )}
+
+                {/* Per-item delivery notes */}
+                <div className="space-y-2">
+                  <p className={modalLabelClass}>รายการเครื่อง & บันทึกการส่งมอบ</p>
+                  {group.items.map((item, idx) => (
+                    <div key={item.id} className="p-3 rounded-xl bg-slate-50 dark:bg-white/[0.03] border border-slate-200 dark:border-white/[0.08] space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400">#{idx + 1}</span>
+                        <span className="text-xs font-mono font-extrabold text-[#FF6B00]">{item.serial_number}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-[10px] text-slate-500 dark:text-slate-400">
+                        <span>วอยรับประกัน:</span>
+                        <span className="font-mono text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1">
+                          <ShieldCheck className="w-3 h-3" />
+                          {item.void_date || 'ระบุแล้ว'}
+                        </span>
+                      </div>
+                      <input
+                        type="text"
+                        placeholder="บันทึกการส่งมอบ / เซ็นรับ"
+                        value={deliveryNotes[item.id] || ''}
+                        onChange={(e) => setDeliveryNotes({ ...deliveryNotes, [item.id]: e.target.value })}
+                        className={modalInputClass}
+                      />
+                    </div>
+                  ))}
+                </div>
+
+                {/* Activity */}
+                <div className="pt-3 border-t border-slate-200 dark:border-white/[0.08] space-y-2">
+                  <LatestUpdateBadge
+                    logs={firstItem.activity_logs}
+                    fallbackTimestamp={firstItem.delivered_at || firstItem.dispatched_at || firstItem.assigned_at || firstItem.updated_at || firstItem.created_at}
+                    fallbackActor={firstItem.assigned_prep_tech}
+                  />
+                  <ActivityTimeline logs={firstItem.activity_logs} />
+                </div>
+              </div>
+            </Modal>
+          );
+        }
+
+        // ---------- REPAIR RETURN / PICKUP JOB ----------
+        const ticket = jobTicket!;
+        const rMeta = ticket.route_code ? ROUTE_DEFINITIONS[ticket.route_code] : null;
+        const teamTechs = ticket.assigned_techs && ticket.assigned_techs.length > 0
+          ? ticket.assigned_techs
+          : (ticket.assigned_onsite_tech ? [ticket.assigned_onsite_tech] : []);
+        const isReturn = activeJob.kind === 'repair_return';
+
+        return (
+          <Modal
+            open
+            onClose={closeModal}
+            ariaLabel="รายละเอียดงาน Onsite"
+            title={`${isReturn ? 'ส่งคืนงานซ่อม' : 'ออกซ่อม/รับเครื่องกลับร้าน'} • ${ticket.ticket_no}`}
+            subtitle={`${ticket.customer_name}${rMeta ? ` • ${rMeta.shortName}` : ''}`}
+            icon={isReturn ? <RotateCcw className="w-5 h-5" /> : <Wrench className="w-5 h-5" />}
+            maxWidthClass="max-w-2xl"
+            accentClass={isReturn ? 'border-purple-500/40' : 'border-amber-500/40'}
+            footer={
+              isReturn ? (
+                <button
+                  onClick={() => { handleReturnConfirm(ticket.id, ticket.ticket_no); closeModal(); }}
+                  className="w-full py-3 bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-500 active:scale-95 text-white font-bold rounded-xl text-sm transition cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-purple-600/25 border border-white/20"
+                >
+                  <CheckCircle className="w-4 h-4" />
+                  <span>ส่งคืนเครื่องซ่อมถึงมือลูกค้า (ปิดงาน)</span>
+                </button>
+              ) : (
+                <button
+                  onClick={() => { handleOpenPickupForJob(ticket); closeModal(); }}
+                  className="w-full py-3 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 active:scale-95 text-black font-extrabold rounded-xl text-sm transition cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-amber-500/25 border border-white/20"
+                >
+                  <Smartphone className="w-4 h-4" />
+                  <span>บันทึกรับเครื่อง & ระบุอุปกรณ์ที่ติดมา</span>
+                </button>
+              )
+            }
+          >
+            <div className="space-y-4">
+              {/* Route badge */}
+              {rMeta && (
+                <div className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border inline-flex items-center gap-1 ${rMeta.badgeBg} ${rMeta.badgeBorder} ${rMeta.badgeText}`}>
+                  <span>{rMeta.name}</span>
+                  <span>• {ticket.district || ''}</span>
+                </div>
+              )}
+
+              {/* Customer / device grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <div className="p-3 rounded-xl bg-slate-50 dark:bg-white/[0.03] border border-slate-200 dark:border-white/[0.08]">
+                  <p className="text-slate-500 dark:text-slate-400 font-medium mb-0.5">ลูกค้า</p>
+                  <p className="font-bold text-slate-900 dark:text-white">{ticket.customer_name}</p>
+                  {ticket.customer_phone && (
+                    <p className="text-slate-500 dark:text-slate-400 mt-1 flex items-center gap-1">
+                      <Phone className="w-3 h-3" /> {ticket.customer_phone}
+                    </p>
+                  )}
+                </div>
+                <div className="p-3 rounded-xl bg-slate-50 dark:bg-white/[0.03] border border-slate-200 dark:border-white/[0.08]">
+                  <p className="text-slate-500 dark:text-slate-400 font-medium mb-0.5">S/N / รุ่น</p>
+                  <p className="font-mono font-extrabold text-[#FF6B00]">{ticket.walkin_sn}</p>
+                  {ticket.device_model && (
+                    <p className="text-slate-500 dark:text-slate-400 mt-1">{ticket.device_model}</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Location */}
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-white/[0.03] border border-slate-200 dark:border-white/[0.08] text-xs">
+                <p className="text-slate-500 dark:text-slate-400 font-medium mb-0.5">สถานที่</p>
+                <p className="font-semibold text-slate-900 dark:text-white flex items-start gap-1">
+                  <MapPin className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0 mt-0.5" />
+                  <span>{ticket.delivery_location || ticket.customer_phone || '-'}</span>
+                </p>
+              </div>
+
+              {/* Symptom / repair result */}
+              <div className={`p-3 rounded-xl border text-xs ${isReturn
+                ? 'bg-purple-500/10 border-purple-500/20 text-purple-700 dark:text-purple-300'
+                : 'bg-amber-500/10 border-amber-500/20 text-amber-700 dark:text-amber-300'}`}>
+                <strong>{isReturn ? 'ผลการซ่อม:' : 'อาการเสีย:'}</strong>{' '}
+                {isReturn ? (ticket.repair_detail || 'เปลี่ยนอะไหล่และเทสผ่านแล้ว') : ticket.fault_symptom}
+              </div>
+
+              {/* Team */}
+              {teamTechs.length > 0 && (
+                <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-white/[0.03] border border-slate-200 dark:border-white/[0.08] text-xs flex items-center gap-1.5 flex-wrap">
+                  <span className="text-slate-500 dark:text-slate-400 font-medium">ทีมงาน:</span>
+                  {teamTechs.map((name, idx) => (
+                    <span key={idx} className={`px-2 py-0.5 rounded-md border font-semibold text-[10px] ${isReturn
+                      ? 'bg-purple-500/20 text-purple-600 dark:text-purple-300 border-purple-500/30'
+                      : 'bg-amber-500/20 text-amber-600 dark:text-amber-300 border-amber-500/30'}`}>
+                      {name}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {/* Activity */}
+              <div className="pt-3 border-t border-slate-200 dark:border-white/[0.08] space-y-2">
+                <LatestUpdateBadge
+                  logs={ticket.activity_logs}
+                  fallbackTimestamp={ticket.delivered_at || ticket.assigned_at || ticket.updated_at || ticket.created_at}
+                  fallbackActor={ticket.received_by}
+                />
+                <ActivityTimeline logs={ticket.activity_logs} />
+              </div>
+            </div>
+          </Modal>
+        );
+      })()}
+
+      {/* ========================================================================= */}
       {/* MODAL 1: FORM บันทึกการรับเครื่องซ่อมกลับร้าน (Mobile-Friendly) */}
       {/* ========================================================================= */}
-      {isPickupModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/80 backdrop-blur-md overflow-y-auto">
-          <div className="w-[95vw] max-w-lg max-h-[90vh] overflow-y-auto liquid-glass rounded-2xl sm:rounded-3xl p-4 sm:p-7 border border-[#FF6B00]/40 shadow-2xl my-4 sm:my-8 relative">
+      {isPickupModalOpen && createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center sm:p-4 bg-black/80 backdrop-blur-md overflow-y-auto overscroll-contain animate-fade-in">
+          <div className="w-full sm:w-[95vw] max-w-lg max-h-[92dvh] sm:max-h-[90vh] overflow-y-auto overscroll-contain liquid-glass rounded-t-3xl sm:rounded-3xl p-4 sm:p-7 pb-[max(1rem,env(safe-area-inset-bottom))] border border-[#FF6B00]/40 shadow-2xl relative animate-modal-pop">
+            <div className="sm:hidden flex justify-center pt-1 pb-3">
+              <span className="h-1.5 w-10 rounded-full bg-white/20" />
+            </div>
             <button
               onClick={() => setIsPickupModalOpen(false)}
               aria-label="ปิดฟอร์มรับเครื่องซ่อม"
@@ -1071,15 +1283,19 @@ export const OnsiteView: React.FC = () => {
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* ========================================================================= */}
       {/* MODAL 2: RECEIPT POPUP (พิมพ์ใบรับซ่อมให้ลูกค้าทันที) */}
       {/* ========================================================================= */}
-      {receiptTicket && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/85 backdrop-blur-md overflow-y-auto">
-          <div className="w-[95vw] max-w-md max-h-[90vh] overflow-y-auto liquid-glass rounded-2xl sm:rounded-3xl p-4 sm:p-6 border border-emerald-500/40 shadow-2xl my-4 sm:my-8 relative text-xs">
+      {receiptTicket && createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center sm:p-4 bg-black/85 backdrop-blur-md overflow-y-auto overscroll-contain animate-fade-in">
+          <div className="w-full sm:w-[95vw] max-w-md max-h-[92dvh] sm:max-h-[90vh] overflow-y-auto overscroll-contain liquid-glass rounded-t-3xl sm:rounded-3xl p-4 sm:p-6 pb-[max(1rem,env(safe-area-inset-bottom))] border border-emerald-500/40 shadow-2xl relative text-xs animate-modal-pop">
+            <div className="sm:hidden flex justify-center pt-1 pb-3 no-print">
+              <span className="h-1.5 w-10 rounded-full bg-white/20" />
+            </div>
             <button
               onClick={() => setReceiptTicket(null)}
               aria-label="ปิดใบรับซ่อม"
@@ -1170,7 +1386,8 @@ export const OnsiteView: React.FC = () => {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

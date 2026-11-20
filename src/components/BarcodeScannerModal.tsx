@@ -158,14 +158,14 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
 
     return createPortal(
         <div
-            className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+            className="fixed inset-0 z-[10000] flex items-center justify-center p-3 sm:p-4 bg-black/70 backdrop-blur-sm overflow-y-auto overscroll-contain animate-fade-in"
             role="dialog"
             aria-modal="true"
             aria-label={title}
             onClick={handleClose}
         >
             <div
-                className="w-full max-w-md rounded-3xl overflow-hidden shadow-2xl border border-slate-200 dark:border-white/10 bg-white dark:bg-[#12141A] text-slate-900 dark:text-white"
+                className="w-full max-w-md max-h-[92dvh] overflow-y-auto overscroll-contain rounded-3xl shadow-2xl border border-slate-200 dark:border-white/10 bg-white dark:bg-[#12141A] text-slate-900 dark:text-white pb-[env(safe-area-inset-bottom)] animate-modal-pop"
                 onClick={(e) => e.stopPropagation()}
             >
                 {/* Header */}
@@ -183,7 +183,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                         type="button"
                         onClick={handleClose}
                         aria-label="ปิดหน้าสแกน"
-                        className="p-2 rounded-xl text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-white/[0.06] hover:bg-slate-200 dark:hover:bg-white/[0.12] transition min-w-[44px] min-h-[44px] flex items-center justify-center flex-shrink-0"
+                        className="p-2 rounded-xl text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-white/[0.06] hover:bg-slate-200 dark:hover:bg-white/[0.12] transition-all duration-150 active:scale-[0.97] min-w-[44px] min-h-[44px] flex items-center justify-center flex-shrink-0"
                     >
                         <X className="w-5 h-5" />
                     </button>
@@ -236,7 +236,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                     <button
                         type="button"
                         onClick={handleClose}
-                        className="px-4 py-2 rounded-xl text-xs font-bold bg-slate-100 dark:bg-white/[0.06] text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-white/[0.12] transition cursor-pointer min-h-[40px]"
+                        className="px-4 py-2 rounded-xl text-xs font-bold bg-slate-100 dark:bg-white/[0.06] text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-white/[0.12] transition-all duration-150 active:scale-[0.97] cursor-pointer min-h-[40px]"
                     >
                         ยกเลิก
                     </button>

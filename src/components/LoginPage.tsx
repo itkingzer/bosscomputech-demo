@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { Cpu, ShieldCheck, Lock, User, ArrowRight, Sparkles, Sun, Moon } from 'lucide-react';
+import { ShieldCheck, Lock, User, ArrowRight, Sun, Moon } from 'lucide-react';
 import { UserRole } from '../types';
+import companyLogo from '../assets/BossCom.jpg';
+import loginBanner from '../assets/BossComBanner.png';
 
 export const LoginPage: React.FC = () => {
   const { login, users, theme, toggleTheme } = useApp();
@@ -32,13 +34,13 @@ export const LoginPage: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-[var(--bg-page)] text-[var(--text-primary)] flex flex-col justify-center py-12 sm:px-6 lg:px-8 relative overflow-hidden transition-colors duration-300">
+    <div className="min-h-screen bg-[var(--bg-page)] text-[var(--text-primary)] flex flex-col items-center justify-start lg:justify-center px-3 py-8 sm:px-6 lg:px-8 relative overflow-x-hidden overflow-y-auto transition-colors duration-300">
       {/* Background Liquid Light Orbs */}
       <div className="liquid-blob-1"></div>
       <div className="liquid-blob-2"></div>
 
       {/* Theme Toggle Top Right */}
-      <div className="absolute top-6 right-6 z-20">
+      <div className="absolute top-4 right-4 sm:top-6 sm:right-6 z-20">
         <button
           onClick={toggleTheme}
           title={theme === 'dark' ? 'เปลี่ยนเป็นธีมสว่าง (Liquid Glass Light)' : 'เปลี่ยนเป็นธีมมืด (Liquid Glass Dark)'}
@@ -59,34 +61,70 @@ export const LoginPage: React.FC = () => {
         </button>
       </div>
 
-      <div className="sm:mx-auto sm:w-full sm:max-w-md relative z-10 text-center">
-        <div className="inline-flex justify-center mb-3">
-          <div className="w-16 h-16 rounded-3xl bg-gradient-to-br from-[#FF6B00] to-[#B84300] flex items-center justify-center font-bold text-white shadow-2xl shadow-[#FF6B00]/40 border border-white/20">
-            <Cpu className="w-9 h-9" />
+      {/* Split-Screen Login Card */}
+      <div className="max-w-5xl w-full mx-auto grid grid-cols-1 lg:grid-cols-2 rounded-2xl overflow-hidden shadow-2xl border border-white/[0.1] relative z-10 bg-[var(--bg-page)]">
+
+        {/* ============ LEFT PANEL: Banner ============ */}
+        {/* Mobile / tablet: sleek responsive header banner (fixed aspect, nothing cropped awkwardly) */}
+        <div className="relative lg:hidden w-full bg-black/40">
+          <img
+            src={loginBanner}
+            alt="Boss Computech and Service Co., Ltd."
+            className="w-full h-auto max-h-56 object-contain object-center"
+          />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent pointer-events-none" />
+        </div>
+
+        {/* Desktop: full-height cover banner */}
+        <div className="relative hidden lg:block bg-black/40 min-h-[560px]">
+          <img
+            src={loginBanner}
+            alt="Boss Computech and Service Co., Ltd."
+            className="absolute inset-0 w-full h-full object-cover"
+          />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent pointer-events-none" />
+          <div className="absolute bottom-0 left-0 right-0 p-7">
+            <p className="text-white font-extrabold text-lg leading-tight drop-shadow-lg">
+              Boss Computech and Service Co., Ltd.
+            </p>
+            <p className="text-white/70 text-xs mt-1">Liquid Glass Enterprise System</p>
           </div>
         </div>
-        <h2 className="text-3xl font-extrabold tracking-tight text-white flex items-center justify-center gap-2">
-          <span>BOSS<span className="text-[#FF6B00]">COMPUTECH</span></span>
-        </h2>
-        <div className="flex items-center justify-center gap-1.5 mt-1">
-          <span className="text-xs text-slate-400">Liquid Glass Enterprise System</span>
-          <span className="w-1 h-1 rounded-full bg-[#FF6B00]"></span>
-          <span className="text-[11px] text-[#FF6B00] font-semibold">Orange & Black</span>
-        </div>
-      </div>
 
-      <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-xl px-4 relative z-10">
-        <div className="liquid-glass rounded-3xl p-6 sm:p-9 shadow-2xl border border-white/[0.1] relative">
+        {/* ============ RIGHT PANEL: Login Form ============ */}
+        <div className="liquid-glass p-6 sm:p-9 flex flex-col justify-center">
 
-          <div className="mb-6 pb-4 border-b border-white/[0.08] flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="p-1.5 rounded-lg bg-[#FF6B00]/15 text-[#FF6B00]">
+          {/* Company Logo above heading */}
+          <div className="flex justify-center mb-4">
+            <div className="p-2 rounded-full bg-white/95 dark:bg-white/90 ring-1 ring-black/10 shadow-lg shadow-black/20">
+              <img
+                src={companyLogo}
+                alt="Boss Computech Logo"
+                className="w-20 h-20 sm:w-24 sm:h-24 rounded-full object-cover"
+              />
+            </div>
+          </div>
+
+          <div className="text-center mb-6">
+            <h2 className="text-xl sm:text-2xl font-extrabold tracking-tight text-white">
+              Boss Computech and Service Co., Ltd.
+            </h2>
+            <div className="flex items-center justify-center gap-1.5 mt-1.5 flex-wrap">
+              <span className="text-xs text-slate-400">ระบบบริหารงานองค์กร</span>
+              <span className="w-1 h-1 rounded-full bg-[#FF6B00]"></span>
+              <span className="text-[11px] text-[#FF6B00] font-semibold">Orange & Black</span>
+            </div>
+          </div>
+
+          <div className="mb-5 pb-4 border-b border-white/[0.08] flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="p-1.5 rounded-lg bg-[#FF6B00]/15 text-[#FF6B00] flex-shrink-0">
                 <Lock className="w-4 h-4" />
               </div>
-              <span className="text-sm font-bold text-white">เข้าสู่ระบบตามบทบาทหน้าที่ (Role-Based Access)</span>
+              <span className="text-xs sm:text-sm font-bold text-white truncate">เข้าสู่ระบบตามบทบาท (Role-Based)</span>
             </div>
-            <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-[#FF6B00]/15 text-[#FF6B00] border border-[#FF6B00]/30 font-mono font-semibold">
-              v2.5 Liquid Glass
+            <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-[#FF6B00]/15 text-[#FF6B00] border border-[#FF6B00]/30 font-mono font-semibold flex-shrink-0">
+              v2.5
             </span>
           </div>
 
@@ -97,13 +135,13 @@ export const LoginPage: React.FC = () => {
             </div>
           )}
 
-          <form onSubmit={handleLogin} className="space-y-5">
+          <form onSubmit={handleLogin} className="space-y-4">
             {/* Quick Role Selection Cards */}
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-2">
-                เลือกบทบาทที่ต้องการเข้าใช้งาน (คลิกเพื่อสลับ Role ทันที):
+                เลือกบทบาทที่ต้องการเข้าใช้งาน:
               </label>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-72 overflow-y-auto pr-1">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-64 overflow-y-auto pr-1">
                 {users.map((u) => {
                   const meta = roleMeta[u.role];
                   const isSelected = selectedUsername === u.username && !customUsername;
@@ -115,9 +153,9 @@ export const LoginPage: React.FC = () => {
                         setSelectedUsername(u.username);
                         setCustomUsername('');
                       }}
-                      className={`text-left p-3.5 rounded-2xl transition-all duration-200 cursor-pointer flex flex-col justify-between ${isSelected
-                          ? 'bg-[#FF6B00]/20 border border-[#FF6B00] shadow-lg shadow-[#FF6B00]/20 ring-1 ring-[#FF6B00]'
-                          : 'liquid-glass-card hover:border-white/20'
+                      className={`text-left p-3 rounded-2xl transition-all duration-200 cursor-pointer flex flex-col justify-between ${isSelected
+                        ? 'bg-[#FF6B00]/20 border border-[#FF6B00] shadow-lg shadow-[#FF6B00]/20 ring-1 ring-[#FF6B00]'
+                        : 'liquid-glass-card hover:border-white/20'
                         }`}
                     >
                       <div className="flex items-center justify-between mb-1.5">
@@ -137,7 +175,7 @@ export const LoginPage: React.FC = () => {
             </div>
 
             {/* Custom Username Input */}
-            <div className="pt-2">
+            <div className="pt-1">
               <label className="block text-xs font-semibold text-slate-300 mb-1">
                 หรือกรอกชื่อผู้ใช้โดยตรง (Username):
               </label>
@@ -156,7 +194,7 @@ export const LoginPage: React.FC = () => {
             {/* Password Input */}
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1">
-                รหัสผ่าน (Demo รหัสผ่านคือ password123):
+                รหัสผ่าน (Demo: password123):
               </label>
               <input
                 type="password"
@@ -170,12 +208,12 @@ export const LoginPage: React.FC = () => {
               type="submit"
               className="w-full py-3 px-4 bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] hover:to-[#FF6B00] active:scale-[0.99] text-black font-extrabold rounded-2xl text-sm transition-all duration-200 cursor-pointer flex items-center justify-center gap-2 shadow-xl shadow-[#FF6B00]/30 border border-white/20"
             >
-              <span>เข้าสู่ระบบ BossComputech</span>
+              <span>เข้าสู่ระบบ Boss Computech</span>
               <ArrowRight className="w-4 h-4" />
             </button>
           </form>
 
-          <div className="mt-5 text-center text-[11px] text-slate-500">
+          <div className="mt-4 text-center text-[11px] text-slate-500">
             ระบบความปลอดภัยระดับองค์กร • เมื่อล็อกอินสำเร็จจะมองเห็นเฉพาะแถบเมนูของตนเอง
           </div>
         </div>

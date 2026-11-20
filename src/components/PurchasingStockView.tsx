@@ -666,7 +666,7 @@ export const PurchasingStockView: React.FC = () => {
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               <button
                 onClick={() => setActiveTab('pending')}
-                className={`p-2.5 rounded-xl text-left transition-all border flex items-center justify-between cursor-pointer ${activeTab === 'pending'
+                className={`p-2.5 rounded-xl text-left transition-all duration-150 active:scale-[0.97] border flex items-center justify-between cursor-pointer ${activeTab === 'pending'
                   ? 'bg-blue-500/20 border-blue-500/50 text-white'
                   : 'bg-white/[0.02] border-white/[0.06] text-slate-400 hover:text-white hover:bg-white/[0.05]'
                   }`}
@@ -681,7 +681,7 @@ export const PurchasingStockView: React.FC = () => {
               </button>
               <button
                 onClick={() => setActiveTab('waiting_po')}
-                className={`p-2.5 rounded-xl text-left transition-all border flex items-center justify-between cursor-pointer ${activeTab === 'waiting_po'
+                className={`p-2.5 rounded-xl text-left transition-all duration-150 active:scale-[0.97] border flex items-center justify-between cursor-pointer ${activeTab === 'waiting_po'
                   ? 'bg-purple-500/20 border-purple-500/50 text-white'
                   : 'bg-white/[0.02] border-white/[0.06] text-slate-400 hover:text-white hover:bg-white/[0.05]'
                   }`}
@@ -696,7 +696,7 @@ export const PurchasingStockView: React.FC = () => {
               </button>
               <button
                 onClick={() => setActiveTab('po_received')}
-                className={`p-2.5 rounded-xl text-left transition-all border flex items-center justify-between cursor-pointer ${activeTab === 'po_received'
+                className={`p-2.5 rounded-xl text-left transition-all duration-150 active:scale-[0.97] border flex items-center justify-between cursor-pointer ${activeTab === 'po_received'
                   ? 'bg-teal-500/20 border-teal-500/50 text-white'
                   : 'bg-white/[0.02] border-white/[0.06] text-slate-400 hover:text-white hover:bg-white/[0.05]'
                   }`}
@@ -1430,6 +1430,7 @@ export const PurchasingStockView: React.FC = () => {
               <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
                 <span className="text-xs font-bold text-white flex items-center gap-1.5">
                   <Warehouse className="w-4 h-4 text-amber-400" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse shrink-0" aria-hidden="true" />
                   <span>ห้องสต๊อก - ของรับเข้าแล้ว ยังไม่เตรียม (นับถอยหลังเทส 7 วัน DOA)</span>
                 </span>
                 <span className="text-[11px] text-slate-400">
@@ -1647,8 +1648,11 @@ export const PurchasingStockView: React.FC = () => {
       {/* STOCK PO MODAL (Proactive Stock Replenishment)                            */}
       {/* ========================================================================= */}
       {isStockPoModalOpen && createPortal(
-        <div className="fixed inset-0 z-[70] flex items-center justify-center p-2 sm:p-4 bg-black/75 backdrop-blur-md animate-fade-in">
-          <div className="liquid-glass rounded-2xl sm:rounded-3xl w-[95vw] sm:w-[90vw] max-w-2xl max-h-[90vh] flex flex-col shadow-2xl border border-white/[0.12] overflow-hidden">
+        <div className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center sm:p-4 bg-black/75 backdrop-blur-md animate-fade-in">
+          <div className="liquid-glass rounded-t-3xl sm:rounded-3xl w-full sm:w-[90vw] max-w-2xl max-h-[92dvh] sm:max-h-[90vh] flex flex-col shadow-2xl border border-white/[0.12] overflow-hidden pb-[env(safe-area-inset-bottom)] animate-modal-pop">
+            <div className="sm:hidden flex justify-center pt-2.5 pb-1 flex-shrink-0">
+              <span className="h-1.5 w-10 rounded-full bg-white/20" />
+            </div>
             <div className="p-4 sm:p-6 border-b border-white/[0.08] flex items-center justify-between gap-2 flex-shrink-0">
               <div className="flex items-center gap-2.5 min-w-0">
                 <div className="p-2.5 rounded-2xl bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
@@ -1812,8 +1816,11 @@ export const PurchasingStockView: React.FC = () => {
       {/* CATALOG MULTI-SELECT MODAL (สำหรับสั่งซื้อ PO - อ่านแคตตาล็อกกลางของฝ่ายขาย) */}
       {/* ========================================================================= */}
       {isPoCatalogModalOpen && createPortal(
-        <div className="fixed inset-0 z-[70] flex items-center justify-center p-2 sm:p-4 bg-black/75 backdrop-blur-md animate-fade-in">
-          <div className="liquid-glass rounded-2xl sm:rounded-3xl w-[95vw] sm:w-[90vw] max-w-4xl max-h-[88vh] flex flex-col shadow-2xl border border-white/[0.12] overflow-hidden">
+        <div className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center sm:p-4 bg-black/75 backdrop-blur-md animate-fade-in">
+          <div className="liquid-glass rounded-t-3xl sm:rounded-3xl w-full sm:w-[90vw] max-w-4xl max-h-[92dvh] sm:max-h-[88vh] flex flex-col shadow-2xl border border-white/[0.12] overflow-hidden pb-[env(safe-area-inset-bottom)] animate-modal-pop">
+            <div className="sm:hidden flex justify-center pt-2.5 pb-1 flex-shrink-0">
+              <span className="h-1.5 w-10 rounded-full bg-white/20" />
+            </div>
             {/* Header */}
             <div className="p-4 sm:p-5 border-b border-white/[0.08] flex items-center justify-between gap-2 flex-shrink-0">
               <div className="flex items-center gap-2.5 min-w-0">

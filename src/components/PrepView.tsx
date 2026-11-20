@@ -3,12 +3,16 @@ import { useApp } from '../context/AppContext';
 import {
   PackageSearch, BadgeCheck, CheckCircle, RefreshCw,
   Warehouse, Send, ShieldCheck, Plus, Layers, MapPin,
-  UserCheck, Sparkles, PackagePlus, Lock, ChevronDown, ChevronUp, Camera
+  UserCheck, PackagePlus, Lock, Camera, ClipboardList, ArrowRight
 } from 'lucide-react';
 import { ROUTE_DEFINITIONS, RouteCode, PRODUCT_CATEGORY_LABELS, Item } from '../types';
 import { ListControls, useListControls } from './ListControls';
 import { ActivityTimeline, LatestUpdateBadge } from './ActivityTimeline';
 import { BarcodeScannerModal } from './BarcodeScannerModal';
+import {
+  Modal, modalInputClass, modalLabelClass,
+  modalPrimaryBtnClass, modalSecondaryBtnClass
+} from './ui/Modal';
 
 // ---------------------------------------------------------------------------
 // Helpers: group identical items into a single stacked card
@@ -94,8 +98,8 @@ export const PrepView: React.FC = () => {
   // Stage 2: Void date inputs (keyed by item id)
   const [voidDateInputs, setVoidDateInputs] = useState<Record<string, string>>({});
 
-  // Expanded stacked cards (collapsed by default to reduce clutter)
-  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+  // Prep Work Modal: which group is currently open (null = closed)
+  const [activeGroupKey, setActiveGroupKey] = useState<string | null>(null);
 
   // Inbound stock general state
   const [inboundModel, setInboundModel] = useState('BossComputech Core-i7 Workstation Pro');
@@ -153,9 +157,8 @@ export const PrepView: React.FC = () => {
 
   const currentTechName = currentUser?.name || 'ช่างกอล์ฟ (ช่างเตรียมสินค้า)';
 
-  const toggleGroup = (key: string) => {
-    setExpandedGroups(prev => ({ ...prev, [key]: !prev[key] }));
-  };
+  const openGroupModal = (key: string) => setActiveGroupKey(key);
+  const closeGroupModal = () => setActiveGroupKey(null);
 
   const showToast = (msg: string, ms = 4000) => {
     setToast(msg);
@@ -173,7 +176,6 @@ export const PrepView: React.FC = () => {
     group.items.forEach(it => {
       if (!it.assigned_prep_tech) acceptPrepTask(it.id, currentTechName);
     });
-    setExpandedGroups(prev => ({ ...prev, [group.key]: true }));
     showToast(`ช่าง "${currentTechName}" รับงานทั้งชุด ${group.items.length} เครื่องเรียบร้อยแล้ว`, 3500);
   };
 
@@ -297,7 +299,7 @@ export const PrepView: React.FC = () => {
               type="button"
               onClick={() => setScanTarget(item.id)}
               title="สแกนด้วยกล้อง"
-              className="p-1 rounded-lg text-slate-400 hover:text-[#FF6B00] hover:bg-white/[0.08] transition cursor-pointer"
+              className="p-1 rounded-lg text-slate-400 hover:text-[#FF6B00] hover:bg-white/[0.08] transition-all duration-150 active:scale-[0.97] cursor-pointer"
             >
               <Camera className="w-4 h-4" />
             </button>
@@ -429,12 +431,11 @@ export const PrepView: React.FC = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {stockPoList.pageItems.map((group) => {
                   const isAccepted = group.items.every(it => !!it.assigned_prep_tech);
-                  const isExpanded = !!expandedGroups[group.key];
 
                   return (
                     <div
                       key={group.key}
-                      className="p-5 rounded-2xl liquid-glass-card flex flex-col justify-between space-y-4 relative overflow-hidden border border-emerald-500/25"
+                      className="p-5 rounded-2xl liquid-glass-card flex flex-col justify-between space-y-4 relative overflow-hidden border border-emerald-500/25 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md"
                     >
                       <div className="absolute top-0 left-0 right-0 h-1 bg-emerald-500" />
                       <div>
@@ -448,7 +449,7 @@ export const PrepView: React.FC = () => {
                         </div>
 
                         <div className="flex items-start justify-between gap-2 mb-1">
-                          <h4 className="text-base font-bold text-white">{group.model_name}</h4>
+                          <h4 className="text-base font-bold text-white line-clamp-2">{group.model_name}</h4>
                           {group.items.length > 1 && (
                             <span className="flex-shrink-0 px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[11px] font-extrabold flex items-center gap-1">
                               <Layers className="w-3 h-3" />
@@ -468,12 +469,6 @@ export const PrepView: React.FC = () => {
                           </span>
                         </div>
 
-                        {group.prep_note && (
-                          <div className="mt-2 p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-[11px] text-emerald-300">
-                            <strong>หมายเหตุ:</strong> {group.prep_note}
-                          </div>
-                        )}
-
                         <div className="mt-2 text-[11px] text-slate-400 flex justify-between data-meta">
                           <span>แหล่ง: {group.supplier || 'สต๊อกร้าน'}</span>
                           {group.unit_cost !== undefined && group.unit_cost > 0 && (
@@ -482,51 +477,15 @@ export const PrepView: React.FC = () => {
                         </div>
                       </div>
 
-                      <div className="space-y-3 pt-2 border-t border-white/[0.08]">
-                        {!isAccepted ? (
-                          <>
-                            <div className="p-2.5 rounded-xl bg-white/[0.03] border border-white/[0.06] text-[11px] text-slate-400 flex items-center gap-1.5">
-                              <Lock className="w-3.5 h-3.5 text-slate-500" />
-                              <span>กดรับงานก่อนจึงจะยิง S/N ได้</span>
-                            </div>
-                            <button
-                              onClick={() => handleAcceptGroup(group)}
-                              className="w-full py-3 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 text-black font-extrabold rounded-xl text-sm transition cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/25 border border-white/20 active:scale-95"
-                            >
-                              <UserCheck className="w-4 h-4" />
-                              <span>กดรับงานนี้ (Accept Job)</span>
-                            </button>
-                          </>
-                        ) : (
-                          <>
-                            <div className="text-[10px] text-emerald-400 flex items-center gap-1">
-                              <UserCheck className="w-3.5 h-3.5" />
-                              <span>ผู้รับงาน: {group.items[0].assigned_prep_tech}</span>
-                            </div>
-
-                            <div className="space-y-2">
-                              {group.items.map((item, idx) => renderSnRow(item, idx, 'emerald'))}
-                            </div>
-
-                            <div className="p-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-[10px] text-emerald-300 text-center">
-                              * ตรวจเช็ก + ติดโลโก้แล้ว ยังไม่ติดวอยประกัน (จะติดตอนปล่อยของในจังหวะที่ 2)
-                            </div>
-
-                            <button
-                              onClick={() => group.items.forEach(it => handleMoveStockPoToReady(it.id))}
-                              className="w-full py-2.5 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 text-black font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-500/25 border border-white/20 active:scale-95"
-                            >
-                              <Warehouse className="w-4 h-4" />
-                              <span>นำเข้าสต๊อกพร้อมขายทั้งชุด ({group.items.length})</span>
-                            </button>
-                          </>
-                        )}
-                        <LatestUpdateBadge
-                          logs={group.items[0]?.activity_logs}
-                          fallbackTimestamp={group.items[0]?.prepped_at || group.items[0]?.received_at || group.items[0]?.created_at}
-                          fallbackActor={group.items[0]?.assigned_prep_tech}
-                        />
-                        <ActivityTimeline logs={group.items[0]?.activity_logs} />
+                      <div className="pt-2 border-t border-white/[0.08]">
+                        <button
+                          onClick={() => openGroupModal(group.key)}
+                          className="w-full py-2.5 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:brightness-105 text-black font-extrabold rounded-xl text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-500/25 border border-white/20 active:scale-[0.97]"
+                        >
+                          <ClipboardList className="w-4 h-4" />
+                          <span>{isAccepted ? 'เปิดจัดการ / เตรียมสินค้า' : 'เปิดจัดการ / กดรับงาน'}</span>
+                          <ArrowRight className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     </div>
                   );
@@ -585,13 +544,12 @@ export const PrepView: React.FC = () => {
                   const order = orders.find(o => o.id === group.order_id);
                   const rMeta = order?.route_code ? ROUTE_DEFINITIONS[order.route_code] : null;
                   const isAccepted = group.items.every(it => !!it.assigned_prep_tech);
-                  const isExpanded = !!expandedGroups[group.key];
                   const deliveryLabel = DELIVERY_MODE_LABEL[group.delivery_mode || 'install'] || 'ส่งพร้อมติดตั้ง';
 
                   return (
                     <div
                       key={group.key}
-                      className={`p-5 rounded-2xl liquid-glass-card flex flex-col justify-between space-y-4 relative overflow-hidden border ${isAccepted ? 'border-amber-500/30' : 'border-white/[0.08]'}`}
+                      className={`p-5 rounded-2xl liquid-glass-card flex flex-col justify-between space-y-4 relative overflow-hidden border transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md ${isAccepted ? 'border-amber-500/30' : 'border-white/[0.08]'}`}
                     >
                       {isAccepted && <div className="absolute top-0 left-0 right-0 h-1 bg-amber-500" />}
 
@@ -626,7 +584,7 @@ export const PrepView: React.FC = () => {
                         </div>
 
                         <div className="flex items-start justify-between gap-2 mb-1">
-                          <h4 className="text-base font-bold text-white">{group.model_name}</h4>
+                          <h4 className="text-base font-bold text-white line-clamp-2">{group.model_name}</h4>
                           {group.items.length > 1 && (
                             <span className="flex-shrink-0 px-2.5 py-1 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[11px] font-extrabold flex items-center gap-1">
                               <Layers className="w-3 h-3" />
@@ -636,109 +594,24 @@ export const PrepView: React.FC = () => {
                         </div>
                         <p className="text-xs text-slate-300 data-meta">ลูกค้า: <strong className="text-white font-bold">{order ? order.customer_name : '-'}</strong></p>
 
-                        {/* Prep Note Alert from Purchasing */}
-                        {group.prep_note && (
-                          <div className="mt-2 p-2.5 rounded-xl bg-[#FF6B00]/10 border border-[#FF6B00]/30 text-[11px] text-[#FF6B00]">
-                            <strong>หมายเหตุถึงช่าง:</strong> {group.prep_note}
-                          </div>
-                        )}
-
-                        {/* Supplier & PO info */}
-                        {(group.supplier || group.po_no) && (
-                          <div className="mt-2 text-[11px] text-slate-400 flex justify-between data-meta">
-                            <span>แหล่ง: {group.supplier || 'สต๊อกร้าน'}</span>
-                            <span>PO: {group.po_no || '-'}</span>
-                          </div>
-                        )}
-
                         {/* Accepted Status */}
                         {isAccepted && (
                           <div className="mt-2 text-[10px] text-emerald-400 flex items-center gap-1">
                             <UserCheck className="w-3.5 h-3.5" />
-                            <span>ผู้รับงาน: {group.items[0].assigned_prep_tech} ({new Date(group.items[0].prep_accepted_at || Date.now()).toLocaleTimeString('th-TH')})</span>
+                            <span>ผู้รับงาน: {group.items[0].assigned_prep_tech}</span>
                           </div>
                         )}
                       </div>
 
-                      {/* GATE: Accept first, or unlocked controls */}
-                      <div className="space-y-3 pt-2 border-t border-white/[0.08]">
-                        {!isAccepted ? (
-                          <>
-                            <div className="p-2.5 rounded-xl bg-white/[0.03] border border-white/[0.06] text-[11px] text-slate-400 flex items-center gap-1.5">
-                              <Lock className="w-3.5 h-3.5 text-slate-500" />
-                              <span>ยิง S/N / ติดโลโก้ / แปะวอย จะปลดล็อกหลังกดรับงาน</span>
-                            </div>
-                            <button
-                              onClick={() => handleAcceptGroup(group)}
-                              className="w-full py-3 bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold rounded-xl text-sm transition cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-[#FF6B00]/25 border border-white/20 active:scale-95"
-                            >
-                              <UserCheck className="w-4 h-4" />
-                              <span>กดรับงานนี้ (Accept Job)</span>
-                            </button>
-                          </>
-                        ) : (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => toggleGroup(group.key)}
-                              className="w-full py-1.5 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] text-slate-300 text-[11px] font-semibold border border-white/[0.1] transition cursor-pointer flex items-center justify-center gap-1"
-                            >
-                              {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                              <span>{isExpanded ? 'ซ่อนช่องกรอก S/N' : `เปิดช่องกรอก S/N (${group.items.length} เครื่อง)`}</span>
-                            </button>
-
-                            {isExpanded && (
-                              <>
-                                <div className="space-y-2">
-                                  {group.items.map((item, idx) => renderSnRow(item, idx, 'amber'))}
-                                </div>
-
-                                <div className="p-2 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[10px] text-amber-300 text-center">
-                                  {group.order_id
-                                    ? '* เทส & ติดโลโก้เสร็จแล้ว เลือกได้ 2 ทาง: เก็บรอส่งมอบตามออเดอร์ / แปะวอยส่งออกเลย'
-                                    : '* เทส & ติดโลโก้เสร็จแล้ว เก็บเข้าคลังพร้อมขาย (Stock PO ไม่ผูกออเดอร์ลูกค้า)'}
-                                </div>
-
-                                <div className="space-y-2">
-                                  {!group.order_id ? (
-                                    /* Unassigned Stock PO batch: only the in_stock destination */
-                                    <button
-                                      onClick={() => group.items.forEach(it => handleFinishToReadyStock(it.id))}
-                                      className="w-full py-2.5 bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 text-black font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-sky-500/25 border border-white/20 active:scale-95"
-                                    >
-                                      <PackagePlus className="w-4 h-4" />
-                                      <span>ติดโลโก้เสร็จ → เก็บเข้าคลังสต๊อกพร้อมขายทั้งชุด ({group.items.length})</span>
-                                    </button>
-                                  ) : (
-                                    /* Linked to a customer Sales Order: order-fulfillment only */
-                                    <>
-                                      <button
-                                        onClick={() => group.items.forEach(it => handleFinishStage1(it.id))}
-                                        className="w-full py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 text-black font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-amber-500/25 border border-white/20 active:scale-95"
-                                      >
-                                        <Warehouse className="w-4 h-4" />
-                                        <span>ติดโลโก้เสร็จ → เก็บเข้าสต๊อกรอวันส่งมอบทั้งชุด ({group.items.length})</span>
-                                      </button>
-                                      <button
-                                        onClick={() => group.items.forEach(it => handleFinishAndDispatch(it.id))}
-                                        className="w-full py-2.5 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 text-black font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-500/25 border border-white/20 active:scale-95"
-                                      >
-                                        <BadgeCheck className="w-4 h-4" />
-                                        <span>ติดโลโก้ & แปะวอยพร้อมส่งออกเลยทั้งชุด ({group.items.length})</span>
-                                      </button>
-                                    </>
-                                  )}
-                                </div>
-                              </>
-                            )}
-                          </>
-                        )}
-                        <LatestUpdateBadge
-                          logs={group.items[0]?.activity_logs}
-                          fallbackTimestamp={group.items[0]?.prepped_at || group.items[0]?.created_at}
-                          fallbackActor={group.items[0]?.assigned_prep_tech}
-                        />
-                        <ActivityTimeline logs={group.items[0]?.activity_logs} />
+                      <div className="pt-2 border-t border-white/[0.08]">
+                        <button
+                          onClick={() => openGroupModal(group.key)}
+                          className="w-full py-2.5 bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] hover:brightness-105 text-black font-extrabold rounded-xl text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-[#FF6B00]/25 border border-white/20 active:scale-[0.97]"
+                        >
+                          <ClipboardList className="w-4 h-4" />
+                          <span>{isAccepted ? 'เปิดจัดการ / เตรียมสินค้า' : 'เปิดจัดการ / กดรับงาน'}</span>
+                          <ArrowRight className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     </div>
                   );
@@ -833,13 +706,12 @@ export const PrepView: React.FC = () => {
                   const order = orders.find(o => o.id === group.order_id);
                   const routeMeta = order?.route_code ? ROUTE_DEFINITIONS[order.route_code] : null;
                   const isAccepted = group.items.every(it => !!it.assigned_prep_tech);
-                  const isExpanded = !!expandedGroups[group.key];
                   const deliveryLabel = DELIVERY_MODE_LABEL[group.delivery_mode || 'install'] || 'ส่งพร้อมติดตั้ง';
 
                   return (
                     <div
                       key={group.key}
-                      className="p-5 rounded-2xl liquid-glass-card flex flex-col justify-between space-y-4 relative overflow-hidden border-emerald-500/30"
+                      className="p-5 rounded-2xl liquid-glass-card flex flex-col justify-between space-y-4 relative overflow-hidden border-emerald-500/30 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md"
                     >
                       <div className="absolute top-0 left-0 right-0 h-1 bg-emerald-500" />
 
@@ -875,7 +747,7 @@ export const PrepView: React.FC = () => {
                           </span>
                         </div>
 
-                        <h4 className="text-base font-bold text-white mb-1">{group.model_name}</h4>
+                        <h4 className="text-base font-bold text-white mb-1 line-clamp-2">{group.model_name}</h4>
                         <p className="text-xs text-slate-300 font-medium data-meta">ลูกค้า: <strong className="text-white font-bold">{order ? order.customer_name : '-'}</strong></p>
                         <p className="text-xs text-slate-500 mt-1 flex items-start gap-1 data-meta">
                           <MapPin className="w-3.5 h-3.5 text-slate-400 flex-shrink-0 mt-0.5" />
@@ -885,74 +757,15 @@ export const PrepView: React.FC = () => {
                         </p>
                       </div>
 
-                      {/* GATE: Accept first, or unlocked controls */}
-                      <div className="pt-3 border-t border-white/[0.08] space-y-3">
-                        {!isAccepted ? (
-                          <>
-                            <div className="p-2.5 rounded-xl bg-white/[0.03] border border-white/[0.06] text-[11px] text-slate-400 flex items-center gap-1.5">
-                              <Lock className="w-3.5 h-3.5 text-slate-500" />
-                              <span>กดรับงานก่อนจึงจะแปะวอยปล่อยของได้</span>
-                            </div>
-                            <button
-                              onClick={() => handleAcceptGroup(group)}
-                              className="w-full py-3 bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold rounded-xl text-sm transition cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-[#FF6B00]/25 border border-white/20 active:scale-95"
-                            >
-                              <UserCheck className="w-4 h-4" />
-                              <span>กดรับงานนี้ (Accept Job)</span>
-                            </button>
-                          </>
-                        ) : (
-                          <>
-                            <div className="text-[10px] text-emerald-400 flex items-center gap-1">
-                              <UserCheck className="w-3.5 h-3.5" />
-                              <span>ผู้รับงาน: {group.items[0].assigned_prep_tech}</span>
-                            </div>
-
-                            <button
-                              type="button"
-                              onClick={() => toggleGroup(group.key)}
-                              className="w-full py-1.5 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] text-slate-300 text-[11px] font-semibold border border-white/[0.1] transition cursor-pointer flex items-center justify-center gap-1"
-                            >
-                              {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                              <span>{isExpanded ? 'ซ่อนรายการ S/N' : `เปิดรายการ S/N (${group.items.length} เครื่อง)`}</span>
-                            </button>
-
-                            {isExpanded && (
-                              <>
-                                <div className="space-y-2">
-                                  {group.items.map((item, idx) => (
-                                    <div key={item.id} className="p-2.5 rounded-xl bg-white/[0.03] border border-white/[0.06] space-y-2">
-                                      <div className="flex items-center justify-between">
-                                        <span className="text-[10px] font-bold text-slate-400">#{idx + 1}</span>
-                                        <span className="text-[11px] font-mono font-bold text-[#FF6B00]">S/N: {item.serial_number || '-'}</span>
-                                      </div>
-                                      <input
-                                        type="date"
-                                        value={voidDateInputs[item.id] || todayStr}
-                                        onChange={(e) => setVoidDateInputs({ ...voidDateInputs, [item.id]: e.target.value })}
-                                        className="w-full liquid-glass-input rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none"
-                                      />
-                                    </div>
-                                  ))}
-                                </div>
-
-                                <button
-                                  onClick={() => group.items.forEach(it => handleDispatchStage2(it.id, it.serial_number))}
-                                  className="w-full py-2.5 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 text-black font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-500/25 border border-white/20 active:scale-95"
-                                >
-                                  <BadgeCheck className="w-4 h-4" />
-                                  <span>แปะวอย & ปล่อยของออกทั้งชุด ({group.items.length})</span>
-                                </button>
-                              </>
-                            )}
-                          </>
-                        )}
-                        <LatestUpdateBadge
-                          logs={group.items[0]?.activity_logs}
-                          fallbackTimestamp={group.items[0]?.prepped_at || group.items[0]?.created_at}
-                          fallbackActor={group.items[0]?.assigned_prep_tech}
-                        />
-                        <ActivityTimeline logs={group.items[0]?.activity_logs} />
+                      <div className="pt-3 border-t border-white/[0.08]">
+                        <button
+                          onClick={() => openGroupModal(group.key)}
+                          className="w-full py-2.5 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:brightness-105 text-black font-extrabold rounded-xl text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-500/25 border border-white/20 active:scale-[0.97]"
+                        >
+                          <ClipboardList className="w-4 h-4" />
+                          <span>{isAccepted ? 'เปิดจัดการ / แปะวอยปล่อยของ' : 'เปิดจัดการ / กดรับงาน'}</span>
+                          <ArrowRight className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     </div>
                   );
@@ -999,7 +812,7 @@ export const PrepView: React.FC = () => {
                     type="button"
                     onClick={() => setScanTarget('inbound')}
                     title="สแกนด้วยกล้อง"
-                    className="flex items-center gap-1.5 px-3 py-2 rounded-2xl bg-[#FF6B00]/15 text-[#FF6B00] border border-[#FF6B00]/30 hover:bg-[#FF6B00]/25 transition cursor-pointer text-[11px] font-bold flex-shrink-0"
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-2xl bg-[#FF6B00]/15 text-[#FF6B00] border border-[#FF6B00]/30 hover:bg-[#FF6B00]/25 transition-all duration-150 active:scale-[0.97] cursor-pointer text-[11px] font-bold flex-shrink-0"
                   >
                     <Camera className="w-4 h-4" />
                     <span>สแกน</span>
@@ -1078,6 +891,227 @@ export const PrepView: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* ========================================================================= */}
+      {/* Prep Work Modal (portal + z-[9999]) — opened from any prep card */}
+      {/* ========================================================================= */}
+      {(() => {
+        if (!activeGroupKey) return null;
+
+        const allGroups = [
+          ...groupItems(stockPoItems),
+          ...groupItems(stage1Items),
+          ...groupItems(stage2Items),
+        ];
+        const group = allGroups.find(g => g.key === activeGroupKey);
+        if (!group) return null;
+
+        const order = orders.find(o => o.id === group.order_id);
+        const rMeta = order?.route_code ? ROUTE_DEFINITIONS[order.route_code] : null;
+        const isAccepted = group.items.every(it => !!it.assigned_prep_tech);
+        const deliveryLabel = DELIVERY_MODE_LABEL[group.delivery_mode || 'install'] || 'ส่งพร้อมติดตั้ง';
+
+        // Determine which stage this group belongs to
+        const isStockPo = group.items.every(it => it.status === 'pending_prep_stock');
+        const isStage2 = group.items.every(it => it.status === 'prepped_in_stock');
+        const isStage1 = !isStockPo && !isStage2;
+
+        const accent = isStockPo ? 'emerald' : isStage2 ? 'emerald' : 'amber';
+        const accentGradient = isStockPo
+          ? 'from-emerald-500 to-teal-600 hover:from-emerald-400 shadow-emerald-500/25'
+          : isStage2
+            ? 'from-emerald-500 to-emerald-600 hover:from-emerald-400 shadow-emerald-500/25'
+            : 'from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] shadow-[#FF6B00]/25';
+
+        const stageLabel = isStockPo
+          ? 'Stock PO • เตรียมเข้าสต๊อก'
+          : isStage2
+            ? 'จังหวะที่ 2 • แปะวอยปล่อยของ'
+            : 'จังหวะที่ 1 • เตรียมของเข้าสต๊อก';
+
+        return (
+          <Modal
+            open
+            onClose={closeGroupModal}
+            ariaLabel="Prep Work"
+            title={group.model_name}
+            subtitle={stageLabel}
+            icon={<ClipboardList className="w-5 h-5" />}
+            maxWidthClass="max-w-2xl"
+            footer={
+              <div className="flex items-center justify-end gap-2">
+                <button onClick={closeGroupModal} className={modalSecondaryBtnClass}>
+                  ปิด
+                </button>
+              </div>
+            }
+          >
+            <div className="space-y-4">
+              {/* Summary badges */}
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {rMeta && (
+                  <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold border ${rMeta.badgeBg} ${rMeta.badgeBorder} ${rMeta.badgeText}`}>
+                    {rMeta.shortName} • {order?.district || '-'}
+                  </span>
+                )}
+                <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-blue-500/15 text-blue-600 dark:text-blue-300 border border-blue-500/30">
+                  {deliveryLabel}
+                </span>
+                {group.items.length > 1 && (
+                  <span className="px-2 py-0.5 rounded-md text-[10px] font-extrabold bg-amber-500/15 text-amber-600 dark:text-amber-300 border border-amber-500/30 flex items-center gap-1">
+                    <Layers className="w-3 h-3" />
+                    จำนวน {group.items.length} เครื่อง
+                  </span>
+                )}
+              </div>
+
+              {/* Meta grid */}
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                <div className="p-3 rounded-xl bg-slate-100 dark:bg-white/[0.04] border border-slate-200 dark:border-white/[0.08]">
+                  <div className={modalLabelClass}>ลูกค้า / บิล</div>
+                  <div className="font-bold text-slate-900 dark:text-white mt-0.5">
+                    {order ? order.customer_name : '-'}
+                  </div>
+                  <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono mt-0.5">
+                    {order?.bill_no || group.po_no || '-'}
+                  </div>
+                </div>
+                <div className="p-3 rounded-xl bg-slate-100 dark:bg-white/[0.04] border border-slate-200 dark:border-white/[0.08]">
+                  <div className={modalLabelClass}>แหล่ง / PO</div>
+                  <div className="font-bold text-slate-900 dark:text-white mt-0.5">
+                    {group.supplier || 'สต๊อกร้าน'}
+                  </div>
+                  <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono mt-0.5">
+                    PO: {group.po_no || '-'}
+                  </div>
+                </div>
+              </div>
+
+              {group.prep_note && (
+                <div className="p-3 rounded-xl bg-[#FF6B00]/10 border border-[#FF6B00]/30 text-[11px] text-[#FF6B00]">
+                  <strong>หมายเหตุถึงช่าง:</strong> {group.prep_note}
+                </div>
+              )}
+
+              {/* GATE: Accept first, or unlocked controls */}
+              {!isAccepted ? (
+                <div className="space-y-3">
+                  <div className="p-3 rounded-xl bg-slate-100 dark:bg-white/[0.03] border border-slate-200 dark:border-white/[0.06] text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+                    <Lock className="w-3.5 h-3.5" />
+                    <span>กดรับงานก่อนจึงจะยิง S/N / ติดโลโก้ / แปะวอยได้</span>
+                  </div>
+                  <button
+                    onClick={() => handleAcceptGroup(group)}
+                    className={`w-full py-3 bg-gradient-to-r ${accentGradient} text-black font-extrabold rounded-xl text-sm transition cursor-pointer flex items-center justify-center gap-2 shadow-lg border border-white/20 active:scale-95`}
+                  >
+                    <UserCheck className="w-4 h-4" />
+                    <span>กดรับงานนี้ (Accept Job)</span>
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="text-[11px] text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                    <UserCheck className="w-3.5 h-3.5" />
+                    <span>ผู้รับงาน: {group.items[0].assigned_prep_tech}</span>
+                  </div>
+
+                  {/* Stage 2: void date per item */}
+                  {isStage2 ? (
+                    <div className="space-y-2">
+                      {group.items.map((item, idx) => (
+                        <div key={item.id} className="p-3 rounded-xl bg-slate-100 dark:bg-white/[0.03] border border-slate-200 dark:border-white/[0.06] space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400">#{idx + 1}</span>
+                            <span className="text-[11px] font-mono font-bold text-[#FF6B00]">S/N: {item.serial_number || '-'}</span>
+                          </div>
+                          <div>
+                            <label className={modalLabelClass}>วันที่ติดวอยประกัน</label>
+                            <input
+                              type="date"
+                              value={voidDateInputs[item.id] || todayStr}
+                              onChange={(e) => setVoidDateInputs({ ...voidDateInputs, [item.id]: e.target.value })}
+                              className={modalInputClass + ' font-mono'}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                      <button
+                        onClick={() => { group.items.forEach(it => handleDispatchStage2(it.id, it.serial_number)); closeGroupModal(); }}
+                        className={`w-full py-2.5 bg-gradient-to-r ${accentGradient} text-black font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg border border-white/20 active:scale-95`}
+                      >
+                        <BadgeCheck className="w-4 h-4" />
+                        <span>แปะวอย & ปล่อยของออกทั้งชุด ({group.items.length})</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      {/* Stage 1 / Stock PO: S/N inputs */}
+                      <div className="space-y-2">
+                        {group.items.map((item, idx) => renderSnRow(item, idx, accent))}
+                      </div>
+
+                      <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[10px] text-amber-600 dark:text-amber-300 text-center">
+                        {isStockPo
+                          ? '* ตรวจเช็ก + ติดโลโก้แล้ว ยังไม่ติดวอยประกัน (จะติดตอนปล่อยของในจังหวะที่ 2)'
+                          : group.order_id
+                            ? '* เทส & ติดโลโก้เสร็จแล้ว เลือกได้ 2 ทาง: เก็บรอส่งมอบตามออเดอร์ / แปะวอยส่งออกเลย'
+                            : '* เทส & ติดโลโก้เสร็จแล้ว เก็บเข้าคลังพร้อมขาย (Stock PO ไม่ผูกออเดอร์ลูกค้า)'}
+                      </div>
+
+                      <div className="space-y-2">
+                        {isStockPo ? (
+                          <button
+                            onClick={() => { group.items.forEach(it => handleMoveStockPoToReady(it.id)); closeGroupModal(); }}
+                            className={`w-full py-2.5 bg-gradient-to-r ${accentGradient} text-black font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg border border-white/20 active:scale-95`}
+                          >
+                            <Warehouse className="w-4 h-4" />
+                            <span>นำเข้าสต๊อกพร้อมขายทั้งชุด ({group.items.length})</span>
+                          </button>
+                        ) : !group.order_id ? (
+                          <button
+                            onClick={() => { group.items.forEach(it => handleFinishToReadyStock(it.id)); closeGroupModal(); }}
+                            className="w-full py-2.5 bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 text-black font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-sky-500/25 border border-white/20 active:scale-95"
+                          >
+                            <PackagePlus className="w-4 h-4" />
+                            <span>ติดโลโก้เสร็จ → เก็บเข้าคลังสต๊อกพร้อมขายทั้งชุด ({group.items.length})</span>
+                          </button>
+                        ) : (
+                          <>
+                            <button
+                              onClick={() => { group.items.forEach(it => handleFinishStage1(it.id)); closeGroupModal(); }}
+                              className="w-full py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 text-black font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-amber-500/25 border border-white/20 active:scale-95"
+                            >
+                              <Warehouse className="w-4 h-4" />
+                              <span>ติดโลโก้เสร็จ → เก็บเข้าสต๊อกรอวันส่งมอบทั้งชุด ({group.items.length})</span>
+                            </button>
+                            <button
+                              onClick={() => { group.items.forEach(it => handleFinishAndDispatch(it.id)); closeGroupModal(); }}
+                              className="w-full py-2.5 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 text-black font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-500/25 border border-white/20 active:scale-95"
+                            >
+                              <BadgeCheck className="w-4 h-4" />
+                              <span>ติดโลโก้ & แปะวอยพร้อมส่งออกเลยทั้งชุด ({group.items.length})</span>
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* Activity */}
+              <div className="pt-3 border-t border-slate-200 dark:border-white/[0.08] space-y-2">
+                <LatestUpdateBadge
+                  logs={group.items[0]?.activity_logs}
+                  fallbackTimestamp={group.items[0]?.prepped_at || group.items[0]?.created_at}
+                  fallbackActor={group.items[0]?.assigned_prep_tech}
+                />
+                <ActivityTimeline logs={group.items[0]?.activity_logs} />
+              </div>
+            </div>
+          </Modal>
+        );
+      })()}
 
       {/* Reusable camera barcode/QR scanner */}
       <BarcodeScannerModal

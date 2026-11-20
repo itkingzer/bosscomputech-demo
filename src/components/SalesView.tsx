@@ -614,7 +614,7 @@ export const SalesView: React.FC = () => {
               <button
                 type="button"
                 onClick={handleOpenCatalogModal}
-                className="w-full sm:w-auto px-4 py-2.5 min-h-[44px] rounded-xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold text-xs transition cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-[#FF6B00]/25 border border-white/20 active:scale-95"
+                className="w-full sm:w-auto px-4 py-2.5 min-h-[44px] rounded-xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] hover:brightness-105 text-black font-extrabold text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-[#FF6B00]/25 border border-white/20 active:scale-[0.97]"
               >
                 <Plus className="w-4 h-4" />
                 <span>+ เลือกสินค้า / จัดการแคตตาล็อก</span>
@@ -781,7 +781,7 @@ export const SalesView: React.FC = () => {
           <div className="flex justify-end pt-2">
             <button
               type="submit"
-              className="w-full sm:w-auto px-6 py-3 min-h-[44px] bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold rounded-2xl text-xs transition cursor-pointer flex items-center justify-center gap-2 shadow-xl shadow-[#FF6B00]/25 border border-white/20 active:scale-95"
+              className="w-full sm:w-auto px-6 py-3 min-h-[44px] bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] hover:brightness-105 text-black font-extrabold rounded-2xl text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-2 shadow-xl shadow-[#FF6B00]/25 border border-white/20 active:scale-[0.97]"
             >
               <Send className="w-4 h-4" />
               <span>ส่งใบสั่งขาย (ใบขาว) เข้าฝ่ายจัดซื้อ & สต๊อก</span>
@@ -794,8 +794,11 @@ export const SalesView: React.FC = () => {
       {/* PRODUCT SELECTION & CATALOG MANAGEMENT MODAL                              */}
       {/* ========================================================================= */}
       {isCatalogModalOpen && createPortal(
-        <div className="fixed inset-0 z-[70] flex items-center justify-center p-2 sm:p-4 bg-black/75 backdrop-blur-md animate-fade-in overscroll-contain touch-none">
-          <div className="liquid-glass rounded-2xl sm:rounded-3xl w-[95vw] sm:w-[90vw] max-w-4xl max-h-[85vh] flex flex-col shadow-2xl border border-white/[0.12] overflow-hidden">
+        <div className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center sm:p-4 bg-black/75 backdrop-blur-md animate-fade-in overscroll-contain">
+          <div className="liquid-glass rounded-t-3xl sm:rounded-3xl w-full sm:w-[90vw] max-w-4xl max-h-[92dvh] sm:max-h-[85vh] flex flex-col shadow-2xl border border-white/[0.12] overflow-hidden pb-[env(safe-area-inset-bottom)] animate-modal-pop">
+            <div className="sm:hidden flex justify-center pt-2.5 pb-1 flex-shrink-0">
+              <span className="h-1.5 w-10 rounded-full bg-white/20" />
+            </div>
 
             {/* Modal Header (sticky) */}
             <div className="sticky top-0 z-10 bg-white/95 dark:bg-[#12141A]/95 backdrop-blur-md p-4 sm:p-6 border-b border-slate-200 dark:border-white/[0.08] flex items-start sm:items-center justify-between gap-2 flex-shrink-0">
