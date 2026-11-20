@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { Cpu, ShieldCheck, Lock, User, ArrowRight, Sparkles } from 'lucide-react';
+import { Cpu, ShieldCheck, Lock, User, ArrowRight, Sparkles, Sun, Moon } from 'lucide-react';
 import { UserRole } from '../types';
 
 export const LoginPage: React.FC = () => {
-  const { login, users } = useApp();
+  const { login, users, theme, toggleTheme } = useApp();
   const [selectedUsername, setSelectedUsername] = useState('admin');
   const [customUsername, setCustomUsername] = useState('');
   const [password, setPassword] = useState('password123');
@@ -32,10 +32,32 @@ export const LoginPage: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-[#08090C] flex flex-col justify-center py-12 sm:px-6 lg:px-8 relative overflow-hidden">
+    <div className="min-h-screen bg-[var(--bg-page)] text-[var(--text-primary)] flex flex-col justify-center py-12 sm:px-6 lg:px-8 relative overflow-hidden transition-colors duration-300">
       {/* Background Liquid Light Orbs */}
       <div className="liquid-blob-1"></div>
       <div className="liquid-blob-2"></div>
+
+      {/* Theme Toggle Top Right */}
+      <div className="absolute top-6 right-6 z-20">
+        <button
+          onClick={toggleTheme}
+          title={theme === 'dark' ? 'เปลี่ยนเป็นธีมสว่าง (Liquid Glass Light)' : 'เปลี่ยนเป็นธีมมืด (Liquid Glass Dark)'}
+          aria-label={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+          className="p-2.5 rounded-2xl liquid-glass border border-white/10 hover:border-[#FF6B00]/40 text-slate-300 hover:text-[#FF6B00] transition-all cursor-pointer flex items-center gap-2 group shadow-lg"
+        >
+          {theme === 'dark' ? (
+            <>
+              <Sun className="w-4 h-4 text-amber-400 group-hover:rotate-45 transition-transform" />
+              <span className="text-xs font-medium hidden sm:inline text-slate-300">Light Mode</span>
+            </>
+          ) : (
+            <>
+              <Moon className="w-4 h-4 text-blue-500 group-hover:-rotate-12 transition-transform" />
+              <span className="text-xs font-medium hidden sm:inline text-slate-600">Dark Mode</span>
+            </>
+          )}
+        </button>
+      </div>
 
       <div className="sm:mx-auto sm:w-full sm:max-w-md relative z-10 text-center">
         <div className="inline-flex justify-center mb-3">

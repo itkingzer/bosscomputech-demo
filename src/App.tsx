@@ -13,13 +13,14 @@ import { SettingsModal } from './components/SettingsModal';
 import { 
   Cpu, LayoutDashboard, FilePlus2, Boxes, PackageCheck, 
   Store, Truck, Wrench, Shield, LogOut, Settings, RotateCcw, 
-  ChevronRight, Menu, X, Sparkles
+  ChevronRight, Menu, X, Sparkles, Sun, Moon
 } from 'lucide-react';
 
 export const App: React.FC = () => {
   const { 
     currentUser, logout, isSupabaseLive, 
-    orders, items, repairTickets, resetAllDemoData 
+    orders, items, repairTickets, resetAllDemoData,
+    theme, toggleTheme
   } = useApp();
 
   // If not logged in, show Login Page
@@ -36,7 +37,7 @@ export const App: React.FC = () => {
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
   // Badge counts
-  const pendingAccounting = orders.filter(o => o.order_status === 'pending_accounting').length;
+  const pendingAccounting = orders.filter(o => o.order_status === 'pending_purchasing' || o.order_status === 'waiting_po' || o.order_status === 'po_received_in_stock').length;
   const pendingPrep = items.filter(i => i.status === 'pending_prep').length;
   const readyDispatch = items.filter(i => i.status === 'ready_for_dispatch').length;
   const assignedOnsite = items.filter(i => i.status === 'assigned_onsite').length;
@@ -45,12 +46,12 @@ export const App: React.FC = () => {
   // Master definition of nav items
   const allNavItems = [
     { id: 'dashboard', role: 'all', label: 'ภาพรวม & ค้นหา S/N', icon: LayoutDashboard, badge: null, desc: 'ตรวจสอบสถานะ & ประวัติ' },
-    { id: 'sales', role: 'sales', label: 'ฝ่ายขาย (Sales)', icon: FilePlus2, badge: null, desc: 'เปิดใบเสนอราคา & สั่งขาย' },
-    { id: 'accounting', role: 'accounting', label: 'บัญชี & สต๊อก', icon: Boxes, badge: pendingAccounting, desc: 'ตรวจสอบบิล & ตัดสต๊อก' },
-    { id: 'prep', role: 'prep', label: 'ช่างเตรียมสินค้า', icon: PackageCheck, badge: pendingPrep, desc: 'ติดโลโก้ & ผูก S/N' },
+    { id: 'sales', role: 'sales', label: 'ฝ่ายขาย (Sales)', icon: FilePlus2, badge: null, desc: 'ORDER FORM 2026 (ใบขาว)' },
+    { id: 'accounting', role: 'accounting', label: 'จัดซื้อ & สต๊อก', icon: Boxes, badge: pendingAccounting, desc: 'ใบชมพู & ใบสั่งซื้อ PO' },
+    { id: 'prep', role: 'prep', label: 'ช่างเตรียมสินค้า', icon: PackageCheck, badge: pendingPrep, desc: '2 จังหวะ: เตรียม/ปล่อยของ' },
     { id: 'frontdesk', role: 'frontdesk', label: 'หน้าร้าน / จัดคิว', icon: Store, badge: readyDispatch, desc: 'จ่ายงาน & รับเครื่องซ่อม' },
-    { id: 'onsite', role: 'onsite', label: 'ช่าง Onsite', icon: Truck, badge: assignedOnsite, desc: 'ส่งมอบ & ติดวอยหน้างาน' },
-    { id: 'repair', role: 'repair', label: 'ช่างซ่อมในร้าน', icon: Wrench, badge: inRepair, desc: 'ตรวจเช็ค & ซ่อมเครื่อง' },
+    { id: 'onsite', role: 'onsite', label: 'ช่าง Onsite', icon: Truck, badge: assignedOnsite, desc: 'ส่งมอบ & รับเครื่องกลับ' },
+    { id: 'repair', role: 'repair', label: 'ช่างซ่อมในร้าน', icon: Wrench, badge: inRepair, desc: 'ตรวจเช็ค & ออกใบรับซ่อม' },
     { id: 'admin', role: 'admin', label: 'จัดการผู้ใช้ & สิทธิ์', icon: Shield, badge: null, desc: 'แอดมินระบบส่วนกลาง' },
   ];
 
@@ -78,7 +79,7 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-[#08090C] text-slate-100 flex relative overflow-x-hidden">
+    <div className="min-h-screen bg-[var(--bg-page)] text-[var(--text-primary)] flex relative overflow-x-hidden transition-colors duration-300">
       
       {/* Background Liquid Light Orbs */}
       <div className="liquid-blob-1"></div>
@@ -261,6 +262,22 @@ export const App: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-2">
+            {/* Theme Toggle Button (Liquid Glass Dark / Light) */}
+            <button
+              onClick={toggleTheme}
+              title={theme === 'dark' ? 'เปลี่ยนเป็นธีมสว่าง (Liquid Glass Light)' : 'เปลี่ยนเป็นธีมมืด (Liquid Glass Dark)'}
+              aria-label={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+              className="relative p-2 rounded-xl liquid-glass-card text-slate-300 hover:text-[#FF6B00] transition-all cursor-pointer flex items-center justify-center group overflow-hidden"
+            >
+              <div className="relative w-4 h-4 flex items-center justify-center">
+                {theme === 'dark' ? (
+                  <Sun className="w-4 h-4 text-amber-400 group-hover:rotate-45 transition-transform duration-300" />
+                ) : (
+                  <Moon className="w-4 h-4 text-blue-500 group-hover:-rotate-12 transition-transform duration-300" />
+                )}
+              </div>
+            </button>
+
             <button
               onClick={() => {
                 if (confirm('ต้องการรีเซ็ตข้อมูลตัวอย่างกลับเป็นค่าเริ่มต้นหรือไม่?')) {

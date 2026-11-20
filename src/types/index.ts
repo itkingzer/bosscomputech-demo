@@ -119,18 +119,50 @@ export function getRouteByDistrict(district: string): RouteCode {
   return 'route_6';
 }
 
-export type OrderStatus = 'pending_accounting' | 'approved_for_prep' | 'fulfilled';
+export type OrderStatus = 
+  | 'pending_purchasing'    // รอจัดซื้อ/เช็กสต๊อก (เริ่มต้นเมื่อเซลส่งใบขาว)
+  | 'waiting_po'            // รอสั่งซื้อของเข้าจาก Supplier (รอ PO)
+  | 'po_received_in_stock'  // รับของเข้าสต๊อกจัดซื้อแล้ว - รอปล่อยให้ช่างเตรียม
+  | 'approved_for_prep'     // ตัดสต๊อกแล้ว ส่งต่อให้ช่างเตรียม
+  | 'fulfilled';            // ส่งมอบสมบูรณ์
+
+// ประเภทบิล
+export type BillType = 'tax_invoice' | 'cash_bill_quotation';
+
+// เงื่อนไขชำระเงิน
+export type PaymentTerm = 'cash' | 'credit_30' | 'project';
+
+// ประเภทการส่งมอบ (Delivery Mode)
+export type DeliveryMode = 'install' | 'drop_off' | 'customer_pickup' | 'project';
+
+export interface OrderItem {
+  id?: string;
+  model_name: string;
+  item_type?: 'hardware' | 'service'; // อุปกรณ์/วัสดุ หรือ ค่าแรง/ค่าบริการติดตั้ง
+  quantity: number;
+  unit_price?: number;
+  supplier?: string;
+  po_no?: string;
+  prep_note?: string;
+}
 
 export interface Order {
   id: string;
   sales_ref: string | null;
   customer_name: string;
+  customer_phone?: string;
   delivery_location: string;
   district?: string;
   route_code?: RouteCode;
   province_custom?: string;
+  delivery_date?: string;             // วันที่ส่งมอบ
+  bill_type?: BillType;               // ประเภทบิล (ใบกำกับภาษี / บิลเงินสด-ใบเสนอราคา)
+  payment_term?: PaymentTerm;         // เงื่อนไขการชำระเงิน
+  delivery_mode?: DeliveryMode;       // ประเภทการส่งมอบ (ส่งพร้อมติดตั้ง, ส่งไม่ต้องติดตั้ง, ลูกค้ารับเอง)
+  site_notes?: string;                // หมายเหตุหน้างาน
   bill_no: string | null;
   order_status: OrderStatus;
+  items_list?: OrderItem[];           // รายการสินค้าหลายรายการใน 1 บิล
   created_at: string;
   updated_at?: string;
   _planned_model?: string;
@@ -139,10 +171,11 @@ export interface Order {
 
 export type ItemStatus =
   | 'in_stock'             // สินค้าเตรียมเข้าสต๊อกเรียบร้อย (มี S/N ยังไม่ติดวอย รอขาย)
-  | 'pending_prep'         // เบิกจากสต๊อก รอเตรียมออกไปส่ง
-  | 'ready_for_dispatch'   // เตรียมออกไปส่งเสร็จแล้ว + ติดวอยรับประกันแล้ว รอหน้าร้านจ่ายงาน
+  | 'pending_prep'         // เบิกจากสต๊อก รอช่างเตรียมสินค้า
+  | 'prepped_in_stock'     // ช่างเตรียมเสร็จ / เก็บเข้าสต๊อกรอส่ง - รอแปะวอย
+  | 'ready_for_dispatch'   // แปะวอยประกันแล้ว พร้อมปล่อยของออก
   | 'assigned_onsite'      // หน้าร้านจ่ายงานให้ช่าง Onsite นำไปส่ง
-  | 'delivered'            // ช่าง Onsite นำส่งมอบให้ลูกค้าสำเร็จ
+  | 'delivered'            // ช่าง Onsite หรือหน้าร้านส่งมอบให้ลูกค้าสำเร็จ
   | 'in_repair'            // เครื่องอยู่ในกระบวนการซ่อม
   | 'repaired_ready_return'; // ซ่อมเสร็จ รอส่งมอบคืน
 
@@ -167,12 +200,18 @@ export interface Item {
   serial_number: string | null;
   status: ItemStatus;
   prep_type?: PrepType;
+  supplier?: string;                  // แหล่งที่มา เช่น สต๊อกร้าน, SIS, Synnex, Abshop, PKT
+  po_no?: string;                     // เลขที่ PO / ใบสั่งซื้อ เช่น PKT/2569-083
+  prep_note?: string;                 // หมายเหตุถึงช่างเตรียม เช่น มีกล่องพร้อมลง Driver
+  delivery_mode?: DeliveryMode;       // ส่งพร้อมติดตั้ง / ส่งไม่ต้องติดตั้ง / ลูกค้ารับเอง
+  assigned_prep_tech?: string | null; // ช่างผู้รับงานเตรียมสินค้า
+  prep_accepted_at?: string | null;   // เวลาที่ช่างเตรียมรับงาน
+  prepped_at: string | null;          // เวลาที่เตรียมเสร็จเก็บเข้าสต๊อกรอส่ง
   job_category?: JobCategory;          // ประเภทงาน Onsite
   assigned_techs: string[];            // ทีมช่าง (เลือกได้หลายคน)
   /** @deprecated use assigned_techs[0] */
   assigned_onsite_tech?: string | null; // เก็บไว้ backward-compat กับ Supabase query เดิม
-  prepped_at: string | null;
-  void_date: string | null; // YYYY-MM-DD (ช่างเตรียมสินค้าเป็นคนติดก่อนนำส่ง)
+  void_date: string | null; // YYYY-MM-DD (ช่างเตรียมสินค้า/ผู้ปล่อยของเป็นคนติดก่อนนำส่งจริง)
   notes?: string | null;
   created_at: string;
   updated_at?: string;
@@ -197,6 +236,10 @@ export interface RepairTicket {
   customer_name: string;
   customer_phone?: string | null;
   intake_channel: IntakeChannel;
+  device_model?: string | null;        // รุ่น/ประเภทเครื่องที่รับซ่อม
+  accessories?: string[];              // อุปกรณ์ที่ติดมาด้วย (เช่น Adapter, สาย Power ฯลฯ)
+  accessories_other?: string | null;   // อุปกรณ์อื่นๆ เพิ่มเติม
+  picked_up_by?: string | null;        // ชื่อช่าง Onsite ผู้ไปรับเครื่องมา
   fault_symptom: string;
   repair_detail: string | null;
   parts_used: string | null;

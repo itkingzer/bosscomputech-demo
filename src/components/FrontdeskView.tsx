@@ -61,9 +61,9 @@ export const FrontdeskView: React.FC = () => {
   const [batchTechName, setBatchTechName] = useState('');
   const [toast, setToast] = useState('');
 
-  const readyItems = items.filter(i => i.status === 'ready_for_dispatch');
-  const returnReadyTickets = repairTickets.filter(r => r.status === 'repaired' && !r.assigned_onsite_tech);
-  const onsiteIntakeTickets = repairTickets.filter(r => r.intake_channel === 'onsite_pickup' && r.status === 'open' && !r.assigned_onsite_tech);
+  const readyItems = items.filter(i => i.status === 'ready_for_dispatch' || i.status === 'prepped_in_stock');
+  const returnReadyTickets = repairTickets.filter(r => r.status === 'repaired' && !r.assigned_onsite_tech && (!r.assigned_techs || r.assigned_techs.length === 0));
+  const onsiteIntakeTickets = repairTickets.filter(r => r.intake_channel === 'onsite_pickup' && r.status === 'open' && !r.assigned_onsite_tech && (!r.assigned_techs || r.assigned_techs.length === 0));
   const onsiteTechs = users.filter(u => u.role === 'onsite');
 
   // Filtered by selected route
@@ -438,7 +438,14 @@ export const FrontdeskView: React.FC = () => {
                               {item.model_name}
                             </td>
                             <td className="py-3 px-3">
-                              <div className="text-slate-200 font-medium whitespace-nowrap">{order?.customer_name || '-'}</div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-slate-200 font-medium whitespace-nowrap">{order?.customer_name || '-'}</span>
+                                {order?.delivery_mode === 'project' && (
+                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-gradient-to-r from-purple-500/25 to-orange-500/25 text-purple-300 border border-purple-500/40 shadow-sm animate-pulse whitespace-nowrap">
+                                    ⚡ งานโครงการ (Project)
+                                  </span>
+                                )}
+                              </div>
                               <div className="text-[11px] text-slate-500 truncate max-w-xs">{order?.delivery_location || '-'}</div>
                             </td>
                             <td className="py-3 px-3 whitespace-nowrap">
@@ -821,7 +828,16 @@ export const FrontdeskView: React.FC = () => {
                           <div className="text-white font-medium">{t.customer_name}</div>
                           <div className="text-[10px] text-slate-500">{t.district || t.customer_phone || '-'}</div>
                         </td>
-                        <td className="py-3.5 px-3 text-slate-300 max-w-xs truncate">{t.fault_symptom}</td>
+                        <td className="py-3.5 px-3 text-slate-300 max-w-xs">
+                          <div className="truncate font-medium">{t.fault_symptom}</div>
+                          {t.device_model && <div className="text-[10px] text-slate-400">รุ่น: {t.device_model}</div>}
+                          {t.picked_up_by && <div className="text-[10px] text-amber-400">รับโดย: {t.picked_up_by}</div>}
+                          {t.accessories && t.accessories.length > 0 && (
+                            <div className="text-[10px] text-slate-500 truncate">
+                              อุปกรณ์: {t.accessories.join(', ')}
+                            </div>
+                          )}
+                        </td>
                         <td className="py-3.5 px-3 whitespace-nowrap">
                           {renderRepairStatusBadge(t.status, t.repair_outcome)}
                         </td>

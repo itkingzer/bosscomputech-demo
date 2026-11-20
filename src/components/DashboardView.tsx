@@ -11,7 +11,7 @@ export const DashboardView: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
 
-  const pendingAccounting = orders.filter(o => o.order_status === 'pending_accounting').length;
+  const pendingPurchasing = orders.filter(o => o.order_status === 'pending_purchasing' || o.order_status === 'waiting_po' || o.order_status === 'po_received_in_stock').length;
   const pendingPrep = items.filter(i => i.status === 'pending_prep').length;
   const readyDispatch = items.filter(i => i.status === 'ready_for_dispatch').length;
   const assignedOnsite = items.filter(i => i.status === 'assigned_onsite').length;
@@ -64,6 +64,13 @@ export const DashboardView: React.FC = () => {
             <span>รอช่างติดวอย & เตรียม</span>
           </span>
         );
+      case 'prepped_in_stock':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap bg-teal-500/15 text-teal-400 border border-teal-500/30">
+            <span className="w-1.5 h-1.5 rounded-full bg-teal-400"></span>
+            <span>เตรียมพร้อมในสต๊อก (รอปล่อย)</span>
+          </span>
+        );
       case 'ready_for_dispatch':
         return (
           <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap bg-blue-500/15 text-blue-400 border border-blue-500/30">
@@ -114,10 +121,10 @@ export const DashboardView: React.FC = () => {
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3.5">
         <div className="liquid-glass-card p-4 rounded-2xl relative overflow-hidden group">
           <div className="text-xs text-slate-400 font-medium mb-1 flex items-center justify-between">
-            <span>รอตัดสต๊อก</span>
+            <span>รอจัดซื้อ/เช็กสต๊อก</span>
             <Clock className="w-3.5 h-3.5 text-amber-400" />
           </div>
-          <div className="text-2xl font-extrabold text-amber-400">{pendingAccounting}</div>
+          <div className="text-2xl font-extrabold text-amber-400">{pendingPurchasing}</div>
           <div className="text-[11px] text-slate-500 mt-1">ออเดอร์ใหม่ฝ่ายขาย</div>
         </div>
 
