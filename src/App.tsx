@@ -40,6 +40,18 @@ export const App: React.FC = () => {
   // Desktop drawer: allow collapsing the persistent sidebar (default open)
   const [isDesktopSidebarOpen, setIsDesktopSidebarOpen] = useState(true);
 
+  // Auto-collapse the mobile drawer when the viewport grows to desktop width
+  // (prevents the drawer from staying open / overlapping content after rotation or resize)
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 1024px)');
+    const handleChange = (e: MediaQueryListEvent | MediaQueryList) => {
+      if (e.matches) setIsMobileSidebarOpen(false);
+    };
+    handleChange(mq);
+    mq.addEventListener('change', handleChange);
+    return () => mq.removeEventListener('change', handleChange);
+  }, []);
+
   // Mobile drawer: lock scroll (html + body + main container) + close on Escape key
   useEffect(() => {
     if (isMobileSidebarOpen) {

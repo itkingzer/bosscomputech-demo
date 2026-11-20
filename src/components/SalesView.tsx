@@ -794,7 +794,7 @@ export const SalesView: React.FC = () => {
       {/* PRODUCT SELECTION & CATALOG MANAGEMENT MODAL                              */}
       {/* ========================================================================= */}
       {isCatalogModalOpen && createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/75 backdrop-blur-md animate-fade-in overscroll-contain touch-none">
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-2 sm:p-4 bg-black/75 backdrop-blur-md animate-fade-in overscroll-contain touch-none">
           <div className="liquid-glass rounded-2xl sm:rounded-3xl w-[95vw] sm:w-[90vw] max-w-4xl max-h-[85vh] flex flex-col shadow-2xl border border-white/[0.12] overflow-hidden">
 
             {/* Modal Header (sticky) */}

@@ -1647,7 +1647,7 @@ export const PurchasingStockView: React.FC = () => {
       {/* STOCK PO MODAL (Proactive Stock Replenishment)                            */}
       {/* ========================================================================= */}
       {isStockPoModalOpen && createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/75 backdrop-blur-md animate-fade-in">
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-2 sm:p-4 bg-black/75 backdrop-blur-md animate-fade-in">
           <div className="liquid-glass rounded-2xl sm:rounded-3xl w-[95vw] sm:w-[90vw] max-w-2xl max-h-[90vh] flex flex-col shadow-2xl border border-white/[0.12] overflow-hidden">
             <div className="p-4 sm:p-6 border-b border-white/[0.08] flex items-center justify-between gap-2 flex-shrink-0">
               <div className="flex items-center gap-2.5 min-w-0">
@@ -1812,7 +1812,7 @@ export const PurchasingStockView: React.FC = () => {
       {/* CATALOG MULTI-SELECT MODAL (สำหรับสั่งซื้อ PO - อ่านแคตตาล็อกกลางของฝ่ายขาย) */}
       {/* ========================================================================= */}
       {isPoCatalogModalOpen && createPortal(
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-2 sm:p-4 bg-black/75 backdrop-blur-md animate-fade-in">
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-2 sm:p-4 bg-black/75 backdrop-blur-md animate-fade-in">
           <div className="liquid-glass rounded-2xl sm:rounded-3xl w-[95vw] sm:w-[90vw] max-w-4xl max-h-[88vh] flex flex-col shadow-2xl border border-white/[0.12] overflow-hidden">
             {/* Header */}
             <div className="p-4 sm:p-5 border-b border-white/[0.08] flex items-center justify-between gap-2 flex-shrink-0">
