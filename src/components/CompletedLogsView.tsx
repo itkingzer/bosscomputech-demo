@@ -2,10 +2,11 @@ import React, { useMemo, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import {
     History, Search, FileCheck2, Truck, Store, Wrench, PackageCheck,
-    Clock, User, MapPin, ChevronDown, ChevronUp, CalendarClock, Timer
+    Clock, User, MapPin, ChevronDown, ChevronUp, CalendarClock, Timer, ShieldCheck
 } from 'lucide-react';
 import {
-    ActivityLog, Order, RepairTicket, formatThaiDateTime, getLatestLog
+    ActivityLog, Order, RepairTicket, formatThaiDateTime, getLatestLog,
+    formatWarrantyDuration, formatDateDMY, getWarrantyState, WarrantyState
 } from '../types';
 import { ActivityTimeline } from './ActivityTimeline';
 
@@ -30,6 +31,12 @@ interface CompletedJob {
     location?: string;
     typeLabel: string;          // ป้ายประเภทงาน
     logs: ActivityLog[];
+    // --- Warranty coverage ---
+    warrantyYears?: number;
+    warrantyMonths?: number;
+    warrantyVoidDate?: string | null;
+    warrantyExpireDate?: string | null;
+    warrantyState?: WarrantyState;
 }
 
 const KIND_META: Record<JobKind, { label: string; badge: string; icon: React.ElementType }> = {
@@ -118,6 +125,11 @@ export const CompletedLogsView: React.FC = () => {
                 relatedItems.map((it) => it.model_name).join(', ') ||
                 '-';
             const serialNumber = relatedItems.map((it) => it.serial_number).filter(Boolean).join(', ') || null;
+            // Warranty: ใช้ข้อมูลจากเครื่องที่แปะวอยแล้ว (ถ้ามี) หรือจากรายการขาย
+            const warrantyItem = relatedItems.find((it) => it.warranty_void_date) || relatedItems[0];
+            const firstOrderItem = (o.items_list || [])[0];
+            const warrantyYears = warrantyItem?.warranty_years ?? firstOrderItem?.warranty_years ?? 0;
+            const warrantyMonths = warrantyItem?.warranty_months ?? firstOrderItem?.warranty_months ?? 0;
 
             jobs.push({
                 id: `order-${o.id}`,
@@ -131,7 +143,17 @@ export const CompletedLogsView: React.FC = () => {
                 startedAt: o.created_at_log || o.created_at,
                 location: o.delivery_location,
                 typeLabel: pickup ? 'ลูกค้ารับเองหน้าร้าน' : 'ส่งมอบ & ติดตั้ง',
-                logs: o.activity_logs || []
+                logs: o.activity_logs || [],
+                warrantyYears,
+                warrantyMonths,
+                warrantyVoidDate: warrantyItem?.warranty_void_date || null,
+                warrantyExpireDate: warrantyItem?.warranty_expire_date || null,
+                warrantyState: getWarrantyState({
+                    warranty_years: warrantyYears,
+                    warranty_months: warrantyMonths,
+                    warranty_void_date: warrantyItem?.warranty_void_date || null,
+                    warranty_expire_date: warrantyItem?.warranty_expire_date || null
+                })
             });
         });
 
@@ -353,6 +375,35 @@ export const CompletedLogsView: React.FC = () => {
                                         </span>
                                     )}
                                 </div>
+
+                                {/* Warranty coverage (เฉพาะงานขาย/รับเองที่มีข้อมูลประกัน) */}
+                                {job.kind !== 'repair' && job.warrantyState && job.warrantyState !== 'none' && (
+                                    <div className={`rounded-xl p-2.5 border text-[11px] font-semibold flex flex-wrap items-center gap-x-3 gap-y-1 ${job.warrantyState === 'expired'
+                                            ? 'bg-rose-500/10 border-rose-500/30 text-rose-600 dark:text-rose-400'
+                                            : job.warrantyState === 'waiting'
+                                                ? 'bg-amber-500/10 border-amber-500/30 text-amber-600 dark:text-amber-300'
+                                                : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400'
+                                        }`}>
+                                        <span className="inline-flex items-center gap-1">
+                                            <ShieldCheck className="w-3.5 h-3.5" />
+                                            {formatWarrantyDuration(job.warrantyYears, job.warrantyMonths)}
+                                        </span>
+                                        {job.warrantyVoidDate ? (
+                                            <>
+                                                <span className="text-slate-500 dark:text-slate-400">เริ่มนับวอย: <span className="font-bold">{formatDateDMY(job.warrantyVoidDate)}</span></span>
+                                                <span className="text-slate-500 dark:text-slate-400">หมดประกัน: <span className="font-bold">{formatDateDMY(job.warrantyExpireDate)}</span></span>
+                                                <span className={`px-1.5 py-0.5 rounded-md text-[10px] font-extrabold border ${job.warrantyState === 'expired'
+                                                        ? 'bg-rose-500/20 border-rose-500/40'
+                                                        : 'bg-emerald-500/20 border-emerald-500/40'
+                                                    }`}>
+                                                    {job.warrantyState === 'expired' ? 'หมดประกันแล้ว' : 'อยู่ในประกัน'}
+                                                </span>
+                                            </>
+                                        ) : (
+                                            <span>รอแปะวอยเพื่อเริ่มนับประกัน</span>
+                                        )}
+                                    </div>
+                                )}
 
                                 {/* Expand toggle + timeline */}
                                 <div className="pt-2 border-t border-white/[0.08]">

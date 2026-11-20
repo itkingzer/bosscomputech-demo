@@ -10,7 +10,8 @@ import {
   modalPrimaryBtnClass, modalSecondaryBtnClass
 } from './ui/Modal';
 import {
-  IntakeChannel, RepairStatus, ROUTE_DEFINITIONS, RouteCode, getRouteByDistrict
+  IntakeChannel, RepairStatus, ROUTE_DEFINITIONS, RouteCode, getRouteByDistrict,
+  formatWarrantyDuration, formatDateDMY
 } from '../types';
 import { ListControls, useListControls } from './ListControls';
 import { ActivityTimeline, LatestUpdateBadge } from './ActivityTimeline';
@@ -651,6 +652,17 @@ export const FrontdeskView: React.FC = () => {
                                 </td>
                                 <td className="py-3 px-3 text-white font-bold text-base whitespace-nowrap">
                                   {item.model_name}
+                                  <div className="mt-1">
+                                    {item.warranty_void_date ? (
+                                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-semibold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
+                                        {formatWarrantyDuration(item.warranty_years, item.warranty_months)} • หมด {formatDateDMY(item.warranty_expire_date)}
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-semibold bg-amber-500/15 text-amber-600 dark:text-amber-300 border border-amber-500/30">
+                                        รอแปะวอยเพื่อเริ่มนับประกัน ({item.warranty_years || 0} ปี)
+                                      </span>
+                                    )}
+                                  </div>
                                 </td>
                                 <td className="py-3 px-3">
                                   <div className="flex items-center gap-2">

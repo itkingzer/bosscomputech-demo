@@ -31,6 +31,66 @@ export function getLatestLog(logs?: ActivityLog[] | null): ActivityLog | null {
   return [...logs].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0];
 }
 
+// ==============================================================================
+// Warranty Helpers (ประกันสินค้า - เริ่มนับตั้งแต่วันแปะวอย)
+// ==============================================================================
+export const WARRANTY_PRESET_YEARS = [0, 1, 2, 3, 5] as const;
+
+// แปลงระยะเวลาประกัน (ปี/เดือน) เป็นข้อความ เช่น "ประกัน 3 ปี", "ไม่มีประกัน"
+export function formatWarrantyDuration(years?: number | null, months?: number | null): string {
+  const y = years || 0;
+  const m = months || 0;
+  if (y <= 0 && m <= 0) return 'ไม่มีประกัน';
+  const parts: string[] = [];
+  if (y > 0) parts.push(`${y} ปี`);
+  if (m > 0) parts.push(`${m} เดือน`);
+  return `ประกัน ${parts.join(' ')}`;
+}
+
+// คำนวณวันหมดประกันจาก ISO timestamp ของการแปะวอย + ระยะเวลาประกัน
+export function computeWarrantyExpire(
+  voidIso: string | null | undefined,
+  years?: number | null,
+  months?: number | null
+): string | null {
+  if (!voidIso) return null;
+  const base = new Date(voidIso);
+  if (isNaN(base.getTime())) return null;
+  const y = years || 0;
+  const m = months || 0;
+  if (y <= 0 && m <= 0) return null;
+  const exp = new Date(base);
+  exp.setFullYear(exp.getFullYear() + y);
+  exp.setMonth(exp.getMonth() + m);
+  return exp.toISOString();
+}
+
+// แสดงวันที่แบบ DD/MM/YYYY (ค.ศ.) จาก ISO timestamp
+export function formatDateDMY(iso?: string | null): string {
+  if (!iso) return '-';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '-';
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  return `${dd}/${mm}/${d.getFullYear()}`;
+}
+
+// สถานะประกันของสินค้า: waiting (รอแปะวอย) / active / expired / none
+export type WarrantyState = 'waiting' | 'active' | 'expired' | 'none';
+
+export function getWarrantyState(item: {
+  warranty_void_date?: string | null;
+  warranty_expire_date?: string | null;
+  warranty_years?: number | null;
+  warranty_months?: number | null;
+}): WarrantyState {
+  const hasDuration = (item.warranty_years || 0) > 0 || (item.warranty_months || 0) > 0;
+  if (!hasDuration) return 'none';
+  if (!item.warranty_void_date) return 'waiting';
+  if (!item.warranty_expire_date) return 'active';
+  return new Date() > new Date(item.warranty_expire_date) ? 'expired' : 'active';
+}
+
 export type UserRole =
   | 'admin'         // Full system access, all tabs, user management, config
   | 'sales'         // 1. ฝ่ายขาย
@@ -208,6 +268,8 @@ export interface OrderItem {
   po_no?: string;
   prep_note?: string;
   unit_cost?: number;                 // ราคาทุนต่อหน่วย (INTERNAL ONLY - ห้ามแสดงในเอกสารลูกค้า)
+  warranty_years?: number;            // ระยะเวลาประกัน (ปี) - 0 = ไม่มีประกัน
+  warranty_months?: number;           // ระยะเวลาประกัน (เดือน) - ใช้เมื่อต้องการระบุเป็นเดือน
 }
 
 export interface Order {
@@ -319,6 +381,10 @@ export interface Item {
   /** @deprecated use assigned_techs[0] */
   assigned_onsite_tech?: string | null; // เก็บไว้ backward-compat กับ Supabase query เดิม
   void_date: string | null; // YYYY-MM-DD (ช่างเตรียมสินค้า/ผู้ปล่อยของเป็นคนติดก่อนนำส่งจริง)
+  warranty_years?: number;            // ระยะเวลาประกัน (ปี) ที่ผูกมาจากรายการขาย
+  warranty_months?: number;           // ระยะเวลาประกัน (เดือน) ที่ผูกมาจากรายการขาย
+  warranty_void_date?: string | null; // ISO timestamp ตอนแปะวอยประกัน (จุดเริ่มนับประกัน)
+  warranty_expire_date?: string | null; // ISO timestamp วันหมดประกัน (void + ระยะเวลา)
   notes?: string | null;
   created_at: string;
   updated_at?: string;

@@ -5,11 +5,12 @@ import {
   FilePlus2, Send, ListOrdered, CheckCircle, Plus,
   Sparkles, Layers, Trash2, Calendar, CreditCard,
   FileText, Truck, Search, Filter, ShoppingBag, X, Check,
-  UserCheck, Pencil, Lock, TrendingUp, AlertTriangle, Package
+  UserCheck, Pencil, Lock, TrendingUp, AlertTriangle, Package, ShieldCheck
 } from 'lucide-react';
 import {
   ROUTE_DEFINITIONS, getRouteByDistrict, RouteCode, BillType, PaymentTerm, DeliveryMode, OrderItem,
-  Product, ProductCategory, ProductUnit, PRODUCT_CATEGORY_LABELS, PRODUCT_UNIT_OPTIONS
+  Product, ProductCategory, ProductUnit, PRODUCT_CATEGORY_LABELS, PRODUCT_UNIT_OPTIONS,
+  WARRANTY_PRESET_YEARS, formatWarrantyDuration, formatDateDMY
 } from '../types';
 import { ListControls, useListControls } from './ListControls';
 import { ActivityTimeline, LatestUpdateBadge } from './ActivityTimeline';
@@ -235,7 +236,9 @@ export const SalesView: React.FC = () => {
           item_type: catItem.item_type,
           unit: catItem.unit,
           unit_price: catItem.sell_price,
-          unit_cost: catItem.cost_price
+          unit_cost: catItem.cost_price,
+          // ค่าเริ่มต้น: อุปกรณ์ฮาร์ดแวร์ 1 ปี / บริการ 0 ปี (ไม่มีประกัน)
+          warranty_years: catItem.item_type === 'service' ? 0 : 1
         });
       }
     });
@@ -264,6 +267,11 @@ export const SalesView: React.FC = () => {
   const handleUpdateItemUnitCost = (index: number, cost: number) => {
     const validCost = Math.max(0, cost);
     setOrderItems(prev => prev.map((item, i) => i === index ? { ...item, unit_cost: validCost } : item));
+  };
+
+  const handleUpdateItemWarranty = (index: number, years: number) => {
+    const validYears = Math.max(0, Math.floor(years) || 0);
+    setOrderItems(prev => prev.map((item, i) => i === index ? { ...item, warranty_years: validYears } : item));
   };
 
   const handleSubmitOrder = (e: React.FormEvent) => {
@@ -637,6 +645,7 @@ export const SalesView: React.FC = () => {
                       <th className="py-2.5 px-3 text-right">ราคาทุน/หน่วย</th>
                       <th className="py-2.5 px-3 text-right">ราคาขาย/หน่วย</th>
                       <th className="py-2.5 px-3 text-center w-24">จำนวน</th>
+                      <th className="py-2.5 px-3 text-center w-44">ประกัน</th>
                       <th className="py-2.5 px-3 text-right">กำไร/รายการ</th>
                       <th className="py-2.5 px-3 text-right">รวมเงิน</th>
                       <th className="py-2.5 px-3 text-right w-12">ลบ</th>
@@ -690,6 +699,44 @@ export const SalesView: React.FC = () => {
                               onChange={(e) => handleUpdateItemQuantity(idx, parseInt(e.target.value) || 1)}
                               className="w-16 text-center liquid-glass-input rounded-lg px-2 py-1 text-xs text-[#FF6B00] font-bold"
                             />
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <div className="flex flex-col items-center gap-1.5">
+                              <div className="flex flex-wrap items-center justify-center gap-1">
+                                {WARRANTY_PRESET_YEARS.map(y => {
+                                  const active = (item.warranty_years || 0) === y;
+                                  return (
+                                    <button
+                                      key={y}
+                                      type="button"
+                                      onClick={() => handleUpdateItemWarranty(idx, y)}
+                                      className={`px-1.5 py-0.5 rounded-md text-[10px] font-bold border transition cursor-pointer ${active
+                                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                                        : 'bg-white/[0.03] text-slate-400 border-white/[0.08] hover:text-slate-200 hover:border-white/[0.2]'
+                                        }`}
+                                    >
+                                      {y === 0 ? 'ไม่มีประกัน' : `${y} ปี`}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                              <div className="flex items-center gap-1">
+                                <input
+                                  type="number"
+                                  min={0}
+                                  placeholder="กรอกจำนวนปี"
+                                  value={item.warranty_years || ''}
+                                  onChange={(e) => handleUpdateItemWarranty(idx, parseInt(e.target.value) || 0)}
+                                  className="w-20 text-center liquid-glass-input rounded-lg px-1.5 py-0.5 text-[11px] text-emerald-300 font-bold"
+                                />
+                                <span className="text-[10px] text-slate-500">ปี</span>
+                              </div>
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[9px] font-semibold bg-amber-500/10 text-amber-300 border border-amber-500/25">
+                                <ShieldCheck className="w-2.5 h-2.5" />
+                                เริ่มนับประกันตั้งแต่วันแปะวอย
+                              </span>
+                              <span className="text-[9px] text-slate-500">{formatWarrantyDuration(item.warranty_years)}</span>
+                            </div>
                           </td>
                           <td className={`py-2.5 px-3 text-right font-mono font-extrabold text-sm data-key ${rowProfit >= 0 ? 'text-[#FF6B00]' : 'text-rose-400'}`}>
                             {fmt(rowProfit)}
@@ -1233,10 +1280,35 @@ export const SalesView: React.FC = () => {
                         )}
                         {!ord.delivery_mode && <span className="text-slate-400">-</span>}
                       </td>
-                      <td className="py-3 px-3 text-slate-300 max-w-xs truncate">
-                        {ord.items_list && ord.items_list.length > 0
-                          ? ord.items_list.map(it => `${it.model_name} (x${it.quantity})`).join(', ')
-                          : (ord._planned_model ? `${ord._planned_model} (x${ord._planned_quantity || 1})` : '-')}
+                      <td className="py-3 px-3 text-slate-300 max-w-xs">
+                        <div className="truncate">
+                          {ord.items_list && ord.items_list.length > 0
+                            ? ord.items_list.map(it => `${it.model_name} (x${it.quantity})`).join(', ')
+                            : (ord._planned_model ? `${ord._planned_model} (x${ord._planned_quantity || 1})` : '-')}
+                        </div>
+                        {(() => {
+                          const relatedItems = items.filter(it => it.order_id === ord.id);
+                          const wItem = relatedItems.find(it => it.warranty_void_date);
+                          const firstOI = (ord.items_list || [])[0];
+                          const wYears = wItem?.warranty_years ?? firstOI?.warranty_years ?? 0;
+                          const wMonths = wItem?.warranty_months ?? firstOI?.warranty_months ?? 0;
+                          if (wYears <= 0 && wMonths <= 0) return null;
+                          return (
+                            <div className="mt-1 flex flex-wrap items-center gap-1">
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                                <ShieldCheck className="w-2.5 h-2.5" />
+                                {formatWarrantyDuration(wYears, wMonths)}
+                              </span>
+                              {wItem?.warranty_void_date ? (
+                                <span className="text-[10px] text-slate-400">
+                                  เริ่มนับวอย: {formatDateDMY(wItem.warranty_void_date)} • หมดประกัน: {formatDateDMY(wItem.warranty_expire_date)}
+                                </span>
+                              ) : (
+                                <span className="text-[10px] text-amber-400">รอแปะวอยเพื่อเริ่มนับประกัน</span>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </td>
                       <td className="py-3 px-3 font-mono text-slate-400 whitespace-nowrap">
                         {ord.bill_no || <span className="text-slate-600">ยังไม่ออกบิล</span>}

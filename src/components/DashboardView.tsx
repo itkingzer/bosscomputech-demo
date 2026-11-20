@@ -1,15 +1,17 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useApp } from '../context/AppContext';
 import {
   Clock, Package, ClipboardList, Truck, Wrench, CheckCircle2,
-  Search, ShieldAlert, CheckCircle, Hash, Warehouse
+  Search, ShieldAlert, CheckCircle, Hash, Warehouse,
+  FileText, ShoppingCart, X
 } from 'lucide-react';
 import { ItemStatus } from '../types';
 
 export const DashboardView: React.FC = () => {
-  const { orders, items, repairTickets, isSyncing } = useApp();
+  const { orders, items, repairTickets, stockPOs, isSyncing } = useApp();
   const [searchTerm, setSearchTerm] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [docSearch, setDocSearch] = useState('');
 
   const pendingPurchasing = orders.filter(o => o.order_status === 'pending_purchasing' || o.order_status === 'waiting_po' || o.order_status === 'po_received_in_stock').length;
   const pendingPrep = items.filter(i => i.status === 'pending_prep').length;
@@ -30,6 +32,58 @@ export const DashboardView: React.FC = () => {
   const searchedRepairs = searchQuery ? repairTickets.filter(r => r.walkin_sn && r.walkin_sn.toLowerCase() === searchQuery.toLowerCase()) : [];
 
   const hasSearchResult = searchedItem || searchedOrder || searchedRepairs.length > 0;
+
+  // --- SO (Sales Order) & Purchase Bill (Stock PO) document search ---
+  const docQuery = docSearch.trim().toLowerCase();
+  const matchedOrders = useMemo(() => {
+    if (!docQuery) return [];
+    return orders.filter(o => {
+      const haystack = [
+        o.sales_ref,
+        o.bill_no,
+        o.customer_name,
+        o.customer_phone,
+        o.salesperson,
+        o.delivery_location,
+        ...(o.items_list || []).map(it => it.model_name),
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(docQuery);
+    });
+  }, [orders, docQuery]);
+
+  const matchedStockPOs = useMemo(() => {
+    if (!docQuery) return [];
+    return stockPOs.filter(p => {
+      const haystack = [p.po_number, p.product_name, p.supplier, p.notes]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(docQuery);
+    });
+  }, [stockPOs, docQuery]);
+
+  const orderStatusLabel = (status: string): string => {
+    switch (status) {
+      case 'pending_purchasing': return 'รอจัดซื้อ/เช็กสต๊อก';
+      case 'waiting_po': return 'รอสั่งซื้อ (PO)';
+      case 'po_received_in_stock': return 'รับของเข้าสต๊อกแล้ว';
+      case 'approved_for_prep': return 'ตัดสต๊อก/ส่งช่างเตรียม';
+      case 'fulfilled': return 'ส่งมอบสมบูรณ์';
+      default: return status;
+    }
+  };
+
+  const stockPOStatusLabel = (status: string): string => {
+    switch (status) {
+      case 'ordered': return 'สั่งซื้อแล้ว';
+      case 'received': return 'รับของเข้าแล้ว';
+      case 'cancelled': return 'ยกเลิก';
+      default: return status;
+    }
+  };
 
   // Warranty calculation
   let warrantyText = 'ยังไม่เริ่มนับประกัน (ยังไม่ติดวอย)';
@@ -184,6 +238,146 @@ export const DashboardView: React.FC = () => {
               <div className="text-xs font-medium text-slate-500 mt-1 data-meta">ติดวอย & ปิดงานแล้ว</div>
             </div>
           </>
+        )}
+      </div>
+
+      {/* SO & Purchase Bill Search */}
+      <div className="liquid-glass rounded-3xl p-6 sm:p-7 shadow-2xl border border-white/[0.08] relative">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-5">
+          <div>
+            <h2 className="text-lg font-bold text-white flex items-center gap-2">
+              <div className="p-2 rounded-xl bg-blue-500/15 text-blue-400 border border-blue-500/30">
+                <FileText className="w-5 h-5" />
+              </div>
+              <span>ค้นหาใบสั่งขาย (SO) & ใบสั่งซื้อ (Purchase Bill)</span>
+            </h2>
+            <p className="text-xs text-slate-400 mt-1">
+              ค้นหาเลขที่ SO, เลขที่บิล, ชื่อลูกค้า, พนักงานขาย หรือเลขที่ PO / Supplier ของฝ่ายจัดซื้อ
+            </p>
+          </div>
+          <div className="w-full md:w-96 relative">
+            <input
+              type="text"
+              placeholder="พิมพ์เลข SO / บิล / ลูกค้า / PO / Supplier..."
+              value={docSearch}
+              onChange={(e) => setDocSearch(e.target.value)}
+              className="w-full liquid-glass-input rounded-2xl px-4 py-2.5 pl-10 pr-10 text-sm text-white placeholder-slate-500 focus:outline-none transition"
+            />
+            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
+            {docSearch && (
+              <button
+                onClick={() => setDocSearch('')}
+                className="absolute right-3 top-3 text-slate-400 hover:text-white transition cursor-pointer"
+                aria-label="ล้างคำค้นหา"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+        </div>
+
+        {!docQuery ? (
+          <div className="rounded-2xl liquid-glass-card p-5 text-center text-slate-500 py-6">
+            <Search className="w-8 h-8 mx-auto mb-2 opacity-40 text-slate-400" />
+            <p className="text-xs">พิมพ์คำค้นหาเพื่อค้นหาใบสั่งขาย (SO) หรือใบสั่งซื้อ (Purchase Bill)</p>
+          </div>
+        ) : matchedOrders.length === 0 && matchedStockPOs.length === 0 ? (
+          <div className="rounded-2xl liquid-glass-card p-5 text-center text-slate-400 py-6">
+            <ShieldAlert className="w-8 h-8 mx-auto mb-2 text-rose-400" />
+            <p className="text-sm font-medium text-white">ไม่พบเอกสารสำหรับ "{docSearch}"</p>
+            <p className="text-xs text-slate-500 mt-1">ลองค้นหาด้วยเลขที่ SO, บิล, ชื่อลูกค้า, PO หรือ Supplier</p>
+          </div>
+        ) : (
+          <div className="space-y-5">
+            {/* Sales Orders */}
+            <div>
+              <h3 className="text-xs font-bold text-blue-400 mb-2 flex items-center gap-1.5">
+                <ShoppingCart className="w-3.5 h-3.5" />
+                ใบสั่งขาย (SO) — {matchedOrders.length} รายการ
+              </h3>
+              {matchedOrders.length === 0 ? (
+                <p className="text-xs text-slate-500 italic px-1">ไม่พบใบสั่งขายที่ตรงกัน</p>
+              ) : (
+                <div className="overflow-x-auto rounded-2xl border border-white/[0.06]">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-white/[0.04] text-slate-400 border-b border-white/[0.06]">
+                      <tr>
+                        <th className="py-2.5 px-3 whitespace-nowrap">SO / บิล</th>
+                        <th className="py-2.5 px-3 whitespace-nowrap">ลูกค้า</th>
+                        <th className="py-2.5 px-3 whitespace-nowrap">พนักงานขาย</th>
+                        <th className="py-2.5 px-3 whitespace-nowrap">สถานะ</th>
+                        <th className="py-2.5 px-3 whitespace-nowrap">วันที่</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/[0.04]">
+                      {matchedOrders.map((o) => (
+                        <tr key={o.id} className="hover:bg-white/[0.02] transition">
+                          <td className="py-2.5 px-3 whitespace-nowrap">
+                            <div className="font-mono font-bold text-[#FF6B00]">{o.sales_ref || '-'}</div>
+                            <div className="font-mono text-[11px] text-slate-400">{o.bill_no || 'รอออกบิล'}</div>
+                          </td>
+                          <td className="py-2.5 px-3 text-slate-200 whitespace-nowrap">{o.customer_name}</td>
+                          <td className="py-2.5 px-3 text-slate-400 whitespace-nowrap">{o.salesperson || '-'}</td>
+                          <td className="py-2.5 px-3 whitespace-nowrap">
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-blue-500/15 text-blue-300 border border-blue-500/30">
+                              {orderStatusLabel(o.order_status)}
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3 text-slate-400 whitespace-nowrap">
+                            {new Date(o.created_at).toLocaleDateString('th-TH')}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Purchase Bills (Stock PO) */}
+            <div>
+              <h3 className="text-xs font-bold text-emerald-400 mb-2 flex items-center gap-1.5">
+                <Package className="w-3.5 h-3.5" />
+                ใบสั่งซื้อ (Purchase Bill) — {matchedStockPOs.length} รายการ
+              </h3>
+              {matchedStockPOs.length === 0 ? (
+                <p className="text-xs text-slate-500 italic px-1">ไม่พบใบสั่งซื้อที่ตรงกัน</p>
+              ) : (
+                <div className="overflow-x-auto rounded-2xl border border-white/[0.06]">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-white/[0.04] text-slate-400 border-b border-white/[0.06]">
+                      <tr>
+                        <th className="py-2.5 px-3 whitespace-nowrap">เลขที่ PO</th>
+                        <th className="py-2.5 px-3 whitespace-nowrap">สินค้า</th>
+                        <th className="py-2.5 px-3 whitespace-nowrap">Supplier</th>
+                        <th className="py-2.5 px-3 whitespace-nowrap">จำนวน</th>
+                        <th className="py-2.5 px-3 whitespace-nowrap">สถานะ</th>
+                        <th className="py-2.5 px-3 whitespace-nowrap">วันที่</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/[0.04]">
+                      {matchedStockPOs.map((p) => (
+                        <tr key={p.id} className="hover:bg-white/[0.02] transition">
+                          <td className="py-2.5 px-3 font-mono font-bold text-emerald-400 whitespace-nowrap">{p.po_number}</td>
+                          <td className="py-2.5 px-3 text-slate-200 whitespace-nowrap">{p.product_name}</td>
+                          <td className="py-2.5 px-3 text-slate-400 whitespace-nowrap">{p.supplier || '-'}</td>
+                          <td className="py-2.5 px-3 text-slate-300 whitespace-nowrap">{p.qty}</td>
+                          <td className="py-2.5 px-3 whitespace-nowrap">
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                              {stockPOStatusLabel(p.status)}
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3 text-slate-400 whitespace-nowrap">
+                            {new Date(p.created_at).toLocaleDateString('th-TH')}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
         )}
       </div>
 

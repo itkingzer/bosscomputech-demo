@@ -5,7 +5,7 @@ import {
   Warehouse, Send, ShieldCheck, Plus, Layers, MapPin,
   UserCheck, PackagePlus, Lock, Camera, ClipboardList, ArrowRight
 } from 'lucide-react';
-import { ROUTE_DEFINITIONS, RouteCode, PRODUCT_CATEGORY_LABELS, Item } from '../types';
+import { ROUTE_DEFINITIONS, RouteCode, PRODUCT_CATEGORY_LABELS, Item, formatWarrantyDuration } from '../types';
 import { ListControls, useListControls } from './ListControls';
 import { ActivityTimeline, LatestUpdateBadge } from './ActivityTimeline';
 import { BarcodeScannerModal } from './BarcodeScannerModal';
@@ -748,6 +748,13 @@ export const PrepView: React.FC = () => {
                         </div>
 
                         <h4 className="text-base font-bold text-white mb-1 line-clamp-2">{group.model_name}</h4>
+                        {/* Warranty duration awaiting sticker */}
+                        <div className="mb-2">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                            <ShieldCheck className="w-3 h-3" />
+                            รอแปะวอยเพื่อเริ่มนับประกัน ({group.items[0]?.warranty_years || 0} ปี)
+                          </span>
+                        </div>
                         <p className="text-xs text-slate-300 font-medium data-meta">ลูกค้า: <strong className="text-white font-bold">{order ? order.customer_name : '-'}</strong></p>
                         <p className="text-xs text-slate-500 mt-1 flex items-start gap-1 data-meta">
                           <MapPin className="w-3.5 h-3.5 text-slate-400 flex-shrink-0 mt-0.5" />
@@ -1032,6 +1039,10 @@ export const PrepView: React.FC = () => {
                               onChange={(e) => setVoidDateInputs({ ...voidDateInputs, [item.id]: e.target.value })}
                               className={modalInputClass + ' font-mono'}
                             />
+                            <div className="mt-1.5 flex items-center gap-1 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
+                              <ShieldCheck className="w-3 h-3" />
+                              <span>{formatWarrantyDuration(item.warranty_years, item.warranty_months)} • เริ่มนับตั้งแต่วันแปะวอย</span>
+                            </div>
                           </div>
                         </div>
                       ))}

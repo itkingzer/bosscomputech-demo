@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
-import { UserAccount, Order, Item, RepairTicket, RepairStatus, RouteCode, JobCategory, Product, StockPO, ProductCategory, getRouteByDistrict, ActivityLog } from '../types';
+import { UserAccount, Order, Item, RepairTicket, RepairStatus, RouteCode, JobCategory, Product, StockPO, ProductCategory, getRouteByDistrict, ActivityLog, computeWarrantyExpire } from '../types';
 import { INITIAL_USERS, INITIAL_ORDERS, INITIAL_ITEMS, INITIAL_REPAIR_TICKETS, INITIAL_PRODUCTS } from '../data/initialData';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
@@ -488,6 +488,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           continue;
         }
 
+        const matchedOrderItem = (targetOrder?.items_list || []).find(oi => oi.model_name === plan.model_name);
         newItems.push({
           id: 'itm-' + Date.now() + '-' + planIdx + '-' + i,
           order_id: orderId,
@@ -504,6 +505,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           assigned_techs: [],
           prepped_at: null,
           void_date: null,
+          warranty_years: matchedOrderItem?.warranty_years ?? 0,
+          warranty_months: matchedOrderItem?.warranty_months ?? 0,
+          warranty_void_date: null,
+          warranty_expire_date: null,
           notes: `เบิกตัดสต๊อกตามบิล ${billNo} | PO: ${plan.po_no || '-'} | แหล่ง: ${plan.supplier || 'สต๊อก'}`,
           created_at: cutAt,
           activity_logs: [makeLog('ตัดสต๊อกส่งช่างเตรียม', actor?.name || 'ระบบ', actor?.role, `บิล: ${billNo}`)]
@@ -524,6 +529,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       // แปลง item in_stock ที่มีอยู่ → pending_prep ผูกกับออเดอร์ (ตัดสต๊อกจริง)
       for (const stockId of consumedStockIds) {
         const plan = itemsToCut.find(p => p.stockItemId === stockId);
+        const matchedOrderItem = (targetOrder?.items_list || []).find(oi => oi.model_name === plan?.model_name);
         await supabaseClient.from('items').update({
           order_id: orderId,
           status: 'pending_prep',
@@ -536,6 +542,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           prep_accepted_at: null,
           prepped_at: null,
           void_date: null,
+          warranty_years: matchedOrderItem?.warranty_years ?? 0,
+          warranty_months: matchedOrderItem?.warranty_months ?? 0,
+          warranty_void_date: null,
+          warranty_expire_date: null,
           notes: `ดึงจากสต๊อกคลังตามบิล ${billNo} | PO: ${plan?.po_no || '-'}`
         }).eq('id', stockId);
       }
@@ -552,6 +562,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const updated = prev.map(it => {
           if (!consumedSet.has(it.id)) return it;
           const plan = itemsToCut.find(p => p.stockItemId === it.id);
+          const matchedOrderItem = (targetOrder?.items_list || []).find(oi => oi.model_name === it.model_name);
           return {
             ...it,
             order_id: orderId,
@@ -565,6 +576,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             prep_accepted_at: null,
             prepped_at: null,
             void_date: null,
+            warranty_years: matchedOrderItem?.warranty_years ?? 0,
+            warranty_months: matchedOrderItem?.warranty_months ?? 0,
+            warranty_void_date: null,
+            warranty_expire_date: null,
             notes: `ดึงจากสต๊อกคลังตามบิล ${billNo} | PO: ${plan?.po_no || '-'}`,
             activity_logs: appendLog(it.activity_logs, makeLog('ตัดสต๊อกส่งช่างเตรียม', actor?.name || 'ระบบ', actor?.role, `บิล: ${billNo}`))
           };
@@ -794,6 +809,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       for (const stockId of stockItemIds) {
         const isRaw = rawIds.has(stockId);
         const target = items.find(i => i.id === stockId);
+        // ผูกระยะเวลาประกันจากรายการขาย (OrderItem) เข้ากับเครื่อง (Item)
+        const matchedOrderItem = (targetOrder?.items_list || []).find(oi => oi.model_name === target?.model_name);
         await supabaseClient.from('items').update({
           order_id: orderId,
           status: isRaw ? 'pending_prep' : 'prepped_in_stock',
@@ -802,6 +819,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           assigned_prep_tech: null,
           prep_accepted_at: null,
           void_date: null,
+          warranty_years: matchedOrderItem?.warranty_years ?? 0,
+          warranty_months: matchedOrderItem?.warranty_months ?? 0,
+          warranty_void_date: null,
+          warranty_expire_date: null,
           notes: isRaw
             ? `จัดสรรจากห้องสต๊อกตามบิล ${billNo} -> ส่งช่างเทส/ติดโลโก้/ยิง S/N`
             : `ตัดสต๊อกพร้อมส่งตามบิล ${billNo} (เครื่องเตรียมแล้ว - รอแปะวอย)`,
@@ -819,6 +840,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setItems(prev => prev.map(it => {
         if (!idSet.has(it.id)) return it;
         const isRaw = it.status === 'raw_stock';
+        const matchedOrderItem = (targetOrder?.items_list || []).find(oi => oi.model_name === it.model_name);
         return {
           ...it,
           order_id: orderId,
@@ -828,6 +850,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           assigned_prep_tech: null,
           prep_accepted_at: null,
           void_date: null,
+          warranty_years: matchedOrderItem?.warranty_years ?? 0,
+          warranty_months: matchedOrderItem?.warranty_months ?? 0,
+          warranty_void_date: null,
+          warranty_expire_date: null,
           notes: isRaw
             ? `จัดสรรจากห้องสต๊อกตามบิล ${billNo} -> ส่งช่างเทส/ติดโลโก้/ยิง S/N`
             : `ตัดสต๊อกพร้อมส่งตามบิล ${billNo} (เครื่องเตรียมแล้ว - รอแปะวอย)`,
@@ -946,9 +972,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const preppedAt = new Date().toISOString();
     const actor = currentUserRef.current;
+    const target = items.find(i => i.id === itemId);
+    // เริ่มนับประกันตั้งแต่วันแปะวอย (timestamp จริง) + คำนวณวันหมดประกัน
+    const warrantyExpire = computeWarrantyExpire(preppedAt, target?.warranty_years, target?.warranty_months);
     const entry = makeLog('แปะวอยประกัน', actor?.name || 'ระบบ', actor?.role, `S/N: ${sn} | วอยประกัน: ${voidDate}`);
     if (isSupabaseLive && supabaseClient) {
-      const target = items.find(i => i.id === itemId);
       supabaseClient.from('items').update({
         serial_number: sn,
         status: 'ready_for_dispatch',
@@ -956,6 +984,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         prepped_at: preppedAt,
         logo_scanned_at: preppedAt,
         warranty_applied_at: preppedAt,
+        warranty_void_date: preppedAt,
+        warranty_expire_date: warrantyExpire,
         notes: prepNote || 'ติดโลโก้ & แปะวอยพร้อมส่งออกเลย (ส่งตรงหน้าร้าน/จัดส่ง)',
         activity_logs: appendLog(target?.activity_logs, entry)
       }).eq('id', itemId);
@@ -968,6 +998,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         prepped_at: preppedAt,
         logo_scanned_at: preppedAt,
         warranty_applied_at: preppedAt,
+        warranty_void_date: preppedAt,
+        warranty_expire_date: warrantyExpire,
         notes: prepNote || 'ติดโลโก้ & แปะวอยพร้อมส่งออกเลย (ส่งตรงหน้าร้าน/จัดส่ง)',
         activity_logs: appendLog(i.activity_logs, entry)
       } : i));
@@ -979,13 +1011,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const applyVoidAndDispatch = async (itemId: string, voidDate: string) => {
     const actor = currentUserRef.current;
     const now = new Date().toISOString();
+    const target = items.find(i => i.id === itemId);
+    // เริ่มนับประกันตั้งแต่วันแปะวอย (timestamp จริง) + คำนวณวันหมดประกัน
+    const warrantyExpire = computeWarrantyExpire(now, target?.warranty_years, target?.warranty_months);
     const entry = makeLog('แปะวอยประกัน', actor?.name || 'ระบบ', actor?.role, `วอยประกัน: ${voidDate}`);
     if (isSupabaseLive && supabaseClient) {
-      const target = items.find(i => i.id === itemId);
       await supabaseClient.from('items').update({
         status: 'ready_for_dispatch',
         void_date: voidDate,
         warranty_applied_at: now,
+        warranty_void_date: now,
+        warranty_expire_date: warrantyExpire,
         activity_logs: appendLog(target?.activity_logs, entry)
       }).eq('id', itemId);
     } else {
@@ -994,6 +1030,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         status: 'ready_for_dispatch',
         void_date: voidDate,
         warranty_applied_at: now,
+        warranty_void_date: now,
+        warranty_expire_date: warrantyExpire,
         activity_logs: appendLog(i.activity_logs, entry)
       } : i));
     }
@@ -1042,15 +1080,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const preppedAt = new Date().toISOString();
     const actor = currentUserRef.current;
+    const target = items.find(i => i.id === itemId);
+    // เริ่มนับประกันตั้งแต่วันแปะวอย (timestamp จริง) + คำนวณวันหมดประกัน
+    const warrantyExpire = computeWarrantyExpire(preppedAt, target?.warranty_years, target?.warranty_months);
     const entry = makeLog('แปะวอยประกัน', actor?.name || 'ระบบ', actor?.role, `S/N: ${serialNumber} | วอยประกัน: ${voidDate}`);
     if (isSupabaseLive && supabaseClient) {
-      const target = items.find(i => i.id === itemId);
       supabaseClient.from('items').update({
         serial_number: serialNumber,
         status: 'ready_for_dispatch',
         void_date: voidDate,
         prepped_at: preppedAt,
         warranty_applied_at: preppedAt,
+        warranty_void_date: preppedAt,
+        warranty_expire_date: warrantyExpire,
         activity_logs: appendLog(target?.activity_logs, entry)
       }).eq('id', itemId);
     } else {
@@ -1061,6 +1103,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         void_date: voidDate,
         prepped_at: preppedAt,
         warranty_applied_at: preppedAt,
+        warranty_void_date: preppedAt,
+        warranty_expire_date: warrantyExpire,
         activity_logs: appendLog(i.activity_logs, entry)
       } : i));
     }
