@@ -834,10 +834,29 @@ html.light ::-webkit-scrollbar-thumb {
 
 /* Print Styles */
 @media print {
+
+  /* A4 page setup with standard margins */
+  @page {
+    size: A4 portrait;
+    margin: 12mm;
+  }
+
+  html,
+  body {
+    width: 210mm;
+    min-height: 297mm;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #FFFFFF !important;
+  }
+
+  /* Hide everything by default (display:none removes it from layout entirely,
+     so hidden modal chrome can never push the receipt onto a second page) */
   body * {
     visibility: hidden;
   }
 
+  /* Reveal only the printable regions */
   #print-section,
   #print-section *,
   #company-repair-receipt,
@@ -847,19 +866,95 @@ html.light ::-webkit-scrollbar-thumb {
     visibility: visible;
   }
 
-  #print-section,
-  #company-repair-receipt,
+  /* Hard-hide the app shell so it contributes zero height/width to the page.
+     The modal is portaled to <body>, so #root is never needed for printing. */
+  #root {
+    display: none !important;
+  }
+
+  /* Collapse the modal shell so ONLY the receipt occupies the page (no blank first page) */
+  [role="dialog"] {
+    position: static !important;
+    display: block !important;
+    overflow: visible !important;
+    max-height: none !important;
+    height: auto !important;
+    width: auto !important;
+    max-width: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: transparent !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    animation: none !important;
+  }
+
+  [role="dialog"]>div {
+    position: static !important;
+    display: block !important;
+    overflow: visible !important;
+    max-height: none !important;
+    height: auto !important;
+    width: auto !important;
+    max-width: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    transform: none !important;
+    animation: none !important;
+  }
+
+  /* Hide every direct child of the panel (drag handle, header, footer) ... */
+  [role="dialog"]>div>div {
+    display: none !important;
+  }
+
+  /* ...then reveal only the body that contains the printable receipt */
+  [role="dialog"]>div>div:has(#repair-receipt-print) {
+    display: block !important;
+    position: static !important;
+    overflow: visible !important;
+    max-height: none !important;
+    height: auto !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  /* Fallback for browsers without :has() — the receipt body is the only
+     flex-1 scroll container inside the modal panel */
+  [role="dialog"]>div>.flex-1 {
+    display: block !important;
+    position: static !important;
+    overflow: visible !important;
+    max-height: none !important;
+    height: auto !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  /* Fit the repair receipt to A4 content area (210mm - 2*12mm margins = 186mm) */
   #repair-receipt-print {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
+    position: static !important;
+    width: 186mm !important;
+    max-width: 186mm !important;
+    margin: 0 auto !important;
+    padding: 0 !important;
+    font-size: 11pt !important;
+    line-height: 1.45 !important;
     background: #FFFFFF !important;
     color: #000000 !important;
     box-shadow: none !important;
     border: none !important;
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
+    overflow: visible !important;
+    max-height: none !important;
+  }
+
+  /* Prevent the receipt from splitting awkwardly across pages */
+  #repair-receipt-print>* {
+    break-inside: avoid;
+    page-break-inside: avoid;
   }
 
   /* Force crisp black text on pure white paper regardless of theme */

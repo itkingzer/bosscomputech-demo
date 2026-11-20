@@ -97,6 +97,25 @@ CREATE TABLE IF NOT EXISTS public.repair_tickets (
         'unrepairable',
         'returned_closed'
     )),
+    -- Repair lifecycle (7 states) — วงจรชีวิตงานซ่อม / ส่งเคลม
+    repair_status TEXT NOT NULL DEFAULT 'pending_check' CHECK (repair_status IN (
+        'pending_check',
+        'repairing',
+        'waiting_parts',
+        'rma_sent',
+        'rma_returned',
+        'ready_pickup',
+        'completed'
+    )),
+    -- Service type: ซ่อมเองหน้าร้าน หรือ ส่งเคลมประกัน (RMA)
+    service_type TEXT NOT NULL DEFAULT 'in_house_repair' CHECK (service_type IN ('in_house_repair', 'rma_claim')),
+    included_accessories TEXT,              -- อุปกรณ์ที่ติดมากับเครื่อง (ระบุในใบรับซ่อม)
+    -- RMA (Warranty Claim) tracking
+    rma_supplier TEXT,                      -- SIS / Synnex / Ingram / Ascenti / WPG / ส่งตรงศูนย์แบรนด์
+    rma_tracking_no TEXT,                   -- เลขใบส่งเคลม / เลขพัสดุ
+    rma_sent_date TIMESTAMPTZ,              -- วันที่ส่งออกเคลม (ใช้คำนวณ "ส่งเคลมแล้ว X วัน")
+    rma_returned_date TIMESTAMPTZ,          -- วันที่ได้ของเคลมกลับ
+    replacement_sn TEXT,                    -- S/N ตัวใหม่กรณีศูนย์เปลี่ยนเครื่อง (เก็บ S/N เดิมใน log)
     received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     finished_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -168,6 +187,16 @@ ALTER TABLE public.repair_tickets ADD COLUMN IF NOT EXISTS received_by TEXT;
 ALTER TABLE public.repair_tickets ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ;
 ALTER TABLE public.repair_tickets ADD COLUMN IF NOT EXISTS assigned_at TIMESTAMPTZ;
 ALTER TABLE public.repair_tickets ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ;
+
+-- Migration: Repair Lifecycle & RMA (Warranty Claim) tracking columns (safe to re-run)
+ALTER TABLE public.repair_tickets ADD COLUMN IF NOT EXISTS repair_status TEXT NOT NULL DEFAULT 'pending_check';
+ALTER TABLE public.repair_tickets ADD COLUMN IF NOT EXISTS service_type TEXT NOT NULL DEFAULT 'in_house_repair';
+ALTER TABLE public.repair_tickets ADD COLUMN IF NOT EXISTS included_accessories TEXT;
+ALTER TABLE public.repair_tickets ADD COLUMN IF NOT EXISTS rma_supplier TEXT;
+ALTER TABLE public.repair_tickets ADD COLUMN IF NOT EXISTS rma_tracking_no TEXT;
+ALTER TABLE public.repair_tickets ADD COLUMN IF NOT EXISTS rma_sent_date TIMESTAMPTZ;
+ALTER TABLE public.repair_tickets ADD COLUMN IF NOT EXISTS rma_returned_date TIMESTAMPTZ;
+ALTER TABLE public.repair_tickets ADD COLUMN IF NOT EXISTS replacement_sn TEXT;
 
 ALTER TABLE public.stock_pos ADD COLUMN IF NOT EXISTS activity_logs JSONB NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE public.stock_pos ADD COLUMN IF NOT EXISTS created_by TEXT;

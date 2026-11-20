@@ -407,7 +407,10 @@ export const INITIAL_REPAIR_TICKETS: RepairTicket[] = [
     status: 'open',
     received_at: new Date(Date.now() - 3600000 * 3).toISOString(),
     finished_at: null,
-    created_at: new Date(Date.now() - 3600000 * 3).toISOString()
+    created_at: new Date(Date.now() - 3600000 * 3).toISOString(),
+    service_type: 'in_house_repair',
+    included_accessories: 'สาย Power, สายสัญญาณ (LAN/HDMI/USB), ตลับหมึกแท้ 4 สีในตัวเครื่อง',
+    repair_status: 'repairing'
   },
   // 2. งานรับซ่อมหน้าร้าน (สาย 1 ไชยา)
   {
@@ -435,6 +438,45 @@ export const INITIAL_REPAIR_TICKETS: RepairTicket[] = [
     status: 'open',
     received_at: new Date(Date.now() - 86400000).toISOString(),
     finished_at: null,
-    created_at: new Date(Date.now() - 86400000).toISOString()
+    created_at: new Date(Date.now() - 86400000).toISOString(),
+    service_type: 'in_house_repair',
+    included_accessories: 'Adapter / หม้อแปลง, สาย Power',
+    repair_status: 'pending_check'
+  },
+  // 3. งานส่งเคลมศูนย์ (RMA) - Notebook Asus ส่งเคลม Synnex
+  {
+    id: 'rep-003',
+    item_id: null,
+    ticket_no: 'REP-2569-147',
+    walkin_sn: 'ASUS-VIVO-5521',
+    customer_name: 'คุณวราภรณ์ ใจดี (ร้านกาแฟบ้านสวน)',
+    customer_phone: '081-774-5566',
+    intake_channel: 'front_desk_walkin',
+    device_model: 'ASUS VivoBook 15 OLED (K513EA)',
+    accessories: ['Adapter / หม้อแปลง', 'กระเป๋า / กล่อง'],
+    accessories_other: 'ใบเสร็จรับเงินตัวเครื่อง',
+    picked_up_by: 'คุณนก (แอดมินหน้าร้าน)',
+    district: 'เมืองสุราษฎร์ธานี',
+    route_code: 'route_5',
+    delivery_location: 'อ.เมืองสุราษฎร์ธานี',
+    job_category: 'repair_pickup',
+    fault_symptom: 'จอภาพมีเส้นแนวตั้งกลางจอ เปิดติดแต่ภาพเพี้ยน (ยังอยู่ในประกันศูนย์)',
+    repair_detail: null,
+    parts_used: null,
+    repair_outcome: null,
+    assigned_techs: [],
+    assigned_onsite_tech: null,
+    status: 'in_progress',
+    received_at: new Date(Date.now() - 86400000 * 6).toISOString(),
+    finished_at: null,
+    created_at: new Date(Date.now() - 86400000 * 6).toISOString(),
+    service_type: 'rma_claim',
+    included_accessories: 'Adapter / หม้อแปลง, กระเป๋า / กล่อง, ใบเสร็จรับเงินตัวเครื่อง',
+    rma_supplier: 'Synnex',
+    rma_tracking_no: 'SNX-RMA-2569-00871',
+    rma_sent_date: new Date(Date.now() - 86400000 * 4).toISOString(),
+    rma_returned_date: null,
+    replacement_sn: null,
+    repair_status: 'rma_sent'
   }
 ];

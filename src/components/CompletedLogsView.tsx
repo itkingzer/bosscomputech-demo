@@ -37,6 +37,14 @@ interface CompletedJob {
     warrantyVoidDate?: string | null;
     warrantyExpireDate?: string | null;
     warrantyState?: WarrantyState;
+    // --- RMA / service type (repair jobs only) ---
+    serviceType?: 'in_house_repair' | 'rma_claim';
+    rmaSupplier?: string | null;
+    rmaTrackingNo?: string | null;
+    rmaSentDate?: string | null;
+    rmaReturnedDate?: string | null;
+    replacementSn?: string | null;
+    includedAccessories?: string | null;
 }
 
 const KIND_META: Record<JobKind, { label: string; badge: string; icon: React.ElementType }> = {
@@ -169,6 +177,7 @@ export const CompletedLogsView: React.FC = () => {
                     ].filter(Boolean)
                 )
             );
+            const isRma = t.service_type === 'rma_claim' || !!t.rma_supplier || !!t.rma_tracking_no;
             jobs.push({
                 id: `repair-${t.id}`,
                 kind: 'repair',
@@ -180,8 +189,15 @@ export const CompletedLogsView: React.FC = () => {
                 completedAt: t.delivered_at || t.finished_at || t.updated_at || t.created_at,
                 startedAt: t.started_at || t.received_at || t.created_at,
                 location: t.delivery_location || t.district,
-                typeLabel: 'งานซ่อมหน้าร้าน',
-                logs: t.activity_logs || []
+                typeLabel: isRma ? 'งานส่งเคลม (RMA)' : 'งานซ่อมหน้าร้าน',
+                logs: t.activity_logs || [],
+                serviceType: isRma ? 'rma_claim' : 'in_house_repair',
+                rmaSupplier: t.rma_supplier || null,
+                rmaTrackingNo: t.rma_tracking_no || null,
+                rmaSentDate: t.rma_sent_date || null,
+                rmaReturnedDate: t.rma_returned_date || null,
+                replacementSn: t.replacement_sn || null,
+                includedAccessories: t.included_accessories || null
             });
         });
 
@@ -379,10 +395,10 @@ export const CompletedLogsView: React.FC = () => {
                                 {/* Warranty coverage (เฉพาะงานขาย/รับเองที่มีข้อมูลประกัน) */}
                                 {job.kind !== 'repair' && job.warrantyState && job.warrantyState !== 'none' && (
                                     <div className={`rounded-xl p-2.5 border text-[11px] font-semibold flex flex-wrap items-center gap-x-3 gap-y-1 ${job.warrantyState === 'expired'
-                                            ? 'bg-rose-500/10 border-rose-500/30 text-rose-600 dark:text-rose-400'
-                                            : job.warrantyState === 'waiting'
-                                                ? 'bg-amber-500/10 border-amber-500/30 text-amber-600 dark:text-amber-300'
-                                                : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400'
+                                        ? 'bg-rose-500/10 border-rose-500/30 text-rose-600 dark:text-rose-400'
+                                        : job.warrantyState === 'waiting'
+                                            ? 'bg-amber-500/10 border-amber-500/30 text-amber-600 dark:text-amber-300'
+                                            : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400'
                                         }`}>
                                         <span className="inline-flex items-center gap-1">
                                             <ShieldCheck className="w-3.5 h-3.5" />
@@ -393,14 +409,38 @@ export const CompletedLogsView: React.FC = () => {
                                                 <span className="text-slate-500 dark:text-slate-400">เริ่มนับวอย: <span className="font-bold">{formatDateDMY(job.warrantyVoidDate)}</span></span>
                                                 <span className="text-slate-500 dark:text-slate-400">หมดประกัน: <span className="font-bold">{formatDateDMY(job.warrantyExpireDate)}</span></span>
                                                 <span className={`px-1.5 py-0.5 rounded-md text-[10px] font-extrabold border ${job.warrantyState === 'expired'
-                                                        ? 'bg-rose-500/20 border-rose-500/40'
-                                                        : 'bg-emerald-500/20 border-emerald-500/40'
+                                                    ? 'bg-rose-500/20 border-rose-500/40'
+                                                    : 'bg-emerald-500/20 border-emerald-500/40'
                                                     }`}>
                                                     {job.warrantyState === 'expired' ? 'หมดประกันแล้ว' : 'อยู่ในประกัน'}
                                                 </span>
                                             </>
                                         ) : (
                                             <span>รอแปะวอยเพื่อเริ่มนับประกัน</span>
+                                        )}
+                                    </div>
+                                )}
+
+                                {/* RMA / service info (repair jobs) */}
+                                {job.kind === 'repair' && job.serviceType === 'rma_claim' && (
+                                    <div className="rounded-xl p-2.5 border text-[11px] bg-violet-500/10 border-violet-500/30 text-violet-600 dark:text-violet-300 flex flex-wrap items-center gap-x-3 gap-y-1">
+                                        <span className="inline-flex items-center gap-1 font-bold">
+                                            <Truck className="w-3.5 h-3.5" />
+                                            ส่งเคลม: {job.rmaSupplier || 'ศูนย์'}
+                                        </span>
+                                        {job.rmaTrackingNo && (
+                                            <span className="text-slate-500 dark:text-slate-400">เลขใบเคลม: <span className="font-mono font-bold">{job.rmaTrackingNo}</span></span>
+                                        )}
+                                        {job.rmaSentDate && (
+                                            <span className="text-slate-500 dark:text-slate-400">ส่งเมื่อ: <span className="font-bold">{formatDateDMY(job.rmaSentDate)}</span></span>
+                                        )}
+                                        {job.rmaReturnedDate && (
+                                            <span className="text-slate-500 dark:text-slate-400">ได้กลับ: <span className="font-bold">{formatDateDMY(job.rmaReturnedDate)}</span></span>
+                                        )}
+                                        {job.replacementSn && (
+                                            <span className="px-1.5 py-0.5 rounded-md text-[10px] font-extrabold border bg-cyan-500/20 border-cyan-500/40 text-cyan-600 dark:text-cyan-300">
+                                                S/N ใหม่: {job.replacementSn}
+                                            </span>
                                         )}
                                     </div>
                                 )}

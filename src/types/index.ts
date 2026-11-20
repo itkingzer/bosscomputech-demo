@@ -409,6 +409,113 @@ export type RepairStatus =
   | 'unrepairable'          // ซ่อมไม่ได้ (คืนเครื่อง/ไม่คุ้มซ่อม)
   | 'returned_closed';      // ปิดงานส่งมอบคืนลูกค้า
 
+// ==============================================================================
+// Repair Lifecycle & RMA (In-House Repair / Supplier Claim) Tracking
+// ==============================================================================
+export type ServiceType = 'in_house_repair' | 'rma_claim';
+
+export type RepairLifecycleStatus =
+  | 'pending_check'   // รอตรวจเช็ก
+  | 'repairing'       // กำลังซ่อมหน้าร้าน
+  | 'waiting_parts'   // รออะไหล่
+  | 'rma_sent'        // ส่งเคลมศูนย์แล้ว
+  | 'rma_returned'    // ได้ของเคลมกลับแล้ว / รอเทส
+  | 'ready_pickup'    // ซ่อม/เคลมเสร็จ รอลูกค้ารับ
+  | 'completed';      // ส่งมอบเรียบร้อย
+
+export const SERVICE_TYPE_LABELS: Record<ServiceType, string> = {
+  in_house_repair: 'ซ่อมเองหน้าร้าน',
+  rma_claim: 'ส่งเคลมประกัน (RMA)'
+};
+
+export const RMA_SUPPLIER_OPTIONS = [
+  'SIS',
+  'Synnex',
+  'Ingram',
+  'Ascenti',
+  'WPG',
+  'ส่งตรงศูนย์แบรนด์'
+] as const;
+
+export const REPAIR_LIFECYCLE_META: Record<
+  RepairLifecycleStatus,
+  { label: string; badge: string; dot: string }
+> = {
+  pending_check: {
+    label: 'รอตรวจเช็ก',
+    badge: 'bg-sky-500/15 text-sky-600 dark:text-sky-400 border-sky-500/30',
+    dot: 'bg-sky-500'
+  },
+  repairing: {
+    label: 'กำลังซ่อมหน้าร้าน',
+    badge: 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30',
+    dot: 'bg-amber-500'
+  },
+  waiting_parts: {
+    label: 'รออะไหล่',
+    badge: 'bg-orange-500/15 text-orange-600 dark:text-orange-400 border-orange-500/30',
+    dot: 'bg-orange-500'
+  },
+  rma_sent: {
+    label: 'ส่งเคลมศูนย์แล้ว',
+    badge: 'bg-violet-500/15 text-violet-600 dark:text-violet-400 border-violet-500/30',
+    dot: 'bg-violet-500'
+  },
+  rma_returned: {
+    label: 'ได้ของเคลมกลับแล้ว / รอเทส',
+    badge: 'bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 border-cyan-500/30',
+    dot: 'bg-cyan-500'
+  },
+  ready_pickup: {
+    label: 'ซ่อม/เคลมเสร็จ รอลูกค้ารับ',
+    badge: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30',
+    dot: 'bg-emerald-500'
+  },
+  completed: {
+    label: 'ส่งมอบเรียบร้อย',
+    badge: 'bg-slate-500/15 text-slate-600 dark:text-slate-300 border-slate-500/30',
+    dot: 'bg-slate-500'
+  }
+};
+
+export const REPAIR_LIFECYCLE_ORDER: RepairLifecycleStatus[] = [
+  'pending_check',
+  'repairing',
+  'waiting_parts',
+  'rma_sent',
+  'rma_returned',
+  'ready_pickup',
+  'completed'
+];
+
+// คำนวณจำนวนวันเต็มที่ผ่านไปจาก ISO timestamp (ใช้แสดง "ส่งเคลมแล้ว X วัน")
+export function getElapsedDays(iso?: string | null): number | null {
+  if (!iso) return null;
+  const start = new Date(iso).getTime();
+  if (isNaN(start)) return null;
+  const diff = Date.now() - start;
+  if (diff < 0) return 0;
+  return Math.floor(diff / 86400000);
+}
+
+// แปลง ISO timestamp -> ค่าเริ่มต้นของ <input type="date"> (YYYY-MM-DD)
+export function toDateInputValue(iso?: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${mm}-${dd}`;
+}
+
+// แปลงค่า <input type="date"> (YYYY-MM-DD) -> ISO timestamp (ต้นวัน เวลาท้องถิ่น)
+export function fromDateInputValue(value?: string | null): string | null {
+  if (!value) return null;
+  const d = new Date(`${value}T00:00:00`);
+  if (isNaN(d.getTime())) return null;
+  return d.toISOString();
+}
+
 export type IntakeChannel = 'front_desk_walkin' | 'onsite_pickup';
 
 export interface RepairTicket {
@@ -446,4 +553,14 @@ export interface RepairTicket {
   started_at?: string | null;         // ISO timestamp เริ่มปฏิบัติงาน / รับเครื่องซ่อม
   assigned_at?: string | null;        // ISO timestamp จัดสายรถ & มอบหมายช่าง
   delivered_at?: string | null;       // ISO timestamp ส่งมอบ / ปิดงานซ่อม
+
+  // --- In-House Repair / Supplier RMA Tracking ---
+  service_type?: ServiceType;              // 'in_house_repair' | 'rma_claim'
+  included_accessories?: string | null;    // อุปกรณ์ที่ติดมากับเครื่อง (สรุปเป็นข้อความ)
+  rma_supplier?: string | null;            // SIS / Synnex / Ingram / Ascenti / WPG / ส่งตรงศูนย์แบรนด์
+  rma_tracking_no?: string | null;         // เลขใบส่งเคลม / เลขพัสดุขนส่ง
+  rma_sent_date?: string | null;           // ISO timestamp วันที่ส่งออกเคลม
+  rma_returned_date?: string | null;       // ISO timestamp วันที่ได้รับของเคลมกลับจากศูนย์
+  replacement_sn?: string | null;          // S/N ใหม่กรณีศูนย์เปลี่ยนตัวใหม่ (original เก็บใน walkin_sn)
+  repair_status?: RepairLifecycleStatus;   // สถานะวงจรชีวิตงานซ่อม/RMA
 }

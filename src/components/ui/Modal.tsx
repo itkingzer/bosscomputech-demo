@@ -126,11 +126,11 @@ export const Modal: React.FC<ModalProps> = ({
                             type="button"
                             onClick={onClose}
                             aria-label="ปิดหน้าต่าง"
-                            className="p-2 rounded-xl text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white
+                            className="p-2.5 rounded-xl text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white
                 bg-slate-100 dark:bg-white/[0.06] hover:bg-slate-200 dark:hover:bg-white/[0.12]
-                transition-all duration-150 active:scale-[0.97] min-w-[44px] min-h-[44px] flex items-center justify-center flex-shrink-0"
+                transition-all duration-150 active:scale-[0.97] min-w-[52px] min-h-[52px] flex items-center justify-center flex-shrink-0"
                         >
-                            <X className="w-5 h-5" />
+                            <X className="w-6 h-6" />
                         </button>
                     </div>
                 )}

@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
-import { UserAccount, Order, Item, RepairTicket, RepairStatus, RouteCode, JobCategory, Product, StockPO, ProductCategory, getRouteByDistrict, ActivityLog, computeWarrantyExpire } from '../types';
+import { UserAccount, Order, Item, RepairTicket, RepairStatus, RepairLifecycleStatus, ServiceType, RouteCode, JobCategory, Product, StockPO, ProductCategory, getRouteByDistrict, ActivityLog, computeWarrantyExpire, REPAIR_LIFECYCLE_META } from '../types';
 import { INITIAL_USERS, INITIAL_ORDERS, INITIAL_ITEMS, INITIAL_REPAIR_TICKETS, INITIAL_PRODUCTS } from '../data/initialData';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
@@ -80,6 +80,23 @@ interface AppContextType {
   createRepairTicket: (ticket: Omit<RepairTicket, 'id' | 'ticket_no' | 'created_at' | 'received_at' | 'status'>) => void;
   completeRepairTicket: (ticketId: string, status: RepairStatus, outcome: string, detail: string, parts: string) => void;
   closeRepairTicket: (ticketId: string) => void;
+  /** อัปเดตสถานะวงจรชีวิตงานซ่อม/RMA + บันทึก activity log อัตโนมัติ */
+  updateRepairLifecycle: (ticketId: string, repairStatus: RepairLifecycleStatus, note?: string) => void;
+  /** อัปเดตข้อมูล RMA (Supplier / Tracking / วันที่ส่ง-รับคืน / S/N ใหม่) + activity log อัตโนมัติ */
+  updateRmaTracking: (
+    ticketId: string,
+    patch: {
+      service_type?: ServiceType;
+      included_accessories?: string | null;
+      rma_supplier?: string | null;
+      rma_tracking_no?: string | null;
+      rma_sent_date?: string | null;
+      rma_returned_date?: string | null;
+      replacement_sn?: string | null;
+      repair_status?: RepairLifecycleStatus;
+    },
+    note?: string
+  ) => void;
 
   // Settings & DB
   isSupabaseLive: boolean;
@@ -1264,7 +1281,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       created_at: now,
       activity_logs: [intakeLog],
       received_by: intakeLog.actor,
-      started_at: now
+      started_at: now,
+      // --- In-House Repair / RMA defaults ---
+      service_type: ticketData.service_type || 'in_house_repair',
+      included_accessories:
+        ticketData.included_accessories ??
+        [...(ticketData.accessories || []), ticketData.accessories_other || ''].filter(Boolean).join(', '),
+      repair_status: ticketData.repair_status || 'pending_check'
     };
 
     if (isSupabaseLive && supabaseClient) {
@@ -1284,6 +1307,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const finishedAt = new Date().toISOString();
     const actor = currentUserRef.current;
     const entry = makeLog('ปิดงานซ่อม', actor?.name || 'ระบบ', actor?.role, `ผล: ${outcome}${parts ? ` | อะไหล่: ${parts}` : ''}`);
+    // ซ่อมเสร็จ / ส่งเคลม -> พร้อมส่งมอบ (รอลูกค้ารับ)
+    const nextLifecycle: RepairLifecycleStatus =
+      status === 'returned_closed' ? 'completed' : 'ready_pickup';
     if (isSupabaseLive && supabaseClient) {
       const target = repairTickets.find(t => t.id === ticketId);
       await supabaseClient.from('repair_tickets').update({
@@ -1292,6 +1318,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         repair_detail: detail,
         parts_used: parts,
         finished_at: finishedAt,
+        repair_status: nextLifecycle,
         activity_logs: appendLog(target?.activity_logs, entry)
       }).eq('id', ticketId);
     } else {
@@ -1302,6 +1329,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         repair_detail: detail,
         parts_used: parts,
         finished_at: finishedAt,
+        repair_status: nextLifecycle,
         activity_logs: appendLog(t.activity_logs, entry)
       } : t));
     }
@@ -1315,6 +1343,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const target = repairTickets.find(t => t.id === ticketId);
       await supabaseClient.from('repair_tickets').update({
         status: 'returned_closed',
+        repair_status: 'completed',
         delivered_at: now,
         activity_logs: appendLog(target?.activity_logs, entry)
       }).eq('id', ticketId);
@@ -1322,7 +1351,113 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setRepairTickets(prev => prev.map(t => t.id === ticketId ? {
         ...t,
         status: 'returned_closed',
+        repair_status: 'completed',
         delivered_at: now,
+        activity_logs: appendLog(t.activity_logs, entry)
+      } : t));
+    }
+  };
+
+  // อัปเดตสถานะวงจรชีวิตงานซ่อม/RMA (พร้อมบันทึก activity log อัตโนมัติ)
+  const updateRepairLifecycle = async (
+    ticketId: string,
+    repairStatus: RepairLifecycleStatus,
+    note?: string
+  ) => {
+    const actor = currentUserRef.current;
+    const now = new Date().toISOString();
+    const label = REPAIR_LIFECYCLE_META[repairStatus]?.label || repairStatus;
+    const entry = makeLog(`อัปเดตสถานะ: ${label}`, actor?.name || 'ระบบ', actor?.role, note);
+
+    // สถานะซ่อมเสร็จ/ส่งมอบ -> sync กับ legacy status ให้หน้าร้าน/Onsite เห็นตรงกัน
+    const legacyPatch: Partial<RepairTicket> = {};
+    if (repairStatus === 'ready_pickup') {
+      legacyPatch.status = 'repaired';
+      legacyPatch.finished_at = now;
+    } else if (repairStatus === 'completed') {
+      legacyPatch.status = 'returned_closed';
+      legacyPatch.delivered_at = now;
+    } else if (repairStatus === 'repairing' || repairStatus === 'waiting_parts') {
+      legacyPatch.status = 'in_progress';
+    } else if (repairStatus === 'pending_check') {
+      legacyPatch.status = 'open';
+    }
+
+    if (isSupabaseLive && supabaseClient) {
+      const target = repairTickets.find(t => t.id === ticketId);
+      await supabaseClient.from('repair_tickets').update({
+        repair_status: repairStatus,
+        ...legacyPatch,
+        activity_logs: appendLog(target?.activity_logs, entry)
+      }).eq('id', ticketId);
+    } else {
+      setRepairTickets(prev => prev.map(t => t.id === ticketId ? {
+        ...t,
+        repair_status: repairStatus,
+        ...legacyPatch,
+        activity_logs: appendLog(t.activity_logs, entry)
+      } : t));
+    }
+  };
+
+  // อัปเดตข้อมูล RMA (Supplier / Tracking / วันที่ / S/N ใหม่) + activity log อัตโนมัติ
+  const updateRmaTracking = async (
+    ticketId: string,
+    patch: {
+      service_type?: ServiceType;
+      included_accessories?: string | null;
+      rma_supplier?: string | null;
+      rma_tracking_no?: string | null;
+      rma_sent_date?: string | null;
+      rma_returned_date?: string | null;
+      replacement_sn?: string | null;
+      repair_status?: RepairLifecycleStatus;
+    },
+    note?: string
+  ) => {
+    const actor = currentUserRef.current;
+    const target = repairTickets.find(t => t.id === ticketId);
+
+    // สร้างข้อความ log อธิบายสิ่งที่เปลี่ยน
+    const changes: string[] = [];
+    if (patch.service_type && patch.service_type !== target?.service_type) {
+      changes.push(patch.service_type === 'rma_claim' ? 'เปลี่ยนเป็นส่งเคลมประกัน (RMA)' : 'เปลี่ยนเป็นซ่อมเองหน้าร้าน');
+    }
+    if (patch.rma_supplier !== undefined && patch.rma_supplier !== target?.rma_supplier) {
+      changes.push(`Supplier: ${patch.rma_supplier || '-'}`);
+    }
+    if (patch.rma_tracking_no !== undefined && patch.rma_tracking_no !== target?.rma_tracking_no) {
+      changes.push(`เลขใบส่งเคลม: ${patch.rma_tracking_no || '-'}`);
+    }
+    if (patch.rma_sent_date !== undefined && patch.rma_sent_date !== target?.rma_sent_date) {
+      changes.push(`วันที่ส่งเคลม: ${patch.rma_sent_date ? new Date(patch.rma_sent_date).toLocaleDateString('th-TH') : '-'}`);
+    }
+    if (patch.rma_returned_date !== undefined && patch.rma_returned_date !== target?.rma_returned_date) {
+      changes.push(`วันที่ได้ของคืน: ${patch.rma_returned_date ? new Date(patch.rma_returned_date).toLocaleDateString('th-TH') : '-'}`);
+    }
+    if (patch.replacement_sn !== undefined && patch.replacement_sn !== target?.replacement_sn) {
+      changes.push(`S/N ใหม่: ${patch.replacement_sn || '-'}`);
+    }
+    if (patch.repair_status && patch.repair_status !== target?.repair_status) {
+      changes.push(`สถานะ: ${REPAIR_LIFECYCLE_META[patch.repair_status]?.label || patch.repair_status}`);
+    }
+
+    const entry = makeLog(
+      'อัปเดตข้อมูล RMA / การส่งเคลม',
+      actor?.name || 'ระบบ',
+      actor?.role,
+      note || changes.join(' | ') || 'อัปเดตข้อมูล RMA'
+    );
+
+    if (isSupabaseLive && supabaseClient) {
+      await supabaseClient.from('repair_tickets').update({
+        ...patch,
+        activity_logs: appendLog(target?.activity_logs, entry)
+      }).eq('id', ticketId);
+    } else {
+      setRepairTickets(prev => prev.map(t => t.id === ticketId ? {
+        ...t,
+        ...patch,
         activity_logs: appendLog(t.activity_logs, entry)
       } : t));
     }
@@ -1400,6 +1535,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       createRepairTicket,
       completeRepairTicket,
       closeRepairTicket,
+      updateRepairLifecycle,
+      updateRmaTracking,
       isSupabaseLive,
       isSyncing,
       supabaseUrl,
