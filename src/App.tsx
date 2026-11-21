@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useApp } from './context/AppContext';
 import { LoginPage } from './components/LoginPage';
 import { DashboardView } from './components/DashboardView';
@@ -12,32 +13,71 @@ import { AdminUserManagement } from './components/AdminUserManagement';
 import { SettingsModal } from './components/SettingsModal';
 import { ProfitDashboardView } from './components/ProfitDashboardView';
 import { CompletedLogsView } from './components/CompletedLogsView';
+import { RepairReceiptPrintDocument } from './components/RepairReceiptPrintDocument';
 import {
   LayoutDashboard, FilePlus2, Boxes, PackageCheck,
   Store, Truck, Wrench, Shield, LogOut, Settings, RotateCcw,
-  ChevronRight, Menu, X, Sparkles, Sun, Moon, TrendingUp, History
+  ChevronRight, Menu, X, Sparkles, Sun, Moon, TrendingUp, History,
+  Eraser, AlertTriangle, CheckCircle2
 } from 'lucide-react';
 import companyLogo from './assets/BossCom.jpg';
 
 export const App: React.FC = () => {
   const {
     currentUser, logout, isSupabaseLive, isSyncing,
-    orders, items, repairTickets, resetAllDemoData,
-    theme, toggleTheme
+    orders, items, repairTickets, resetAllDemoData, clearDemoKeepStock,
+    theme, toggleTheme, printingRepairTicket, closePrintRepairReceipt
   } = useApp();
 
-  // If not logged in, show Login Page
-  if (!currentUser) {
-    return <LoginPage />;
-  }
+  // Sync theme class & data-theme on <html> so all document.body Portal modals respond immediately
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.toggle('dark', theme === 'dark');
+    root.classList.toggle('light', theme === 'light');
+    root.setAttribute('data-theme', theme);
+  }, [theme]);
 
   // Active view tab state (default to user's assigned role tab, or dashboard for admin)
   const [activeTab, setActiveTab] = useState<string>(() => {
+    if (!currentUser) return 'dashboard';
     return currentUser.role === 'admin' ? 'dashboard' : currentUser.role;
   });
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isClearDemoModalOpen, setIsClearDemoModalOpen] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+
+  // Reset activeTab & transient overlays whenever the logged-in user changes (including logout)
+  useEffect(() => {
+    if (!currentUser) {
+      setIsSettingsOpen(false);
+      setIsClearDemoModalOpen(false);
+      setIsMobileSidebarOpen(false);
+      return;
+    }
+    setActiveTab(currentUser.role === 'admin' ? 'dashboard' : currentUser.role);
+  }, [currentUser?.id]);
+
+  useEffect(() => {
+    if (!toastMessage) return;
+    const timer = window.setTimeout(() => setToastMessage(null), 4500);
+    return () => window.clearTimeout(timer);
+  }, [toastMessage]);
+
+  useEffect(() => {
+    if (!isClearDemoModalOpen) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsClearDemoModalOpen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [isClearDemoModalOpen]);
   // Desktop drawer: allow collapsing the persistent sidebar (default open)
   const [isDesktopSidebarOpen, setIsDesktopSidebarOpen] = useState(true);
 
@@ -80,6 +120,11 @@ export const App: React.FC = () => {
       };
     }
   }, [isMobileSidebarOpen]);
+
+  // If not logged in, show Login Page (must be after all hooks to preserve hook order on logout)
+  if (!currentUser) {
+    return <LoginPage />;
+  }
 
   // Badge counts
   const pendingAccounting = orders.filter(o => o.order_status === 'pending_purchasing' || o.order_status === 'waiting_po' || o.order_status === 'po_received_in_stock').length;
@@ -295,6 +340,18 @@ export const App: React.FC = () => {
               <Settings className={`w-3.5 h-3.5 text-slate-400 ${isSyncing ? 'animate-spin' : ''}`} />
             </button>
 
+            {/* Clear Demo Keep Stock (mobile drawer action) */}
+            <button
+              onClick={() => {
+                setIsMobileSidebarOpen(false);
+                setIsClearDemoModalOpen(true);
+              }}
+              className="sm:hidden w-full flex items-center justify-center gap-2 px-3 py-2.5 min-h-[44px] rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/30 text-xs font-semibold transition-all duration-150 active:scale-[0.97] cursor-pointer"
+            >
+              <Eraser className="w-3.5 h-3.5 flex-shrink-0" />
+              <span className="truncate">เริ่มใช้งานจริง (ล้างบิลทดสอบ / เหลือสต๊อก)</span>
+            </button>
+
             {/* Logout button */}
             <button
               onClick={logout}
@@ -388,6 +445,16 @@ export const App: React.FC = () => {
             </button>
 
             <button
+              onClick={() => setIsClearDemoModalOpen(true)}
+              title="เคลียร์ข้อมูล Demo (เหลือไว้เฉพาะคลังสินค้า)"
+              aria-label="เริ่มใช้งานจริง (ล้างบิลทดสอบ / เหลือสต๊อก)"
+              className="hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/30 text-[11px] font-semibold transition-all duration-150 active:scale-[0.97] cursor-pointer min-h-[40px] whitespace-nowrap"
+            >
+              <Eraser className="w-3.5 h-3.5 flex-shrink-0" />
+              <span>เริ่มใช้งานจริง (ล้างบิลทดสอบ / เหลือสต๊อก)</span>
+            </button>
+
+            <button
               onClick={() => {
                 if (confirm('ต้องการรีเซ็ตข้อมูลตัวอย่างกลับเป็นค่าเริ่มต้นหรือไม่?')) {
                   resetAllDemoData();
@@ -443,6 +510,107 @@ export const App: React.FC = () => {
 
       {/* Settings Modal */}
       <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
+
+      {/* Confirm Clear Demo Keep Stock Modal */}
+      {isClearDemoModalOpen &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-4 animate-fade-in"
+            onClick={() => setIsClearDemoModalOpen(false)}
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="clear-demo-modal-title"
+              onClick={(e) => e.stopPropagation()}
+              className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-t-3xl sm:rounded-3xl w-full sm:w-[95vw] max-w-md p-5 sm:p-6 pb-[max(1.25rem,env(safe-area-inset-bottom))] relative animate-modal-pop"
+            >
+              <div className="sm:hidden flex justify-center pt-1 pb-3">
+                <span className="h-1.5 w-10 rounded-full bg-slate-300 dark:bg-white/20" />
+              </div>
+              <button
+                onClick={() => setIsClearDemoModalOpen(false)}
+                aria-label="ปิดหน้าต่างยืนยัน"
+                className="absolute top-3 right-3 sm:top-4 sm:right-4 p-2 rounded-xl text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/[0.06] transition-all duration-150 active:scale-[0.97] cursor-pointer min-w-[40px] min-h-[40px] flex items-center justify-center"
+              >
+                <X className="w-4 h-4" />
+              </button>
+
+              <div className="flex items-start gap-3 mb-4 pr-8">
+                <div className="p-2.5 rounded-2xl bg-amber-100 text-amber-800 border border-amber-300 dark:bg-amber-500/15 dark:text-amber-400 dark:border-amber-500/30 flex-shrink-0">
+                  <AlertTriangle className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 id="clear-demo-modal-title" className="text-base font-bold text-slate-900 dark:text-white">
+                    เคลียร์ข้อมูล Demo (เหลือไว้เฉพาะคลังสินค้า)
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    เตรียมระบบให้สะอาดพร้อมเริ่มใช้งานจริง
+                  </p>
+                </div>
+              </div>
+
+              <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 dark:bg-amber-500/10 dark:border-amber-500/30 dark:text-slate-200 text-xs leading-relaxed mb-5">
+                ยืนยันการล้างข้อมูลทดสอบทั้งหมด (บิลขาย, PO, คิวงานซ่อม, ประวัติ Log) โดยจะยังคงรายการสินค้าและยอดสต๊อกในคลังไว้เหมือนเดิม?
+              </div>
+
+              <div className="flex items-center gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setIsClearDemoModalOpen(false)}
+                  className="flex-1 px-4 py-2.5 min-h-[44px] rounded-2xl border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-white/[0.04] hover:bg-slate-200 dark:hover:bg-white/[0.08] text-slate-700 dark:text-slate-300 font-semibold text-xs transition-all duration-150 active:scale-[0.97] cursor-pointer"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearDemoKeepStock();
+                    setIsClearDemoModalOpen(false);
+                    setToastMessage('เคลียร์ข้อมูลทดสอบเรียบร้อย พร้อมเริ่มใช้งานจริง (คงเหลือข้อมูลคลังสินค้าไว้แล้ว)');
+                  }}
+                  className="flex-1 px-4 py-2.5 min-h-[44px] rounded-2xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] hover:to-[#FF6B00] text-black font-extrabold text-xs transition-all duration-150 active:scale-[0.97] cursor-pointer shadow-lg shadow-[#FF6B00]/25 border border-white/20"
+                >
+                  ยืนยันล้างข้อมูลทดสอบ
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
+
+      {/* Toast Notification */}
+      {toastMessage &&
+        createPortal(
+          <div className="fixed top-4 right-4 left-4 sm:left-auto z-[10000] max-w-md animate-slide-up">
+            <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-2xl px-4 py-3 border border-emerald-300 dark:border-emerald-500/40 shadow-2xl flex items-center gap-3">
+              <div className="p-1.5 rounded-xl bg-emerald-100 text-emerald-700 border border-emerald-300 dark:bg-emerald-500/15 dark:text-emerald-400 dark:border-emerald-500/30 flex-shrink-0">
+                <CheckCircle2 className="w-4 h-4" />
+              </div>
+              <p className="text-xs font-semibold text-slate-900 dark:text-white flex-1 leading-relaxed">
+                {toastMessage}
+              </p>
+              <button
+                type="button"
+                onClick={() => setToastMessage(null)}
+                aria-label="ปิดการแจ้งเตือน"
+                className="p-1 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/[0.06] transition cursor-pointer flex-shrink-0"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>,
+          document.body
+        )}
+
+      {/* Dedicated Portal Print Layer for Repair Receipts (#repair-print-root) */}
+      {printingRepairTicket &&
+        createPortal(
+          <div className="hidden print:block print-portal-wrapper">
+            <RepairReceiptPrintDocument ticket={printingRepairTicket} />
+          </div>,
+          document.getElementById('repair-print-root') || document.body
+        )}
     </div>
   );
 };

@@ -165,67 +165,67 @@ export const AdminUserManagement: React.FC = () => {
 
       {/* Add User Modal */}
       {showAddModal && createPortal(
-        <div className="fixed inset-0 z-[9999] bg-black/70 backdrop-blur-md flex items-end sm:items-center justify-center sm:p-4 animate-fade-in">
-          <div className="liquid-glass rounded-t-3xl sm:rounded-3xl w-full sm:w-[95vw] max-w-md max-h-[92dvh] sm:max-h-[90vh] overflow-y-auto overscroll-contain p-4 sm:p-7 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-2xl border border-white/[0.12] relative animate-modal-pop">
+        <div className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-4 animate-fade-in">
+          <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-t-3xl sm:rounded-3xl w-full sm:w-[95vw] max-w-md max-h-[92dvh] sm:max-h-[90vh] overflow-y-auto overscroll-contain p-4 sm:p-7 pb-[max(1rem,env(safe-area-inset-bottom))] relative animate-modal-pop">
             <div className="sm:hidden flex justify-center pt-1 pb-3">
-              <span className="h-1.5 w-10 rounded-full bg-white/20" />
+              <span className="h-1.5 w-10 rounded-full bg-slate-300 dark:bg-white/20" />
             </div>
-            <h3 className="text-base font-bold text-white mb-1 flex items-center gap-2">
+            <h3 className="text-base font-bold text-slate-900 dark:text-white mb-1 flex items-center gap-2">
               <UserPlus className="w-5 h-5 text-[#FF6B00]" />
               เพิ่มผู้ใช้งานใหม่
             </h3>
-            <p className="text-xs text-slate-400 mb-4">กำหนดสิทธิ์และแผนกที่ผู้ใช้รายนี้สามารถเข้าถึงได้</p>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">กำหนดสิทธิ์และแผนกที่ผู้ใช้รายนี้สามารถเข้าถึงได้</p>
 
             <form onSubmit={handleAddUser} className="space-y-4 text-xs">
               <div>
-                <label className="block text-slate-300 font-medium mb-1">ชื่อ - นามสกุล *</label>
+                <label className="block text-slate-700 dark:text-slate-300 font-medium mb-1">ชื่อ - นามสกุล *</label>
                 <input
                   type="text"
                   required
                   placeholder="เช่น ช่างมินทร์ (สาย Onsite ลาดพร้าว)"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  className="w-full liquid-glass-input rounded-2xl px-3.5 py-2 text-white focus:outline-none"
+                  className="w-full rounded-2xl px-3.5 py-2 bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 placeholder-slate-400 focus:outline-none focus:border-blue-500"
                 />
               </div>
 
               <div>
-                <label className="block text-slate-300 font-medium mb-1">Username (สำหรับล็อกอิน) *</label>
+                <label className="block text-slate-700 dark:text-slate-300 font-medium mb-1">Username (สำหรับล็อกอิน) *</label>
                 <input
                   type="text"
                   required
                   placeholder="เช่น min_onsite"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  className="w-full liquid-glass-input rounded-2xl px-3.5 py-2 text-white font-mono focus:outline-none"
+                  className="w-full rounded-2xl px-3.5 py-2 bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 placeholder-slate-400 font-mono focus:outline-none focus:border-blue-500"
                 />
               </div>
 
               <div>
-                <label className="block text-slate-300 font-medium mb-1">บทบาท / แผนก (Role) *</label>
+                <label className="block text-slate-700 dark:text-slate-300 font-medium mb-1">บทบาท / แผนก (Role) *</label>
                 <select
                   value={role}
                   onChange={(e) => setRole(e.target.value as UserRole)}
-                  className="w-full liquid-glass-input rounded-2xl px-3.5 py-2 text-white focus:outline-none"
+                  className="w-full rounded-2xl px-3.5 py-2 bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 focus:outline-none focus:border-blue-500"
                 >
-                  <option value="sales" className="bg-[#12141A]">1. ฝ่ายขาย (Sales)</option>
-                  <option value="accounting" className="bg-[#12141A]">2. บัญชี & สต๊อก (Accounting)</option>
-                  <option value="prep" className="bg-[#12141A]">3. ช่างเตรียมสินค้า (Prep Tech)</option>
-                  <option value="frontdesk" className="bg-[#12141A]">4. แอดมินหน้าร้าน (Front-Desk Dispatcher)</option>
-                  <option value="onsite" className="bg-[#12141A]">5. ช่าง Onsite (Field Tech)</option>
-                  <option value="repair" className="bg-[#12141A]">6. ช่างซ่อมในร้าน (In-House Repair)</option>
-                  <option value="admin" className="bg-[#12141A]">ผู้ดูแลระบบ (Admin)</option>
+                  <option value="sales" className="bg-white dark:bg-[#12141A]">1. ฝ่ายขาย (Sales)</option>
+                  <option value="accounting" className="bg-white dark:bg-[#12141A]">2. บัญชี & สต๊อก (Accounting)</option>
+                  <option value="prep" className="bg-white dark:bg-[#12141A]">3. ช่างเตรียมสินค้า (Prep Tech)</option>
+                  <option value="frontdesk" className="bg-white dark:bg-[#12141A]">4. แอดมินหน้าร้าน (Front-Desk Dispatcher)</option>
+                  <option value="onsite" className="bg-white dark:bg-[#12141A]">5. ช่าง Onsite (Field Tech)</option>
+                  <option value="repair" className="bg-white dark:bg-[#12141A]">6. ช่างซ่อมในร้าน (In-House Repair)</option>
+                  <option value="admin" className="bg-white dark:bg-[#12141A]">ผู้ดูแลระบบ (Admin)</option>
                 </select>
               </div>
 
               <div>
-                <label className="block text-slate-300 font-medium mb-1">เบอร์โทรศัพท์</label>
+                <label className="block text-slate-700 dark:text-slate-300 font-medium mb-1">เบอร์โทรศัพท์</label>
                 <input
                   type="text"
                   placeholder="08x-xxx-xxxx"
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
-                  className="w-full liquid-glass-input rounded-2xl px-3.5 py-2 text-white focus:outline-none"
+                  className="w-full rounded-2xl px-3.5 py-2 bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 placeholder-slate-400 focus:outline-none focus:border-blue-500"
                 />
               </div>
 
@@ -239,7 +239,7 @@ export const AdminUserManagement: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setShowAddModal(false)}
-                  className="px-4 py-3 rounded-2xl border border-white/[0.08] text-slate-400 hover:text-white transition cursor-pointer"
+                  className="px-6 py-3 rounded-2xl border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-transparent text-slate-700 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-white/[0.06] transition cursor-pointer"
                 >
                   ยกเลิก
                 </button>

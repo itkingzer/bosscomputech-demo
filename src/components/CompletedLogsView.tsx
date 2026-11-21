@@ -2,10 +2,10 @@ import React, { useMemo, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import {
     History, Search, FileCheck2, Truck, Store, Wrench, PackageCheck,
-    Clock, User, MapPin, ChevronDown, ChevronUp, CalendarClock, Timer, ShieldCheck
+    Clock, User, MapPin, ChevronDown, ChevronUp, CalendarClock, Timer, ShieldCheck, Printer
 } from 'lucide-react';
 import {
-    ActivityLog, Order, RepairTicket, formatThaiDateTime, getLatestLog,
+    ActivityLog, Order, Item, RepairTicket, formatThaiDateTime, getLatestLog,
     formatWarrantyDuration, formatDateDMY, getWarrantyState, WarrantyState
 } from '../types';
 import { ActivityTimeline } from './ActivityTimeline';
@@ -31,6 +31,7 @@ interface CompletedJob {
     location?: string;
     typeLabel: string;          // ป้ายประเภทงาน
     logs: ActivityLog[];
+    ticket?: RepairTicket;      // raw ticket for repair jobs
     // --- Warranty coverage ---
     warrantyYears?: number;
     warrantyMonths?: number;
@@ -93,6 +94,10 @@ const formatDuration = (startIso?: string | null, endIso?: string | null): strin
 const isSalesCompleted = (o: Order): boolean =>
     o.order_status === 'fulfilled' || !!o.fulfilled_at;
 
+// งาน Onsite ที่ช่างปิดเอง (เช่น รับเครื่องกลับซ่อมและส่งต่อให้ช่างหน้าร้าน)
+const isOnsiteJobClosed = (i: Item): boolean =>
+    i.status === 'delivered' && !!i.delivered_at;
+
 const isPickupCompleted = (o: Order): boolean =>
     (o.order_status === 'fulfilled' || !!o.fulfilled_at) &&
     o.delivery_mode === 'customer_pickup';
@@ -101,7 +106,7 @@ const isRepairCompleted = (t: RepairTicket): boolean =>
     t.status === 'returned_closed' || !!t.delivered_at;
 
 export const CompletedLogsView: React.FC = () => {
-    const { orders, items, repairTickets } = useApp();
+    const { orders, items, repairTickets, triggerPrintRepairReceipt } = useApp();
 
     const [search, setSearch] = useState('');
     const [activeTab, setActiveTab] = useState<FilterTab>('all');
@@ -165,6 +170,40 @@ export const CompletedLogsView: React.FC = () => {
             });
         });
 
+        // 1.5) Onsite jobs closed by the onsite technician (handoff to in-house repair)
+        // ข้ามเครื่องที่ถูกนับเป็นงานส่งมอบของออเดอร์ไปแล้ว เพื่อไม่ให้ซ้ำใน Completed Logs
+        const fulfilledOrderIds = new Set(
+            orders.filter((o) => isSalesCompleted(o)).map((o) => o.id)
+        );
+        items.forEach((it) => {
+            if (!isOnsiteJobClosed(it)) return;
+            if (it.order_id && fulfilledOrderIds.has(it.order_id)) return;
+            const order = orders.find((o) => o.id === it.order_id);
+            const techs = Array.from(
+                new Set(
+                    [
+                        ...(it.assigned_techs || []),
+                        it.assigned_onsite_tech || '',
+                        it.assigned_prep_tech || ''
+                    ].filter(Boolean)
+                )
+            );
+            jobs.push({
+                id: `onsite-${it.id}`,
+                kind: 'sales',
+                refNo: it.serial_number || it.id,
+                customerName: order?.customer_name || '-',
+                productName: it.model_name,
+                serialNumber: it.serial_number || null,
+                techs,
+                completedAt: it.delivered_at || it.updated_at || it.created_at,
+                startedAt: it.assigned_at || it.created_at,
+                location: order?.delivery_location || order?.district,
+                typeLabel: 'ปิดงาน Onsite (ส่งต่อช่างหน้าร้าน)',
+                logs: it.activity_logs || []
+            });
+        });
+
         // 2) Repair tickets (closed / delivered)
         repairTickets.forEach((t) => {
             if (!isRepairCompleted(t)) return;
@@ -191,6 +230,7 @@ export const CompletedLogsView: React.FC = () => {
                 location: t.delivery_location || t.district,
                 typeLabel: isRma ? 'งานส่งเคลม (RMA)' : 'งานซ่อมหน้าร้าน',
                 logs: t.activity_logs || [],
+                ticket: t,
                 serviceType: isRma ? 'rma_claim' : 'in_house_repair',
                 rmaSupplier: t.rma_supplier || null,
                 rmaTrackingNo: t.rma_tracking_no || null,
@@ -445,23 +485,38 @@ export const CompletedLogsView: React.FC = () => {
                                     </div>
                                 )}
 
-                                {/* Expand toggle + timeline */}
+                                {/* Expand toggle + timeline + actions */}
                                 <div className="pt-2 border-t border-white/[0.08]">
-                                    <button
-                                        type="button"
-                                        onClick={() => toggleExpanded(job.id)}
-                                        aria-expanded={isOpen}
-                                        className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-lg
+                                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                                        <button
+                                            type="button"
+                                            onClick={() => toggleExpanded(job.id)}
+                                            aria-expanded={isOpen}
+                                            className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-lg
                       bg-slate-100 hover:bg-slate-200 text-slate-600
                       dark:bg-white/5 dark:hover:bg-white/10 dark:text-slate-300
                       border border-slate-200 dark:border-white/10 transition-colors cursor-pointer"
-                                    >
-                                        {isOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                                        ดูประวัติไทม์ไลน์ (Log)
-                                        <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-slate-200 dark:bg-white/10 text-[10px] font-bold">
-                                            {job.logs.length}
-                                        </span>
-                                    </button>
+                                        >
+                                            {isOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                                            ดูประวัติไทม์ไลน์ (Log)
+                                            <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-slate-200 dark:bg-white/10 text-[10px] font-bold">
+                                                {job.logs.length}
+                                            </span>
+                                        </button>
+
+                                        {job.kind === 'repair' && job.ticket && (
+                                            <button
+                                                type="button"
+                                                onClick={() => triggerPrintRepairReceipt(job.ticket!)}
+                                                className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-lg
+                        bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400
+                        border border-amber-500/30 transition-colors cursor-pointer active:scale-95"
+                                            >
+                                                <Printer className="w-3.5 h-3.5" />
+                                                พิมพ์ใบรับซ่อมย้อนหลัง
+                                            </button>
+                                        )}
+                                    </div>
 
                                     {isOpen && (
                                         <div className="mt-2">

@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
-import { UserAccount, Order, Item, RepairTicket, RepairStatus, RepairLifecycleStatus, ServiceType, RouteCode, JobCategory, Product, StockPO, ProductCategory, getRouteByDistrict, ActivityLog, computeWarrantyExpire, REPAIR_LIFECYCLE_META } from '../types';
-import { INITIAL_USERS, INITIAL_ORDERS, INITIAL_ITEMS, INITIAL_REPAIR_TICKETS, INITIAL_PRODUCTS } from '../data/initialData';
+import { UserAccount, Order, Item, RepairTicket, RepairStatus, RepairLifecycleStatus, ServiceType, RouteCode, JobCategory, Product, StockPO, ProductCategory, getRouteByDistrict, ActivityLog, computeWarrantyExpire, REPAIR_LIFECYCLE_META, ReceivedChannel, ROUTE_DEFINITIONS, WarrantyLookupResult, lookupWarrantyBySerial as lookupWarrantyHelper } from '../types';
+import { INITIAL_USERS, INITIAL_ORDERS, INITIAL_ITEMS, INITIAL_REPAIR_TICKETS, INITIAL_PRODUCTS, INITIAL_STOCK_POS } from '../data/initialData';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 // ==============================================================================
@@ -25,6 +25,29 @@ const appendLog = (logs: ActivityLog[] | undefined | null, entry: ActivityLog): 
   ...(logs || []),
   entry
 ];
+
+// ------------------------------------------------------------------------------
+// Onsite -> In-House Repair handoff payload
+// ------------------------------------------------------------------------------
+export interface OnsiteHandoffPayload {
+  /** งาน Onsite ต้นทาง (ถ้ามี) — จะถูกปิดงานทันทีหลังส่งต่อ */
+  origin?: {
+    kind: 'item' | 'ticket';
+    id: string;
+  } | null;
+  customer_name: string;
+  customer_phone?: string;
+  district: string;
+  delivery_location?: string;
+  province_custom?: string;
+  device_model?: string;
+  walkin_sn?: string;
+  accessories?: string[];
+  accessories_other?: string;
+  fault_symptom: string;
+  received_channel?: ReceivedChannel;
+  send_to_repair_shop?: boolean;
+}
 
 interface AppContextType {
   currentUser: UserAccount | null;
@@ -76,10 +99,69 @@ interface AppContextType {
   assignRepairTicketOnsite: (ticketId: string, techs: string[], jobCategory?: JobCategory) => void;
   acceptOnsiteJob: (itemId: string, techName: string) => void;
   confirmOnsiteDelivery: (itemId: string, deliveryNotes?: string) => void;
+  /**
+   * ช่าง Onsite ส่งต่อเครื่องเข้าคิวซ่อมหน้าร้าน (Handoff to Repair Tech)
+   * - สร้างใบรับซ่อมใหม่ (REP-...) ด้วย received_channel = 'onsite_pickup'
+   * - ปิดงาน Onsite เดิมทันที (item -> delivered / ticket -> returned_closed)
+   * - บันทึก activity log ฝั่งงาน Onsite ว่า "รับเครื่องกลับซ่อมและส่งต่อให้ช่างหน้าร้าน (ปิดงาน Onsite)"
+   */
+  completeOnsiteJobHandoff: (payload: OnsiteHandoffPayload) => Promise<{ ticketNo: string; ticket: RepairTicket }>;
 
-  createRepairTicket: (ticket: Omit<RepairTicket, 'id' | 'ticket_no' | 'created_at' | 'received_at' | 'status'>) => void;
+  /**
+   * รับแจ้งเหตุ / นัดช่างออกหน้างาน (Onsite Service / Pickup Call) จากฝ่ายหน้าร้าน
+   * - สร้างใบงาน Onsite (REP-...) ด้วย intake_channel = 'onsite_pickup'
+   * - มอบหมายทีมช่าง Onsite ทันที (assigned_techs + assigned_onsite_tech + assigned_at)
+   * - งานจะไปปรากฏในคิว OnsiteView (assignedPickups) ให้ช่างกดรับงานต่อ
+   * คืนค่า ticket ที่สร้างขึ้นเพื่อให้หน้าร้านพิมพ์ใบรับแจ้งงานได้ทันที
+   */
+  createOnsiteServiceCall: (payload: {
+    customer_name: string;
+    customer_phone?: string;
+    district: string;
+    delivery_location?: string;
+    device_model?: string;
+    walkin_sn?: string;
+    fault_symptom: string;
+    job_category?: JobCategory;
+    assigned_techs: string[];
+    accessories?: string[];
+    accessories_other?: string;
+  }) => Promise<RepairTicket>;
+
+  createRepairTicket: (ticket: Omit<RepairTicket, 'id' | 'ticket_no' | 'created_at' | 'received_at' | 'status'>) => Promise<RepairTicket>;
   completeRepairTicket: (ticketId: string, status: RepairStatus, outcome: string, detail: string, parts: string) => void;
   closeRepairTicket: (ticketId: string) => void;
+  /**
+   * ส่งเครื่องซ่อมที่เสร็จแล้วเข้าคิวจัดสายรถ (Route & Technician Dispatch Queue)
+   * - status = 'awaiting_dispatch', is_repair_return = true
+   * - บันทึก activity log: "ส่งเข้าคิวจัดสายรถเพื่อมอบหมายช่าง Onsite ส่งคืนลูกค้า โดย [ชื่อพนักงาน]"
+   */
+  queueRepairTicketForDispatch: (ticketId: string) => void;
+  updateOrderDeliveryDate: (orderId: string, deliveryDate: string) => void;
+  updateRepairTicketDueDate: (ticketId: string, dueDate: string) => void;
+  /**
+   * ลูกค้ารับเครื่องซ่อมเองที่หน้าร้าน (ปิดงานทันที)
+   * - repair_status = 'completed', status = 'returned_closed', returned_by = 'รับเองหน้าร้าน'
+   * - บันทึก activity log + ย้ายเข้า CompletedLogsView
+   */
+  selfPickupRepairTicket: (ticketId: string, note?: string) => void;
+  /**
+   * มอบหมายช่าง Onsite นำเครื่องซ่อมที่ซ่อมเสร็จแล้วไปส่งคืนลูกค้า
+   * - ตั้ง is_repair_return = true, assigned_techs, route_code, status = 'dispatched_onsite'
+   * - งานจะไปปรากฏใน OnsiteView (คิวส่งคืนเครื่องซ่อม)
+   */
+  dispatchRepairReturnOnsite: (
+    ticketId: string,
+    techs: string[],
+    routeCode?: RouteCode,
+    note?: string
+  ) => void;
+  /**
+   * ช่าง Onsite ยืนยันส่งมอบเครื่องซ่อมคืนลูกค้าเสร็จสิ้น
+   * - repair_status = 'completed', status = 'returned_closed', returned_by = ชื่อช่าง Onsite
+   * - บันทึก activity log + ย้ายเข้า CompletedLogsView
+   */
+  completeRepairReturnOnsite: (ticketId: string, note?: string) => void;
   /** อัปเดตสถานะวงจรชีวิตงานซ่อม/RMA + บันทึก activity log อัตโนมัติ */
   updateRepairLifecycle: (ticketId: string, repairStatus: RepairLifecycleStatus, note?: string) => void;
   /** อัปเดตข้อมูล RMA (Supplier / Tracking / วันที่ส่ง-รับคืน / S/N ใหม่) + activity log อัตโนมัติ */
@@ -97,6 +179,46 @@ interface AppContextType {
     },
     note?: string
   ) => void;
+  /**
+   * บันทึกข้อมูลงานซ่อมทั้งหมดในครั้งเดียว (สถานะ + RMA + รายละเอียด/อะไหล่/ค่าใช้จ่าย)
+   * พร้อม append activity log เพียง 1 รายการ และ sync legacy status ให้ CompletedLogsView
+   */
+  saveRepairTicket: (
+    ticketId: string,
+    patch: {
+      service_type?: ServiceType;
+      included_accessories?: string | null;
+      rma_supplier?: string | null;
+      rma_tracking_no?: string | null;
+      rma_sent_date?: string | null;
+      rma_returned_date?: string | null;
+      replacement_sn?: string | null;
+      repair_status?: RepairLifecycleStatus;
+      repair_detail?: string | null;
+      parts_used?: string | null;
+      repair_cost?: number | null;
+      repaired_by?: string | null;
+    }
+  ) => void;
+  /**
+   * แก้ไขข้อมูลใบรับซ่อมเบื้องต้น (ลูกค้า / อุปกรณ์ / S/N / อาการเสีย / อุปกรณ์ที่ติดมา)
+   * พร้อมบันทึก activity log "แก้ไขข้อมูลใบรับซ่อม"
+   */
+  updateRepairTicket: (
+    ticketId: string,
+    patch: {
+      customer_name?: string;
+      customer_phone?: string | null;
+      device_model?: string | null;
+      walkin_sn?: string;
+      fault_symptom?: string;
+      included_accessories?: string | null;
+      accessories?: string[];
+      accessories_other?: string | null;
+    }
+  ) => void;
+  /** ลบใบรับซ่อมออกจาก state + localStorage / Supabase */
+  deleteRepairTicket: (ticketId: string) => void;
 
   // Settings & DB
   isSupabaseLive: boolean;
@@ -107,10 +229,19 @@ interface AppContextType {
   updateSupabaseConfig: (url: string, key: string) => void;
   disconnectSupabase: () => void;
   resetAllDemoData: () => void;
+  clearDemoKeepStock: () => void;
 
   // Theme Mode (Liquid Glass Dark / Light)
   theme: 'dark' | 'light';
   toggleTheme: () => void;
+
+  // Print Repair Receipt Portal State
+  printingRepairTicket: RepairTicket | null;
+  triggerPrintRepairReceipt: (ticket: RepairTicket) => void;
+  closePrintRepairReceipt: () => void;
+
+  // S/N Warranty Lookup
+  lookupWarrantyBySerial: (serialNumber: string | null | undefined) => WarrantyLookupResult;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -180,14 +311,43 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setTheme(prev => (prev === 'dark' ? 'light' : 'dark'));
   };
 
+  // Dedicated Print Repair Receipt State (mounts in #repair-print-root portal outside any closing modal)
+  const [printingRepairTicket, setPrintingRepairTicket] = useState<RepairTicket | null>(null);
+
+  const closePrintRepairReceipt = () => {
+    setPrintingRepairTicket(null);
+  };
+
+  const triggerPrintRepairReceipt = (ticket: RepairTicket) => {
+    if (!ticket) return;
+    setPrintingRepairTicket(ticket);
+    const cleanup = () => setPrintingRepairTicket(null);
+    window.addEventListener('afterprint', cleanup, { once: true });
+    // Double requestAnimationFrame guarantees the DOM inside #repair-print-root is fully painted before opening print dialog
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        window.print();
+        // Clear after print dialog closes (for browsers where window.print() blocks synchronously)
+        window.setTimeout(cleanup, 300);
+      });
+    });
+  };
+
+  const lookupWarrantyBySerial = (serialNumber: string | null | undefined): WarrantyLookupResult => {
+    return lookupWarrantyHelper(serialNumber, items, orders);
+  };
+
   useEffect(() => {
     localStorage.setItem('boss_theme', theme);
+    const root = document.documentElement;
     if (theme === 'light') {
-      document.documentElement.classList.add('light');
-      document.documentElement.classList.remove('dark');
+      root.classList.add('light');
+      root.classList.remove('dark');
+      root.setAttribute('data-theme', 'light');
     } else {
-      document.documentElement.classList.add('dark');
-      document.documentElement.classList.remove('light');
+      root.classList.add('dark');
+      root.classList.remove('light');
+      root.setAttribute('data-theme', 'dark');
     }
   }, [theme]);
 
@@ -1256,6 +1416,137 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  // ---------------------------------------------------------------------------
+  // Onsite -> In-House Repair handoff
+  // สร้างใบรับซ่อมใหม่ + ปิดงาน Onsite ต้นทางทันที (ย้ายเข้า CompletedLogsView)
+  // ---------------------------------------------------------------------------
+  const completeOnsiteJobHandoff = async (
+    payload: OnsiteHandoffPayload
+  ): Promise<{ ticketNo: string; ticket: RepairTicket }> => {
+    const actor = currentUserRef.current;
+    const now = new Date().toISOString();
+    const techName = actor?.name || 'ช่าง Onsite';
+    const thaiYear = new Date().getFullYear() + 543;
+    const generatedTicketNo = `REP-${thaiYear}-${Math.floor(100 + Math.random() * 900)}`;
+    const routeCode = payload.district ? getRouteByDistrict(payload.district) : ('route_5' as RouteCode);
+    const finalSn = payload.walkin_sn?.trim() || `SN-ONSITE-${Math.floor(1000 + Math.random() * 9000)}`;
+    const accessories = payload.accessories || [];
+    const accessoriesOther = payload.accessories_other?.trim() || '';
+
+    const receivedChannel: ReceivedChannel =
+      payload.received_channel || (payload.origin ? 'onsite_pickup' : 'onsite_service_sheet');
+
+    const logAction =
+      receivedChannel === 'onsite_service_sheet'
+        ? `ออกใบ Service Sheet รับฝาก/งานเพิ่มหน้างาน โดย ${techName}`
+        : `รับเครื่องซ่อมจากหน้างาน โดย ${techName}`;
+
+    const intakeLog = makeLog(
+      logAction,
+      techName,
+      actor?.role,
+      `ใบงาน: ${generatedTicketNo} | ลูกค้า: ${payload.customer_name}`
+    );
+
+    const newTicket: RepairTicket = {
+      id: 'rep-' + Date.now(),
+      item_id: null,
+      ticket_no: generatedTicketNo,
+      walkin_sn: finalSn,
+      customer_name: payload.customer_name.trim(),
+      customer_phone: payload.customer_phone?.trim() || null,
+      // ใบรับซ่อมที่สร้างจากการส่งต่อ/ออก Service Sheet ถือเป็นงานส่งเข้าห้องช่างหน้าร้าน (in_house_repair)
+      // ไม่ใช่คิว Onsite — จึงไม่ใช้ intake_channel = 'onsite_pickup' เพื่อไม่ให้การ์ดค้างในคิวช่าง Onsite
+      intake_channel: 'front_desk_walkin',
+      received_by: techName,
+      received_channel: receivedChannel,
+      device_model: payload.device_model?.trim() || null,
+      accessories,
+      accessories_other: accessoriesOther || null,
+      picked_up_by: techName,
+      fault_symptom: payload.fault_symptom.trim(),
+      repair_detail:
+        receivedChannel === 'onsite_service_sheet'
+          ? `งาน Service Sheet เพิ่มเติมหน้างาน บันทึกโดย ${techName}`
+          : `รับเครื่องจากหน้างานโดย ${techName} ส่งเข้าห้องช่างซ่อม`,
+      parts_used: null,
+      repair_outcome: null,
+      district: payload.district,
+      route_code: routeCode,
+      delivery_location: payload.delivery_location?.trim() || '',
+      province_custom: routeCode === 'route_6' ? payload.province_custom : undefined,
+      job_category: 'repair_pickup',
+      assigned_techs: [],
+      assigned_onsite_tech: null,
+      status: 'open',
+      received_at: now,
+      finished_at: null,
+      created_at: now,
+      started_at: now,
+      activity_logs: [intakeLog],
+      service_type: 'in_house_repair',
+      included_accessories:
+        [...accessories, accessoriesOther].filter(Boolean).join(', ') || null,
+      repair_status: 'pending_check'
+    };
+
+    // 1) สร้างใบรับซ่อมใหม่ (REP-...) เข้าคิวช่างหน้าร้าน
+    if (isSupabaseLive && supabaseClient) {
+      await supabaseClient.from('repair_tickets').insert([newTicket]);
+    } else {
+      setRepairTickets(prev => [newTicket, ...prev]);
+    }
+
+    // 2) ปิดงาน Onsite ต้นทางทันที + บันทึก activity log
+    //    ใช้ functional setState (prev) เพื่ออ่านข้อมูลล่าสุดเสมอ — ไม่ใช้ closure ที่อาจ stale
+    const origin = payload.origin;
+    if (origin) {
+      const closeAction = `รับเครื่องกลับซ่อมและส่งต่อให้ช่างหน้าร้าน (ปิดงาน Onsite) โดย ${techName}`;
+      const closeNote = `ส่งต่อเป็นใบรับซ่อม ${generatedTicketNo}`;
+      const closeEntry = makeLog(closeAction, techName, actor?.role, closeNote);
+
+      if (origin.kind === 'item') {
+        if (isSupabaseLive && supabaseClient) {
+          const { data: freshItem } = await supabaseClient
+            .from('items').select('activity_logs').eq('id', origin.id).single();
+          await supabaseClient.from('items').update({
+            status: 'delivered',
+            delivered_at: now,
+            activity_logs: appendLog(freshItem?.activity_logs, closeEntry)
+          }).eq('id', origin.id);
+        } else {
+          setItems(prev => prev.map(i => i.id === origin.id ? {
+            ...i,
+            status: 'delivered' as const,
+            delivered_at: now,
+            activity_logs: appendLog(i.activity_logs, closeEntry)
+          } : i));
+        }
+      } else {
+        if (isSupabaseLive && supabaseClient) {
+          const { data: freshTicket } = await supabaseClient
+            .from('repair_tickets').select('activity_logs').eq('id', origin.id).single();
+          await supabaseClient.from('repair_tickets').update({
+            status: 'returned_closed',
+            repair_status: 'completed',
+            delivered_at: now,
+            activity_logs: appendLog(freshTicket?.activity_logs, closeEntry)
+          }).eq('id', origin.id);
+        } else {
+          setRepairTickets(prev => prev.map(t => t.id === origin.id ? {
+            ...t,
+            status: 'returned_closed' as const,
+            repair_status: 'completed' as const,
+            delivered_at: now,
+            activity_logs: appendLog(t.activity_logs, closeEntry)
+          } : t));
+        }
+      }
+    }
+
+    return { ticketNo: generatedTicketNo, ticket: newTicket };
+  };
+
   const createRepairTicket = async (ticketData: Omit<RepairTicket, 'id' | 'ticket_no' | 'created_at' | 'received_at' | 'status'>) => {
     const routeCode = ticketData.district ? getRouteByDistrict(ticketData.district) : ('route_5' as RouteCode);
     const thaiYear = new Date().getFullYear() + 543;
@@ -1264,9 +1555,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const actor = currentUserRef.current;
     const now = new Date().toISOString();
+    // ระบุช่องทางผู้รับเครื่อง: ช่าง Onsite รับกลับมาจากหน้างาน หรือ รับที่หน้าร้าน
+    const receivedChannel: ReceivedChannel =
+      ticketData.received_channel ||
+      (ticketData.intake_channel === 'onsite_pickup' ? 'onsite_pickup' : 'front_desk');
+    const receivedByName = ticketData.received_by || actor?.name || 'ระบบ';
+    const intakeAction =
+      receivedChannel === 'onsite_pickup'
+        ? `รับเครื่องซ่อมจากหน้างาน โดย ${receivedByName}`
+        : 'เริ่มปฏิบัติงาน / รับเครื่องซ่อม';
     const intakeLog = makeLog(
-      'เริ่มปฏิบัติงาน / รับเครื่องซ่อม',
-      actor?.name || 'ระบบ',
+      intakeAction,
+      receivedByName,
       actor?.role,
       `ใบงาน: ${generatedTicketNo} | ลูกค้า: ${ticketData.customer_name}`
     );
@@ -1280,7 +1580,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       finished_at: null,
       created_at: now,
       activity_logs: [intakeLog],
-      received_by: intakeLog.actor,
+      received_by: receivedByName,
+      received_channel: receivedChannel,
       started_at: now,
       // --- In-House Repair / RMA defaults ---
       service_type: ticketData.service_type || 'in_house_repair',
@@ -1295,6 +1596,93 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } else {
       setRepairTickets(prev => [newTicket, ...prev]);
     }
+    return newTicket;
+  };
+
+  // ---------------------------------------------------------------------------
+  // Front-Desk -> Onsite Service / Pickup Call
+  // รับแจ้งเหตุทางโทรศัพท์/หน้าร้าน แล้วสร้างใบงาน Onsite + มอบหมายช่างทันที
+  // ---------------------------------------------------------------------------
+  const createOnsiteServiceCall = async (payload: {
+    customer_name: string;
+    customer_phone?: string;
+    district: string;
+    delivery_location?: string;
+    device_model?: string;
+    walkin_sn?: string;
+    fault_symptom: string;
+    job_category?: JobCategory;
+    assigned_techs: string[];
+    accessories?: string[];
+    accessories_other?: string;
+  }): Promise<RepairTicket> => {
+    const routeCode = payload.district ? getRouteByDistrict(payload.district) : ('route_5' as RouteCode);
+    const thaiYear = new Date().getFullYear() + 543;
+    const randomNum = Math.floor(100 + Math.random() * 900);
+    const generatedTicketNo = `REP-${thaiYear}-${randomNum}`;
+
+    const actor = currentUserRef.current;
+    const now = new Date().toISOString();
+    const techsArr = Array.isArray(payload.assigned_techs) ? payload.assigned_techs : [];
+    const primaryTech = techsArr[0] || '';
+    const jobCategory: JobCategory = payload.job_category || 'repair_pickup';
+    const receivedByName = actor?.name || 'ระบบ';
+
+    const intakeLog = makeLog(
+      'รับแจ้งเหตุ / นัดช่างออกหน้างาน',
+      receivedByName,
+      actor?.role,
+      `ใบงาน: ${generatedTicketNo} | ลูกค้า: ${payload.customer_name} | ทีมช่าง: ${techsArr.join(', ') || '-'}`
+    );
+    const assignLog = makeLog(
+      'จัดสายรถ & มอบหมายช่าง',
+      receivedByName,
+      actor?.role,
+      `ทีมช่าง: ${techsArr.join(', ') || '-'}`
+    );
+
+    const newTicket: RepairTicket = {
+      id: 'rep-' + Date.now(),
+      item_id: null,
+      ticket_no: generatedTicketNo,
+      walkin_sn: payload.walkin_sn || '',
+      customer_name: payload.customer_name,
+      customer_phone: payload.customer_phone || null,
+      intake_channel: 'onsite_pickup',
+      device_model: payload.device_model || null,
+      accessories: payload.accessories || [],
+      accessories_other: payload.accessories_other || null,
+      fault_symptom: payload.fault_symptom,
+      repair_detail: null,
+      parts_used: null,
+      repair_outcome: null,
+      district: payload.district,
+      route_code: routeCode,
+      delivery_location: payload.delivery_location || '',
+      job_category: jobCategory,
+      assigned_techs: techsArr,
+      assigned_onsite_tech: primaryTech,
+      status: 'open',
+      received_at: now,
+      finished_at: null,
+      created_at: now,
+      activity_logs: [intakeLog, assignLog],
+      received_by: receivedByName,
+      received_channel: 'onsite_pickup',
+      started_at: now,
+      assigned_at: now,
+      service_type: 'in_house_repair',
+      included_accessories:
+        [...(payload.accessories || []), payload.accessories_other || ''].filter(Boolean).join(', '),
+      repair_status: 'pending_check'
+    };
+
+    if (isSupabaseLive && supabaseClient) {
+      await supabaseClient.from('repair_tickets').insert([newTicket]);
+    } else {
+      setRepairTickets(prev => [newTicket, ...prev]);
+    }
+    return newTicket;
   };
 
   const completeRepairTicket = async (
@@ -1358,6 +1746,158 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  // ---------------------------------------------------------------------------
+  // Repair Return / Handover (ready_pickup -> completed)
+  // 1) ส่งเข้าคิวจัดสายรถ  2) ลูกค้ารับเองหน้าร้าน  3) มอบหมายช่าง Onsite ไปส่งคืน  4) ช่าง Onsite ส่งมอบเสร็จ
+  // ---------------------------------------------------------------------------
+  const queueRepairTicketForDispatch = async (ticketId: string) => {
+    const actor = currentUserRef.current;
+    const actorName = actor?.name || 'หน้าร้าน';
+    const entry = makeLog(
+      `ส่งเข้าคิวจัดสายรถเพื่อมอบหมายช่าง Onsite ส่งคืนลูกค้า โดย ${actorName}`,
+      actorName,
+      actor?.role,
+      'ย้ายเข้าคิวจัดสายรถ & มอบหมายช่าง Onsite'
+    );
+    const patch: Partial<RepairTicket> = {
+      status: 'awaiting_dispatch',
+      is_repair_return: true
+    };
+    if (isSupabaseLive && supabaseClient) {
+      const target = repairTickets.find(t => t.id === ticketId);
+      await supabaseClient.from('repair_tickets').update({
+        ...patch,
+        activity_logs: appendLog(target?.activity_logs, entry)
+      }).eq('id', ticketId);
+    } else {
+      setRepairTickets(prev => prev.map(t => t.id === ticketId ? {
+        ...t,
+        ...patch,
+        activity_logs: appendLog(t.activity_logs, entry)
+      } : t));
+    }
+  };
+
+  const updateOrderDeliveryDate = async (orderId: string, deliveryDate: string) => {
+    const clean = deliveryDate.trim() || undefined;
+    if (isSupabaseLive && supabaseClient) {
+      await supabaseClient.from('orders').update({ delivery_date: clean || null }).eq('id', orderId);
+    } else {
+      setOrders(prev => prev.map(o => o.id === orderId ? { ...o, delivery_date: clean } : o));
+    }
+  };
+
+  const updateRepairTicketDueDate = async (ticketId: string, dueDate: string) => {
+    const clean = dueDate.trim() || null;
+    if (isSupabaseLive && supabaseClient) {
+      await supabaseClient.from('repair_tickets').update({ due_date: clean }).eq('id', ticketId);
+    } else {
+      setRepairTickets(prev => prev.map(t => t.id === ticketId ? { ...t, due_date: clean } : t));
+    }
+  };
+
+  const selfPickupRepairTicket = async (ticketId: string, note?: string) => {
+    const actor = currentUserRef.current;
+    const now = new Date().toISOString();
+    const entry = makeLog(
+      'ลูกค้ารับเครื่องซ่อมเองที่หน้าร้าน / ปิดงาน',
+      actor?.name || 'ระบบ',
+      actor?.role,
+      note || 'ส่งมอบคืนลูกค้าเรียบร้อย (รับเองหน้าร้าน)'
+    );
+    if (isSupabaseLive && supabaseClient) {
+      const target = repairTickets.find(t => t.id === ticketId);
+      await supabaseClient.from('repair_tickets').update({
+        status: 'returned_closed',
+        repair_status: 'completed',
+        returned_by: 'รับเองหน้าร้าน',
+        delivered_at: now,
+        activity_logs: appendLog(target?.activity_logs, entry)
+      }).eq('id', ticketId);
+    } else {
+      setRepairTickets(prev => prev.map(t => t.id === ticketId ? {
+        ...t,
+        status: 'returned_closed',
+        repair_status: 'completed',
+        returned_by: 'รับเองหน้าร้าน',
+        delivered_at: now,
+        activity_logs: appendLog(t.activity_logs, entry)
+      } : t));
+    }
+  };
+
+  const dispatchRepairReturnOnsite = async (
+    ticketId: string,
+    techs: string[],
+    routeCode?: RouteCode,
+    note?: string
+  ) => {
+    const techsArr = Array.isArray(techs) ? techs : [techs];
+    const primaryTech = techsArr[0] || '';
+    const actor = currentUserRef.current;
+    const now = new Date().toISOString();
+    const routeLabel = routeCode ? (ROUTE_DEFINITIONS[routeCode]?.shortName || routeCode) : 'ไม่ระบุสายรถ';
+    const entry = makeLog(
+      `มอบหมายช่าง Onsite (${techsArr.join(', ') || '-'}) นำเครื่องซ่อมส่งคืนลูกค้า สายรถ ${routeLabel}`,
+      actor?.name || 'ระบบ',
+      actor?.role,
+      note
+    );
+    const patch: Partial<RepairTicket> = {
+      status: 'dispatched_onsite',
+      is_repair_return: true,
+      assigned_techs: techsArr,
+      assigned_onsite_tech: primaryTech,
+      job_category: 'repair_return',
+      assigned_at: now
+    };
+    if (routeCode) patch.route_code = routeCode;
+    if (isSupabaseLive && supabaseClient) {
+      const target = repairTickets.find(t => t.id === ticketId);
+      await supabaseClient.from('repair_tickets').update({
+        ...patch,
+        activity_logs: appendLog(target?.activity_logs, entry)
+      }).eq('id', ticketId);
+    } else {
+      setRepairTickets(prev => prev.map(t => t.id === ticketId ? {
+        ...t,
+        ...patch,
+        activity_logs: appendLog(t.activity_logs, entry)
+      } : t));
+    }
+  };
+
+  const completeRepairReturnOnsite = async (ticketId: string, note?: string) => {
+    const actor = currentUserRef.current;
+    const now = new Date().toISOString();
+    const techName = actor?.name || 'ช่าง Onsite';
+    const entry = makeLog(
+      `ส่งมอบเครื่องซ่อมคืนลูกค้าเสร็จสิ้น โดย ${techName}`,
+      techName,
+      actor?.role,
+      note || 'ช่าง Onsite ส่งคืนเครื่องซ่อมให้ลูกค้าเรียบร้อย'
+    );
+    if (isSupabaseLive && supabaseClient) {
+      const target = repairTickets.find(t => t.id === ticketId);
+      await supabaseClient.from('repair_tickets').update({
+        status: 'returned_closed',
+        repair_status: 'completed',
+        returned_by: techName,
+        delivered_at: now,
+        activity_logs: appendLog(target?.activity_logs, entry)
+      }).eq('id', ticketId);
+    } else {
+      setRepairTickets(prev => prev.map(t => t.id === ticketId ? {
+        ...t,
+        status: 'returned_closed',
+        repair_status: 'completed',
+        returned_by: techName,
+        delivered_at: now,
+        activity_logs: appendLog(t.activity_logs, entry)
+      } : t));
+    }
+  };
+
   // อัปเดตสถานะวงจรชีวิตงานซ่อม/RMA (พร้อมบันทึก activity log อัตโนมัติ)
   const updateRepairLifecycle = async (
     ticketId: string,
@@ -1367,10 +1907,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const actor = currentUserRef.current;
     const now = new Date().toISOString();
     const label = REPAIR_LIFECYCLE_META[repairStatus]?.label || repairStatus;
-    const entry = makeLog(`อัปเดตสถานะ: ${label}`, actor?.name || 'ระบบ', actor?.role, note);
+    const target = repairTickets.find(t => t.id === ticketId);
+
+    // เมื่อช่างเริ่มลงมือซ่อม (repairing) และยังไม่มีช่างผู้ซ่อม -> มอบหมายให้ผู้ใช้ปัจจุบันเป็นช่างผู้ซ่อม
+    const assignRepairedBy =
+      (repairStatus === 'repairing' || repairStatus === 'waiting_parts') && !target?.repaired_by
+        ? (actor?.name || null)
+        : undefined;
+
+    // ready_pickup = จบงานฝั่งช่าง ส่งเครื่องคืนห้องหน้าร้าน -> log ข้อความ handoff ที่ชัดเจน
+    const techName = target?.repaired_by || actor?.name || 'ระบบ';
+    const entry =
+      repairStatus === 'ready_pickup'
+        ? makeLog(
+          `ซ่อม/เคลมเสร็จ ส่งเครื่องคืนห้องหน้าร้าน (จบงานฝั่งช่าง) โดย ${techName}`,
+          actor?.name || 'ระบบ',
+          actor?.role,
+          note
+        )
+        : makeLog(`อัปเดตสถานะ: ${label}`, actor?.name || 'ระบบ', actor?.role, note);
 
     // สถานะซ่อมเสร็จ/ส่งมอบ -> sync กับ legacy status ให้หน้าร้าน/Onsite เห็นตรงกัน
     const legacyPatch: Partial<RepairTicket> = {};
+    if (assignRepairedBy) legacyPatch.repaired_by = assignRepairedBy;
     if (repairStatus === 'ready_pickup') {
       legacyPatch.status = 'repaired';
       legacyPatch.finished_at = now;
@@ -1384,7 +1943,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     if (isSupabaseLive && supabaseClient) {
-      const target = repairTickets.find(t => t.id === ticketId);
       await supabaseClient.from('repair_tickets').update({
         repair_status: repairStatus,
         ...legacyPatch,
@@ -1463,6 +2021,189 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  // บันทึกข้อมูลงานซ่อมทั้งหมดในครั้งเดียว (สถานะ + RMA + รายละเอียด/อะไหล่/ค่าใช้จ่าย)
+  // -> append activity log เพียง 1 รายการ และ sync legacy status ให้ CompletedLogsView
+  const saveRepairTicket = async (
+    ticketId: string,
+    patch: {
+      service_type?: ServiceType;
+      included_accessories?: string | null;
+      rma_supplier?: string | null;
+      rma_tracking_no?: string | null;
+      rma_sent_date?: string | null;
+      rma_returned_date?: string | null;
+      replacement_sn?: string | null;
+      repair_status?: RepairLifecycleStatus;
+      repair_detail?: string | null;
+      parts_used?: string | null;
+      repair_cost?: number | null;
+      repaired_by?: string | null;
+    }
+  ) => {
+    const actor = currentUserRef.current;
+    const now = new Date().toISOString();
+    const target = repairTickets.find(t => t.id === ticketId);
+
+    // กำหนดช่างผู้ซ่อม: ใช้ค่าที่ส่งมา ถ้าไม่มีให้ใช้ผู้ใช้ปัจจุบัน (ช่างที่กดบันทึก)
+    const repairedByName =
+      patch.repaired_by !== undefined ? patch.repaired_by : (target?.repaired_by || actor?.name || null);
+
+    // สรุปสิ่งที่เปลี่ยนแปลงเพื่อเขียน log เดียวให้อ่านง่าย
+    const changes: string[] = [];
+    if (patch.repaired_by !== undefined && patch.repaired_by !== target?.repaired_by) {
+      changes.push(`ช่างผู้ซ่อม: ${patch.repaired_by || '-'}`);
+    }
+    if (patch.repair_status && patch.repair_status !== target?.repair_status) {
+      changes.push(`สถานะ: ${REPAIR_LIFECYCLE_META[patch.repair_status]?.label || patch.repair_status}`);
+    }
+    if (patch.service_type && patch.service_type !== target?.service_type) {
+      changes.push(patch.service_type === 'rma_claim' ? 'เปลี่ยนเป็นส่งเคลมประกัน (RMA)' : 'เปลี่ยนเป็นซ่อมเองหน้าร้าน');
+    }
+    if (patch.rma_supplier !== undefined && patch.rma_supplier !== target?.rma_supplier) {
+      changes.push(`Supplier: ${patch.rma_supplier || '-'}`);
+    }
+    if (patch.rma_tracking_no !== undefined && patch.rma_tracking_no !== target?.rma_tracking_no) {
+      changes.push(`เลขใบส่งเคลม: ${patch.rma_tracking_no || '-'}`);
+    }
+    if (patch.rma_sent_date !== undefined && patch.rma_sent_date !== target?.rma_sent_date) {
+      changes.push(`วันที่ส่งเคลม: ${patch.rma_sent_date ? new Date(patch.rma_sent_date).toLocaleDateString('th-TH') : '-'}`);
+    }
+    if (patch.rma_returned_date !== undefined && patch.rma_returned_date !== target?.rma_returned_date) {
+      changes.push(`วันที่ได้ของคืน: ${patch.rma_returned_date ? new Date(patch.rma_returned_date).toLocaleDateString('th-TH') : '-'}`);
+    }
+    if (patch.replacement_sn !== undefined && patch.replacement_sn !== target?.replacement_sn) {
+      changes.push(`S/N ใหม่: ${patch.replacement_sn || '-'}`);
+    }
+    if (patch.repair_detail !== undefined && patch.repair_detail !== target?.repair_detail) {
+      changes.push('อัปเดตรายละเอียดการซ่อม');
+    }
+    if (patch.parts_used !== undefined && patch.parts_used !== target?.parts_used) {
+      changes.push(`อะไหล่: ${patch.parts_used || '-'}`);
+    }
+    if (patch.repair_cost !== undefined && patch.repair_cost !== target?.repair_cost) {
+      changes.push(`ค่าใช้จ่าย: ${patch.repair_cost ?? 0} บาท`);
+    }
+
+    // ถ้ามีการรับช่วงซ่อม (ยังไม่มีช่างผู้ซ่อมเดิม หรือเปลี่ยนช่าง) ให้ log ชัดเจนว่า "รับช่วงซ่อม"
+    const isTakeover = !target?.repaired_by || (patch.repaired_by !== undefined && patch.repaired_by !== target?.repaired_by);
+    // ready_pickup = จบงานฝั่งช่าง ส่งเครื่องคืนห้องหน้าร้าน -> log ข้อความ handoff ที่ชัดเจน
+    const isHandoffToFrontdesk =
+      patch.repair_status === 'ready_pickup' && target?.repair_status !== 'ready_pickup';
+    const entry = isHandoffToFrontdesk
+      ? makeLog(
+        `ซ่อม/เคลมเสร็จ ส่งเครื่องคืนห้องหน้าร้าน (จบงานฝั่งช่าง) โดย ${repairedByName || actor?.name || 'ระบบ'}`,
+        actor?.name || 'ระบบ',
+        actor?.role,
+        changes.join(' | ') || undefined
+      )
+      : makeLog(
+        isTakeover ? `รับช่วงซ่อม / อัปเดตงานซ่อม โดย ${repairedByName || actor?.name || 'ระบบ'}` : 'บันทึกข้อมูลงานซ่อม',
+        actor?.name || 'ระบบ',
+        actor?.role,
+        changes.join(' | ') || 'บันทึกข้อมูลงานซ่อม'
+      );
+
+    // sync legacy status ให้หน้าร้าน / Onsite / CompletedLogsView เห็นตรงกัน
+    const legacyPatch: Partial<RepairTicket> = {};
+    const rs = patch.repair_status;
+    if (rs === 'ready_pickup') {
+      legacyPatch.status = 'repaired';
+      legacyPatch.finished_at = now;
+    } else if (rs === 'completed') {
+      legacyPatch.status = 'returned_closed';
+      legacyPatch.delivered_at = now;
+      legacyPatch.finished_at = target?.finished_at || now;
+    } else if (rs === 'repairing' || rs === 'waiting_parts') {
+      legacyPatch.status = 'in_progress';
+    } else if (rs === 'pending_check') {
+      legacyPatch.status = 'open';
+    }
+
+    const fullPatch = { ...patch, ...legacyPatch, repaired_by: repairedByName, updated_at: now };
+
+    if (isSupabaseLive && supabaseClient) {
+      await supabaseClient.from('repair_tickets').update({
+        ...fullPatch,
+        activity_logs: appendLog(target?.activity_logs, entry)
+      }).eq('id', ticketId);
+    } else {
+      setRepairTickets(prev => prev.map(t => t.id === ticketId ? {
+        ...t,
+        ...fullPatch,
+        activity_logs: appendLog(t.activity_logs, entry)
+      } : t));
+    }
+  };
+
+  // แก้ไขข้อมูลใบรับซ่อมเบื้องต้น (ลูกค้า / อุปกรณ์ / S/N / อาการเสีย / อุปกรณ์ที่ติดมา)
+  const updateRepairTicket = async (
+    ticketId: string,
+    patch: {
+      customer_name?: string;
+      customer_phone?: string | null;
+      device_model?: string | null;
+      walkin_sn?: string;
+      fault_symptom?: string;
+      included_accessories?: string | null;
+      accessories?: string[];
+      accessories_other?: string | null;
+    }
+  ) => {
+    const actor = currentUserRef.current;
+    const now = new Date().toISOString();
+    const target = repairTickets.find(t => t.id === ticketId);
+
+    const changes: string[] = [];
+    if (patch.customer_name !== undefined && patch.customer_name !== target?.customer_name) {
+      changes.push(`ลูกค้า: ${patch.customer_name}`);
+    }
+    if (patch.customer_phone !== undefined && patch.customer_phone !== target?.customer_phone) {
+      changes.push(`โทร: ${patch.customer_phone || '-'}`);
+    }
+    if (patch.device_model !== undefined && patch.device_model !== target?.device_model) {
+      changes.push(`อุปกรณ์: ${patch.device_model || '-'}`);
+    }
+    if (patch.walkin_sn !== undefined && patch.walkin_sn !== target?.walkin_sn) {
+      changes.push(`S/N: ${patch.walkin_sn || '-'}`);
+    }
+    if (patch.fault_symptom !== undefined && patch.fault_symptom !== target?.fault_symptom) {
+      changes.push('อัปเดตอาการเสีย');
+    }
+    if (patch.included_accessories !== undefined && patch.included_accessories !== target?.included_accessories) {
+      changes.push('อัปเดตอุปกรณ์ที่ติดมา');
+    }
+
+    const entry = makeLog(
+      'แก้ไขข้อมูลใบรับซ่อม',
+      actor?.name || 'ระบบ',
+      actor?.role,
+      changes.join(' | ') || `แก้ไขข้อมูลใบรับซ่อม ${target?.ticket_no || ''}`.trim()
+    );
+
+    const fullPatch = { ...patch, updated_at: now };
+
+    if (isSupabaseLive && supabaseClient) {
+      await supabaseClient.from('repair_tickets').update({
+        ...fullPatch,
+        activity_logs: appendLog(target?.activity_logs, entry)
+      }).eq('id', ticketId);
+    } else {
+      setRepairTickets(prev => prev.map(t => t.id === ticketId ? {
+        ...t,
+        ...fullPatch,
+        activity_logs: appendLog(t.activity_logs, entry)
+      } : t));
+    }
+  };
+
+  // ลบใบรับซ่อมออกจากระบบ (state + localStorage / Supabase)
+  const deleteRepairTicket = async (ticketId: string) => {
+    if (isSupabaseLive && supabaseClient) {
+      await supabaseClient.from('repair_tickets').delete().eq('id', ticketId);
+    }
+    setRepairTickets(prev => prev.filter(t => t.id !== ticketId));
+  };
+
   const updateSupabaseConfig = (url: string, key: string) => {
     localStorage.setItem('boss_sb_url', url);
     localStorage.setItem('boss_sb_key', key);
@@ -1491,7 +2232,45 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setRepairTickets(INITIAL_REPAIR_TICKETS);
     setUsers(INITIAL_USERS);
     setProducts(INITIAL_PRODUCTS);
+    setStockPOs(INITIAL_STOCK_POS);
+  };
+
+  /**
+   * ล้างข้อมูล Demo เชิงธุรกรรมทั้งหมด (บิลขาย, PO, คิวงานเตรียม/Onsite, งานซ่อม, ประวัติ Log)
+   * โดยคง Product Catalog (`products`) และสต๊อกคลังสินค้า (`in_stock`, `raw_stock`) ไว้
+   * พร้อมปลดล็อกการจองออเดอร์/แท็กงานเดิมให้พร้อมขายทันที
+   */
+  const clearDemoKeepStock = () => {
+    const cleanedStockItems: Item[] = items
+      .filter((item) => {
+        const isWarehouseStock = item.status === 'in_stock' || item.status === 'raw_stock';
+        const qty = (item as Item & { qty?: number }).qty;
+        const hasPositiveQty = typeof qty === 'number' ? qty > 0 : true;
+        return isWarehouseStock && hasPositiveQty;
+      })
+      .map((item) => ({
+        ...item,
+        order_id: null,
+        stock_po_id: null,
+        assigned_prep_tech: null,
+        prep_accepted_at: null,
+        assigned_techs: [],
+        assigned_onsite_tech: null,
+        void_date: null,
+        warranty_void_date: null,
+        warranty_expire_date: null,
+        activity_logs: []
+      }));
+
+    localStorage.setItem('boss_orders', JSON.stringify([]));
+    localStorage.setItem('boss_stock_pos', JSON.stringify([]));
+    localStorage.setItem('boss_repair_tickets', JSON.stringify([]));
+    localStorage.setItem('boss_items', JSON.stringify(cleanedStockItems));
+
+    setOrders([]);
     setStockPOs([]);
+    setRepairTickets([]);
+    setItems(cleanedStockItems);
   };
 
   return (
@@ -1532,11 +2311,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       assignRepairTicketOnsite,
       acceptOnsiteJob,
       confirmOnsiteDelivery,
+      completeOnsiteJobHandoff,
+      createOnsiteServiceCall,
       createRepairTicket,
       completeRepairTicket,
       closeRepairTicket,
+      queueRepairTicketForDispatch,
+      updateOrderDeliveryDate,
+      updateRepairTicketDueDate,
+      selfPickupRepairTicket,
+      dispatchRepairReturnOnsite,
+      completeRepairReturnOnsite,
       updateRepairLifecycle,
       updateRmaTracking,
+      saveRepairTicket,
+      updateRepairTicket,
+      deleteRepairTicket,
       isSupabaseLive,
       isSyncing,
       supabaseUrl,
@@ -1544,8 +2334,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       updateSupabaseConfig,
       disconnectSupabase,
       resetAllDemoData,
+      clearDemoKeepStock,
       theme,
-      toggleTheme
+      toggleTheme,
+      printingRepairTicket,
+      triggerPrintRepairReceipt,
+      closePrintRepairReceipt,
+      lookupWarrantyBySerial
     }}>
       {children}
     </AppContext.Provider>

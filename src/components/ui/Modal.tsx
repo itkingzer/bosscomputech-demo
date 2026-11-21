@@ -162,12 +162,12 @@ export const modalLabelClass =
 
 /** Shared primary action button. */
 export const modalPrimaryBtnClass =
-    'w-full min-h-[44px] py-2.5 rounded-xl font-extrabold text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-1.5 ' +
+    'w-full min-h-[44px] py-2.5 px-5 rounded-xl font-extrabold text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-1.5 ' +
     'bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] hover:to-[#FF6B00] hover:brightness-105 text-black shadow-lg shadow-[#FF6B00]/25 border border-white/20 active:scale-[0.97] ' +
     'disabled:opacity-50 disabled:cursor-not-allowed';
 
 /** Shared secondary/cancel button. */
 export const modalSecondaryBtnClass =
-    'w-full min-h-[44px] py-2.5 rounded-xl font-semibold text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-1.5 active:scale-[0.97] ' +
+    'w-full min-h-[44px] py-2.5 px-5 rounded-xl font-semibold text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-1.5 active:scale-[0.97] ' +
     'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 ' +
     'dark:bg-white/[0.06] dark:hover:bg-white/[0.12] dark:text-slate-300 dark:border-white/[0.1]';

@@ -839,7 +839,7 @@ export const PrepView: React.FC = () => {
 
               <button
                 type="submit"
-                className="w-full py-2.5 bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold rounded-2xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-xl shadow-[#FF6B00]/25 border border-white/20"
+                className="w-full px-5 py-2.5 bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold rounded-2xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-xl shadow-[#FF6B00]/25 border border-white/20"
               >
                 <Plus className="w-4 h-4" />
                 <span>บันทึกเครื่องเข้าสต๊อก</span>
@@ -961,11 +961,11 @@ export const PrepView: React.FC = () => {
                     {rMeta.shortName} • {order?.district || '-'}
                   </span>
                 )}
-                <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-blue-500/15 text-blue-600 dark:text-blue-300 border border-blue-500/30">
+                <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-blue-100 text-blue-900 border border-blue-300 dark:bg-blue-500/15 dark:text-blue-300 dark:border-blue-500/30">
                   {deliveryLabel}
                 </span>
                 {group.items.length > 1 && (
-                  <span className="px-2 py-0.5 rounded-md text-[10px] font-extrabold bg-amber-500/15 text-amber-600 dark:text-amber-300 border border-amber-500/30 flex items-center gap-1">
+                  <span className="px-2 py-0.5 rounded-md text-[10px] font-extrabold bg-amber-100 text-amber-900 border border-amber-300 dark:bg-amber-500/15 dark:text-amber-300 dark:border-amber-500/30 flex items-center gap-1">
                     <Layers className="w-3 h-3" />
                     จำนวน {group.items.length} เครื่อง
                   </span>
@@ -995,7 +995,7 @@ export const PrepView: React.FC = () => {
               </div>
 
               {group.prep_note && (
-                <div className="p-3 rounded-xl bg-[#FF6B00]/10 border border-[#FF6B00]/30 text-[11px] text-[#FF6B00]">
+                <div className="p-3 rounded-xl bg-amber-100 border border-amber-300 text-[11px] text-amber-900 dark:bg-[#FF6B00]/10 dark:border-[#FF6B00]/30 dark:text-[#FF6B00]">
                   <strong>หมายเหตุถึงช่าง:</strong> {group.prep_note}
                 </div>
               )}
@@ -1061,7 +1061,7 @@ export const PrepView: React.FC = () => {
                         {group.items.map((item, idx) => renderSnRow(item, idx, accent))}
                       </div>
 
-                      <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[10px] text-amber-600 dark:text-amber-300 text-center">
+                      <div className="p-2.5 rounded-xl bg-amber-100 border border-amber-300 text-[10px] text-amber-900 dark:bg-amber-500/10 dark:border-amber-500/20 dark:text-amber-300 text-center">
                         {isStockPo
                           ? '* ตรวจเช็ก + ติดโลโก้แล้ว ยังไม่ติดวอยประกัน (จะติดตอนปล่อยของในจังหวะที่ 2)'
                           : group.order_id

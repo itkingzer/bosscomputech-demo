@@ -1,19 +1,66 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from '../context/AppContext';
 import {
   MapPin, ShieldCheck, CheckCircle, Truck, Package,
   RotateCcw, Wrench, Printer,
   CheckSquare, Square, X, Smartphone, UserCheck, Layers,
-  ClipboardList, ArrowRight, Phone, Calendar
+  ClipboardList, ArrowRight, Phone, Calendar, ScanLine
 } from 'lucide-react';
 import { ROUTE_DEFINITIONS, RouteCode, RepairTicket, Item, getRouteByDistrict } from '../types';
 import { ListControls, useListControls } from './ListControls';
 import { ActivityTimeline, LatestUpdateBadge } from './ActivityTimeline';
+import { BarcodeScannerModal } from './BarcodeScannerModal';
 import {
   Modal, modalInputClass, modalLabelClass,
   modalPrimaryBtnClass, modalSecondaryBtnClass
 } from './ui/Modal';
+import { lookupPurchaseBySn } from '../utils/snLookup';
+
+// ---------------------------------------------------------------------------
+// Official "ใบรับซ่อมสินค้า" receipt helpers (shared with RepairView)
+// ---------------------------------------------------------------------------
+const COMPANY_NAME = 'บริษัท บอส คอมพิวเทค แอนด์ เซอร์วิส จำกัด';
+const COMPANY_ADDRESS = '289/2 ถนนตลาดใหม่ ตำบลตลาด อำเภอเมือง จังหวัดสุราษฎร์ธานี 84000';
+const COMPANY_PHONE = 'โทรศัพท์ 077-286999 แฟกซ์';
+const RECEIPT_DISCLAIMER =
+  'ทางร้านจะรับผิดชอบสินค้าเฉพาะที่ระบุตามเอกสารนี้เท่านั้น เมื่อไม่มีการติดต่อกลับจากลูกค้าหลังได้รับจากทางร้านนานเกิน 45 วัน หรือเบอร์โทรศัพท์ที่ให้ไว้ไม่สามารถติดต่อได้นานเกิน 60 วัน ทางร้านจะไม่รับผิดชอบใดๆทั้งสิ้น';
+
+// DD/MM/YYYY HH:mm (ค.ศ.) — ใช้บนใบรับซ่อม
+const formatReceiptDateTime = (iso?: string | null): string => {
+  if (!iso) return '-';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '-';
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const yyyy = d.getFullYear();
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mi = String(d.getMinutes()).padStart(2, '0');
+  return `${dd}/${mm}/${yyyy} ${hh}:${mi}`;
+};
+
+// เดาประเภทสินค้า (PC / Notebook / Printer ...) จากรุ่นที่บันทึกไว้
+const inferDeviceCategory = (model?: string | null): string => {
+  const m = (model || '').toLowerCase();
+  if (!m) return 'อุปกรณ์อิเล็กทรอนิกส์';
+  if (/(notebook|laptop|โน้ตบุ๊ก|โน้ตบุค|macbook|vivobook|ideapad|thinkpad|inspiron|pavilion)/.test(m)) return 'Notebook';
+  if (/(printer|ปริ้น|ปริ๊น|พิมพ์|laserjet|deskjet|epson l|canon pixma|brother)/.test(m)) return 'Printer';
+  if (/(monitor|จอ|led |lcd )/.test(m)) return 'Monitor';
+  if (/(all in one|aio|desktop|pc |คอม|ตั้งโต๊ะ)/.test(m)) return 'PC / Desktop';
+  if (/(tablet|ipad|แท็บเล็ต)/.test(m)) return 'Tablet';
+  if (/(iphone|samsung|oppo|vivo|xiaomi|โทรศัพท์|มือถือ)/.test(m)) return 'Smartphone';
+  return 'อุปกรณ์อิเล็กทรอนิกส์';
+};
+
+// แปลง ISO -> DD/MM/YYYY (ค.ศ.) สำหรับช่องวันนัดรับ
+const formatReceiptDate = (iso?: string | null): string => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  return `${dd}/${mm}/${d.getFullYear()}`;
+};
 
 // ---------------------------------------------------------------------------
 // Helpers: group identical items into a single stacked card
@@ -107,8 +154,8 @@ const DISTRICT_OPTIONS = [
 export const OnsiteView: React.FC = () => {
   const {
     items, orders, repairTickets, confirmOnsiteDelivery,
-    completeRepairTicket, closeRepairTicket, createRepairTicket, currentUser, users,
-    acceptOnsiteJob
+    closeRepairTicket, completeOnsiteJobHandoff, currentUser, users,
+    acceptOnsiteJob, completeRepairReturnOnsite, triggerPrintRepairReceipt
   } = useApp();
 
   // If user has assigned route, default to it, otherwise 'all'
@@ -122,9 +169,13 @@ export const OnsiteView: React.FC = () => {
   const [deliveryNotes, setDeliveryNotes] = useState<Record<string, string>>({});
   const [toast, setToast] = useState('');
 
-  // Modal State for Onsite Pickup Form
+  // Modal State for Onsite Pickup / Service Sheet Form
   const [isPickupModalOpen, setIsPickupModalOpen] = useState(false);
-  const [originTicketId, setOriginTicketId] = useState<string | null>(null);
+  // งาน Onsite ต้นทางที่จะถูกปิดอัตโนมัติเมื่อส่งต่อเข้าคิวซ่อม (สำหรับ pickup task เท่านั้น)
+  const [originJob, setOriginJob] = useState<{ kind: 'item' | 'ticket'; id: string } | null>(null);
+  // Service Sheet Modal Mode
+  const [modalMode, setModalMode] = useState<'pickup_task' | 'service_sheet'>('pickup_task');
+  const [sendToRepairShop, setSendToRepairShop] = useState(true);
 
   // Form Fields
   const [custName, setCustName] = useState('');
@@ -134,12 +185,47 @@ export const OnsiteView: React.FC = () => {
   const [provinceCustom, setProvinceCustom] = useState('');
   const [deviceModel, setDeviceModel] = useState('');
   const [sn, setSn] = useState('');
+  const [autoFilledSn, setAutoFilledSn] = useState<string | null>(null);
   const [selectedAccessories, setSelectedAccessories] = useState<string[]>(['Adapter / หม้อแปลง']);
   const [accessoriesOther, setAccessoriesOther] = useState('');
   const [faultSymptom, setFaultSymptom] = useState('');
 
+  const snLookup = useMemo(
+    () => lookupPurchaseBySn(sn, items, orders, repairTickets),
+    [sn, items, orders, repairTickets]
+  );
+
+  const handleSnChange = (val: string) => {
+    setSn(val);
+    const res = lookupPurchaseBySn(val, items, orders, repairTickets);
+    if (res.found) {
+      if (res.customerName) setCustName(res.customerName);
+      if (res.customerPhone) setCustPhone(res.customerPhone);
+      if (res.deviceModel) setDeviceModel(res.deviceModel);
+      if (res.district && DISTRICT_OPTIONS.some(d => d.district === res.district)) {
+        setDistrict(res.district);
+      }
+      if (res.order?.delivery_location && !deliveryLocation.trim()) {
+        setDeliveryLocation(res.order.delivery_location);
+      }
+      setAutoFilledSn(val.trim());
+    } else if (autoFilledSn && val.trim() !== autoFilledSn) {
+      setAutoFilledSn(null);
+    }
+  };
+
+  const clearAutoFill = () => {
+    setCustName('');
+    setCustPhone('');
+    setDeviceModel('');
+    setAutoFilledSn(null);
+  };
+
   // Receipt Modal State
   const [receiptTicket, setReceiptTicket] = useState<RepairTicket | null>(null);
+
+  // Camera S/N scanner state (unified intake modal)
+  const [isScannerOpen, setIsScannerOpen] = useState(false);
 
   // Onsite Job Detail Modal State (card-to-modal)
   // kind: 'new_goods' | 'repair_return' | 'pickup'
@@ -192,8 +278,15 @@ export const OnsiteView: React.FC = () => {
   });
 
   // 2. Repaired items assigned to onsite for return delivery
+  //    - งานส่งคืนเครื่องซ่อม (is_repair_return) ที่หน้าร้านมอบหมายให้ช่าง Onsite ไปส่งคืนลูกค้า
+  //    - สถานะ dispatched_onsite / on_delivery หรือ legacy 'repaired' ที่มีช่าง Onsite ถูกมอบหมาย
   const assignedRepairedReturns = repairTickets.filter(t => {
-    if (t.status !== 'repaired' || (!t.assigned_onsite_tech && (!t.assigned_techs || t.assigned_techs.length === 0))) return false;
+    const isReturnJob = t.is_repair_return === true;
+    const isReturnStatus = t.status === 'dispatched_onsite' || t.status === 'on_delivery';
+    const isLegacyRepaired = t.status === 'repaired';
+    if (!isReturnJob && !isReturnStatus && !isLegacyRepaired) return false;
+    if (t.status === 'returned_closed' || t.repair_status === 'completed') return false;
+    if (!t.assigned_onsite_tech && (!t.assigned_techs || t.assigned_techs.length === 0)) return false;
     if (!matchesTechFilter(t.assigned_techs, t.assigned_onsite_tech)) return false;
     if (selectedRouteFilter !== 'all' && t.route_code !== selectedRouteFilter) {
       return false;
@@ -202,9 +295,16 @@ export const OnsiteView: React.FC = () => {
   });
 
   // 3. Onsite pickup tickets assigned
+  //    - ต้องมีช่าง Onsite ถูกมอบหมายจริง (ไม่ใช่ใบรับซ่อมที่เพิ่งสร้างเข้าห้องช่าง)
+  //    - ใบรับซ่อมที่ช่าง Onsite ออกเอง/ส่งต่อเข้าห้องช่าง (service_type = 'in_house_repair')
+  //      จะไม่ถูกนับเป็นคิว Onsite อีก เพื่อไม่ให้การ์ดค้างหลังกดบันทึกส่งเข้าห้องช่าง
   const assignedPickups = repairTickets.filter(t => {
     if (t.intake_channel !== 'onsite_pickup') return false;
+    if (t.service_type === 'in_house_repair') return false;
     if (t.status !== 'open' && t.status !== 'in_progress') return false;
+    const hasAssignedTech =
+      (t.assigned_techs && t.assigned_techs.length > 0) || !!t.assigned_onsite_tech;
+    if (!hasAssignedTech) return false;
     if (!matchesTechFilter(t.assigned_techs, t.assigned_onsite_tech)) return false;
     if (selectedRouteFilter !== 'all' && t.route_code !== selectedRouteFilter) {
       return false;
@@ -240,14 +340,16 @@ export const OnsiteView: React.FC = () => {
   };
 
   const handleReturnConfirm = (ticketId: string, ticketNo: string) => {
-    closeRepairTicket(ticketId);
-    setToast(`ส่งคืนเครื่องงานซ่อม ${ticketNo} ถึงมือลูกค้าและปิดงานเรียบร้อยแล้ว`);
+    completeRepairReturnOnsite(ticketId);
+    setToast(`ส่งมอบเครื่องซ่อม ${ticketNo} คืนลูกค้าเสร็จสิ้น — ปิดงานเรียบร้อยแล้ว`);
     setTimeout(() => setToast(''), 3500);
   };
 
-  // Open Pickup Form pre-filled from an existing job
+  // Open Pickup Form pre-filled from an existing job (เฉพาะงานที่หน้าร้านจ่ายมาเป็นงานรับเครื่อง / pickup task)
   const handleOpenPickupForJob = (ticket: RepairTicket) => {
-    setOriginTicketId(ticket.id);
+    setModalMode('pickup_task');
+    setSendToRepairShop(true);
+    setOriginJob({ kind: 'ticket', id: ticket.id });
     setCustName(ticket.customer_name);
     setCustPhone(ticket.customer_phone || '');
     setDistrict(ticket.district || 'เมืองสุราษฎร์ธานี');
@@ -261,16 +363,24 @@ export const OnsiteView: React.FC = () => {
     setIsPickupModalOpen(true);
   };
 
-  // Open Pickup Form for a brand new customer machine
-  const handleOpenNewPickup = () => {
-    setOriginTicketId(null);
-    setCustName('');
-    setCustPhone('');
-    setDistrict('เมืองสุราษฎร์ธานี');
-    setDeliveryLocation('');
+  // เปิดฟอร์มออกใบ Service Sheet (รับฝาก/งานเพิ่มหน้างาน) — ทั้งเปิดอิสระและเปิดจากในงานส่งของ
+  const handleOpenNewServiceSheet = (defaultData?: { customer_name?: string; customer_phone?: string; district?: string; delivery_location?: string }) => {
+    setModalMode('service_sheet');
+    setSendToRepairShop(true);
+    setOriginJob(null); // ไม่ผูก origin เพื่อไม่ให้ปิดงานหลัก
+    setCustName(defaultData?.customer_name || '');
+    setCustPhone(defaultData?.customer_phone || '');
+    setDistrict(
+      defaultData?.district ||
+      (currentUser?.assigned_route && currentUser.assigned_route !== 'all'
+        ? (DISTRICT_OPTIONS.find(o => getRouteByDistrict(o.district) === currentUser.assigned_route)?.district || 'เมืองสุราษฎร์ธานี')
+        : 'เมืองสุราษฎร์ธานี')
+    );
+    setDeliveryLocation(defaultData?.delivery_location || '');
     setProvinceCustom('');
     setDeviceModel('');
     setSn('');
+    setAutoFilledSn(null);
     setSelectedAccessories(['Adapter / หม้อแปลง']);
     setAccessoriesOther('');
     setFaultSymptom('');
@@ -296,102 +406,56 @@ export const OnsiteView: React.FC = () => {
     setSelectedAccessories(updated);
   };
 
-  // Submit Pickup Form
-  const handleSubmitPickupForm = (e: React.FormEvent) => {
+  // Submit Pickup / Service Sheet Form
+  const handleSubmitPickupForm = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!custName.trim() || !faultSymptom.trim()) {
-      alert('กรุณากรอกชื่อลูกค้าและอาการเสียให้ครบถ้วน');
+      alert('กรุณากรอกชื่อลูกค้าและอาการเสีย/รายละเอียดงานให้ครบถ้วน');
       return;
     }
 
-    const calculatedRoute = getRouteByDistrict(district);
     const techName = currentUser?.name || 'ช่าง Onsite';
-    const thaiYear = new Date().getFullYear() + 543;
-    const finalSn = sn.trim() || `SN-ONSITE-${Math.floor(1000 + Math.random() * 9000)}`;
+    const handoffOrigin = originJob;
 
-    if (originTicketId) {
-      // Update existing ticket into in_progress and append pickup details
-      const detailNote = `ช่าง Onsite (${techName}) รับเครื่องกลับเข้าห้องซ่อมแล้ว | อุปกรณ์: ${selectedAccessories.join(', ') || 'ไม่มี'}${accessoriesOther ? ` (${accessoriesOther})` : ''}`;
-      completeRepairTicket(originTicketId, 'in_progress', 'รับเครื่องกลับเข้าห้องซ่อมแล้ว', detailNote, '-');
+    // สร้างใบรับซ่อม / Service Sheet (REP-...)
+    const { ticketNo, ticket } = await completeOnsiteJobHandoff({
+      origin: handoffOrigin, // ถ้าเป็น service_sheet จะเป็น null เพื่อไม่ให้ปิดงานหลัก
+      customer_name: custName,
+      customer_phone: custPhone,
+      district,
+      delivery_location: deliveryLocation,
+      province_custom: provinceCustom,
+      device_model: deviceModel,
+      walkin_sn: sn,
+      accessories: selectedAccessories,
+      accessories_other: accessoriesOther,
+      fault_symptom: faultSymptom,
+      received_channel: modalMode === 'service_sheet' ? 'onsite_service_sheet' : 'onsite_pickup',
+      send_to_repair_shop: sendToRepairShop
+    });
 
-      const updatedTicket = repairTickets.find(t => t.id === originTicketId);
-      if (updatedTicket) {
-        setReceiptTicket({
-          ...updatedTicket,
-          customer_name: custName,
-          customer_phone: custPhone,
-          walkin_sn: finalSn,
-          device_model: deviceModel,
-          accessories: selectedAccessories,
-          accessories_other: accessoriesOther,
-          picked_up_by: techName,
-          fault_symptom: faultSymptom,
-          district: district,
-          delivery_location: deliveryLocation
-        });
-      }
-      setToast(`บันทึกการรับเครื่อง Job ${updatedTicket?.ticket_no || ''} เข้าห้องซ่อมเรียบร้อย`);
-    } else {
-      // Create new repair ticket
-      const newTicketNo = `REP-${thaiYear}-${Math.floor(100 + Math.random() * 900)}`;
-      createRepairTicket({
-        item_id: null,
-        walkin_sn: finalSn,
-        customer_name: custName.trim(),
-        customer_phone: custPhone.trim(),
-        intake_channel: 'onsite_pickup',
-        device_model: deviceModel.trim(),
-        accessories: selectedAccessories,
-        accessories_other: accessoriesOther.trim(),
-        picked_up_by: techName,
-        fault_symptom: faultSymptom.trim(),
-        repair_detail: `รับเครื่องจากหน้างานโดย ${techName} ส่งเข้าห้องช่างซ่อม`,
-        parts_used: null,
-        repair_outcome: null,
-        district: district,
-        route_code: calculatedRoute,
-        delivery_location: deliveryLocation.trim(),
-        province_custom: calculatedRoute === 'route_6' ? provinceCustom : undefined,
-        job_category: 'repair_pickup',
-        assigned_techs: [techName],
-        assigned_onsite_tech: techName,
-        finished_at: null
-      });
+    setReceiptTicket(ticket);
+    setToast(
+      handoffOrigin
+        ? `สร้างใบรับซ่อม ${ticketNo} • ปิดงาน Onsite และส่งต่อให้ช่างหน้าร้านเรียบร้อย (โดย ${techName})`
+        : `ออกใบ Service Sheet ${ticketNo} ${sendToRepairShop ? '• บันทึกส่งเข้าห้องช่างซ่อม' : ''} เรียบร้อย`
+    );
 
-      setReceiptTicket({
-        id: 'rep-new',
-        item_id: null,
-        ticket_no: newTicketNo,
-        walkin_sn: finalSn,
-        customer_name: custName.trim(),
-        customer_phone: custPhone.trim(),
-        intake_channel: 'onsite_pickup',
-        device_model: deviceModel.trim(),
-        accessories: selectedAccessories,
-        accessories_other: accessoriesOther.trim(),
-        picked_up_by: techName,
-        fault_symptom: faultSymptom.trim(),
-        repair_detail: null,
-        parts_used: null,
-        status: 'open',
-        received_at: new Date().toISOString(),
-        finished_at: null,
-        created_at: new Date().toISOString(),
-        district: district,
-        route_code: calculatedRoute,
-        delivery_location: deliveryLocation.trim(),
-        assigned_techs: [techName]
-      });
-
-      setToast(`สร้างใบรับซ่อม ${newTicketNo} และส่งเข้าห้องซ่อมเรียบร้อย`);
-    }
-
+    // ปิดมอดัลฟอร์ม + เคลียร์ origin (ไม่ออกจากการดูงานหลักถ้าเป็น Service Sheet)
     setIsPickupModalOpen(false);
+    if (handoffOrigin) {
+      setActiveJob(null);
+    }
+    setOriginJob(null);
     setTimeout(() => setToast(''), 4000);
   };
 
   const handlePrintReceipt = () => {
-    window.print();
+    if (receiptTicket) {
+      triggerPrintRepairReceipt(receiptTicket);
+    } else {
+      window.print();
+    }
   };
 
   return (
@@ -421,16 +485,14 @@ export const OnsiteView: React.FC = () => {
             </p>
           </div>
 
-          {/* Quick Action: New Onsite Pickup Button */}
-          <div className="flex items-center gap-2 flex-wrap">
-            <button
-              onClick={handleOpenNewPickup}
-              className="px-4 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 text-black font-extrabold rounded-2xl text-xs transition cursor-pointer flex items-center gap-2 shadow-lg shadow-amber-500/25 border border-white/20 whitespace-nowrap active:scale-95"
-            >
-              <Smartphone className="w-4 h-4" />
-              <span>บันทึกรับเครื่องซ่อมใหม่หน้างาน</span>
-            </button>
-          </div>
+          {/* ช่าง Onsite ออกใบรับซ่อม / Service Sheet เองได้ (ส่งเข้าห้องช่าง) */}
+          <button
+            onClick={() => handleOpenNewServiceSheet()}
+            className="w-full lg:w-auto px-5 py-3 min-h-[44px] bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:brightness-110 active:scale-[0.97] text-black font-extrabold rounded-xl text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-[#FF6B00]/25 border border-white/20"
+          >
+            <ClipboardList className="w-4 h-4" />
+            <span>ออกใบรับซ่อม / Service Sheet (ส่งเข้าห้องช่าง)</span>
+          </button>
         </div>
 
         {/* Dual Filters Bar: By Technician Name + By Route */}
@@ -507,12 +569,12 @@ export const OnsiteView: React.FC = () => {
           <button
             onClick={() => setSelectedCategory('repair_return')}
             className={`px-3 py-1.5 text-xs font-semibold rounded-xl transition-all duration-150 active:scale-[0.97] cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${selectedCategory === 'repair_return'
-              ? 'bg-purple-500/20 text-purple-400 border border-purple-500/40 font-bold'
+              ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/40 font-bold'
               : 'bg-white/[0.03] text-slate-400 hover:text-purple-300 border border-white/[0.05]'
               }`}
           >
             <RotateCcw className="w-3.5 h-3.5" />
-            <span>[ส่งคืนงานซ่อม] ({assignedRepairedReturns.length})</span>
+            <span>[ส่งคืนเครื่องซ่อมให้ลูกค้า] ({assignedRepairedReturns.length})</span>
           </button>
           <button
             onClick={() => setSelectedCategory('pickup')}
@@ -649,9 +711,9 @@ export const OnsiteView: React.FC = () => {
 
                       <div className="space-y-2">
                         <div className="flex items-center justify-between gap-2">
-                          <span className="text-[11px] font-extrabold px-2.5 py-1 rounded-lg bg-purple-500/20 text-purple-400 border border-purple-500/40 flex items-center gap-1">
+                          <span className="text-[11px] font-extrabold px-2.5 py-1 rounded-lg bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 flex items-center gap-1">
                             <RotateCcw className="w-3 h-3" />
-                            <span>ส่งคืนงานซ่อม</span>
+                            <span>ส่งคืนเครื่องซ่อมให้ลูกค้า</span>
                           </span>
                           <span className="text-xs font-mono font-extrabold text-slate-300 data-key">{ticket.ticket_no}</span>
                         </div>
@@ -663,11 +725,18 @@ export const OnsiteView: React.FC = () => {
                           </div>
                         )}
 
-                        <h4 className="text-base font-bold text-white truncate data-key">S/N: {ticket.walkin_sn}</h4>
+                        <h4 className="text-base font-bold text-white truncate data-key">{ticket.device_model || 'ไม่ระบุรุ่น'}</h4>
+                        <p className="text-xs text-slate-400 font-mono data-meta truncate">S/N: {ticket.walkin_sn || '-'}</p>
                         <p className="text-xs text-slate-300 font-medium data-meta truncate">ลูกค้า: <strong className="text-white font-bold">{ticket.customer_name}</strong></p>
+                        {ticket.customer_phone && (
+                          <p className="text-xs text-slate-400 flex items-center gap-1 data-meta">
+                            <Phone className="w-3.5 h-3.5 text-cyan-400 flex-shrink-0" />
+                            <span>{ticket.customer_phone}</span>
+                          </p>
+                        )}
                         <p className="text-xs text-slate-500 flex items-start gap-1 data-meta">
-                          <MapPin className="w-3.5 h-3.5 text-purple-400 flex-shrink-0 mt-0.5" />
-                          <span className="line-clamp-2">{ticket.delivery_location || ticket.customer_phone || '-'}</span>
+                          <MapPin className="w-3.5 h-3.5 text-cyan-400 flex-shrink-0 mt-0.5" />
+                          <span className="line-clamp-2">{ticket.delivery_location || ticket.district || '-'}</span>
                         </p>
 
                         {teamTechs.length > 0 && (
@@ -696,7 +765,7 @@ export const OnsiteView: React.FC = () => {
 
                       <button
                         onClick={() => setActiveJob({ kind: 'repair_return', key: ticket.id })}
-                        className="w-full py-2.5 bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-500 hover:brightness-105 active:scale-[0.97] text-white font-bold rounded-xl text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-purple-600/25 border border-white/20"
+                        className="w-full py-2.5 bg-gradient-to-r from-cyan-600 to-cyan-700 hover:from-cyan-500 hover:brightness-105 active:scale-[0.97] text-white font-bold rounded-xl text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-cyan-600/25 border border-white/20"
                       >
                         <ClipboardList className="w-4 h-4" />
                         <span>เปิดจัดการงาน</span>
@@ -768,14 +837,16 @@ export const OnsiteView: React.FC = () => {
                         </div>
                       </div>
 
-                      <button
-                        onClick={() => setActiveJob({ kind: 'pickup', key: ticket.id })}
-                        className="w-full py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:brightness-105 active:scale-[0.97] text-black font-extrabold rounded-xl text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-amber-500/25 border border-white/20"
-                      >
-                        <ClipboardList className="w-4 h-4" />
-                        <span>เปิดจัดการงาน</span>
-                        <ArrowRight className="w-3.5 h-3.5" />
-                      </button>
+                      <div className="space-y-2">
+                        <button
+                          onClick={() => setActiveJob({ kind: 'pickup', key: ticket.id })}
+                          className="w-full py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:brightness-105 active:scale-[0.97] text-black font-extrabold rounded-xl text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-amber-500/25 border border-white/20"
+                        >
+                          <ClipboardList className="w-4 h-4" />
+                          <span>เปิดจัดการงาน</span>
+                          <ArrowRight className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
                   );
                 })}
@@ -830,23 +901,39 @@ export const OnsiteView: React.FC = () => {
               maxWidthClass="max-w-2xl"
               accentClass="border-emerald-500/40"
               footer={
-                !isAccepted ? (
+                <div className="space-y-2">
+                  {!isAccepted ? (
+                    <button
+                      onClick={() => { handleAcceptGroup(group); }}
+                      className={modalPrimaryBtnClass + ' w-full flex items-center justify-center gap-2'}
+                    >
+                      <UserCheck className="w-4 h-4" />
+                      <span>กดรับงานนี้ (Accept Job)</span>
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => { handleDeliveryConfirmGroup(group); closeModal(); }}
+                      className="w-full px-5 py-3 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 active:scale-95 text-black font-extrabold rounded-xl text-sm transition cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/25 border border-white/20"
+                    >
+                      <CheckCircle className="w-4 h-4" />
+                      <span>ยืนยันส่งมอบ/ติดตั้งเสร็จสิ้น ({group.items.length} เครื่อง)</span>
+                    </button>
+                  )}
                   <button
-                    onClick={() => { handleAcceptGroup(group); }}
-                    className={modalPrimaryBtnClass + ' w-full flex items-center justify-center gap-2'}
+                    onClick={() => {
+                      handleOpenNewServiceSheet({
+                        customer_name: order?.customer_name,
+                        customer_phone: order?.customer_phone || '',
+                        district: order?.district,
+                        delivery_location: order?.delivery_location
+                      });
+                    }}
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-300 dark:border-white/20 hover:border-amber-500/50 bg-slate-100 dark:bg-white/[0.04] hover:bg-amber-100 dark:hover:bg-amber-500/10 text-slate-700 dark:text-slate-300 hover:text-amber-900 dark:hover:text-amber-300 text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer active:scale-98"
                   >
-                    <UserCheck className="w-4 h-4" />
-                    <span>กดรับงานนี้ (Accept Job)</span>
+                    <ClipboardList className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                    <span>+ ออกใบ Service Sheet (บันทึกงานเพิ่ม / รับฝากหน้างาน)</span>
                   </button>
-                ) : (
-                  <button
-                    onClick={() => { handleDeliveryConfirmGroup(group); closeModal(); }}
-                    className="w-full py-3 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 active:scale-95 text-black font-extrabold rounded-xl text-sm transition cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/25 border border-white/20"
-                  >
-                    <CheckCircle className="w-4 h-4" />
-                    <span>ยืนยันส่งมอบของใหม่สำเร็จทั้งชุด ({group.items.length})</span>
-                  </button>
-                )
+                </div>
               }
             >
               <div className="space-y-4">
@@ -969,27 +1056,43 @@ export const OnsiteView: React.FC = () => {
             open
             onClose={closeModal}
             ariaLabel="รายละเอียดงาน Onsite"
-            title={`${isReturn ? 'ส่งคืนงานซ่อม' : 'ออกซ่อม/รับเครื่องกลับร้าน'} • ${ticket.ticket_no}`}
+            title={`${isReturn ? 'ส่งคืนเครื่องซ่อมให้ลูกค้า' : 'ออกซ่อม/รับเครื่องกลับร้าน'} • ${ticket.ticket_no}`}
             subtitle={`${ticket.customer_name}${rMeta ? ` • ${rMeta.shortName}` : ''}`}
             icon={isReturn ? <RotateCcw className="w-5 h-5" /> : <Wrench className="w-5 h-5" />}
             maxWidthClass="max-w-2xl"
-            accentClass={isReturn ? 'border-purple-500/40' : 'border-amber-500/40'}
+            accentClass={isReturn ? 'border-cyan-500/40' : 'border-amber-500/40'}
             footer={
               isReturn ? (
-                <button
-                  onClick={() => { handleReturnConfirm(ticket.id, ticket.ticket_no); closeModal(); }}
-                  className="w-full py-3 bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-500 active:scale-95 text-white font-bold rounded-xl text-sm transition cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-purple-600/25 border border-white/20"
-                >
-                  <CheckCircle className="w-4 h-4" />
-                  <span>ส่งคืนเครื่องซ่อมถึงมือลูกค้า (ปิดงาน)</span>
-                </button>
+                <div className="space-y-2">
+                  <button
+                    onClick={() => { handleReturnConfirm(ticket.id, ticket.ticket_no); closeModal(); }}
+                    className="w-full py-3 bg-gradient-to-r from-cyan-600 to-cyan-700 hover:from-cyan-500 active:scale-95 text-white font-bold rounded-xl text-sm transition cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-cyan-600/25 border border-white/20"
+                  >
+                    <CheckCircle className="w-4 h-4" />
+                    <span>ส่งมอบเครื่องซ่อมเสร็จสิ้น (ปิดงาน)</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      handleOpenNewServiceSheet({
+                        customer_name: ticket.customer_name,
+                        customer_phone: ticket.customer_phone || '',
+                        district: ticket.district,
+                        delivery_location: ticket.delivery_location
+                      });
+                    }}
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-300 dark:border-white/20 hover:border-amber-500/50 bg-slate-100 dark:bg-white/[0.04] hover:bg-amber-100 dark:hover:bg-amber-500/10 text-slate-700 dark:text-slate-300 hover:text-amber-900 dark:hover:text-amber-300 text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer active:scale-98"
+                  >
+                    <ClipboardList className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                    <span>+ ออกใบ Service Sheet (บันทึกงานเพิ่ม / รับฝากหน้างาน)</span>
+                  </button>
+                </div>
               ) : (
                 <button
                   onClick={() => { handleOpenPickupForJob(ticket); closeModal(); }}
-                  className="w-full py-3 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 active:scale-95 text-black font-extrabold rounded-xl text-sm transition cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-amber-500/25 border border-white/20"
+                  className="w-full px-5 py-3 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 active:scale-95 text-black font-extrabold rounded-xl text-sm transition cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-amber-500/25 border border-white/20"
                 >
                   <Smartphone className="w-4 h-4" />
-                  <span>บันทึกรับเครื่อง & ระบุอุปกรณ์ที่ติดมา</span>
+                  <span>รับเครื่องกลับซ่อมที่ร้าน (ส่งเข้าคิวช่างซ่อม)</span>
                 </button>
               )
             }
@@ -1034,9 +1137,9 @@ export const OnsiteView: React.FC = () => {
 
               {/* Symptom / repair result */}
               <div className={`p-3 rounded-xl border text-xs ${isReturn
-                ? 'bg-purple-500/10 border-purple-500/20 text-purple-700 dark:text-purple-300'
+                ? 'bg-cyan-500/10 border-cyan-500/20 text-cyan-700 dark:text-cyan-300'
                 : 'bg-amber-500/10 border-amber-500/20 text-amber-700 dark:text-amber-300'}`}>
-                <strong>{isReturn ? 'ผลการซ่อม:' : 'อาการเสีย:'}</strong>{' '}
+                <strong>{isReturn ? 'สรุปการซ่อม:' : 'อาการเสีย:'}</strong>{' '}
                 {isReturn ? (ticket.repair_detail || 'เปลี่ยนอะไหล่และเทสผ่านแล้ว') : ticket.fault_symptom}
               </div>
 
@@ -1069,58 +1172,119 @@ export const OnsiteView: React.FC = () => {
       })()}
 
       {/* ========================================================================= */}
-      {/* MODAL 1: FORM บันทึกการรับเครื่องซ่อมกลับร้าน (Mobile-Friendly) */}
+      {/* MODAL 1: FORM บันทึกการรับเครื่องซ่อมกลับร้าน / ออกใบ Service Sheet (Mobile-Friendly) */}
       {/* ========================================================================= */}
       {isPickupModalOpen && createPortal(
-        <div className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center sm:p-4 bg-black/80 backdrop-blur-md overflow-y-auto overscroll-contain animate-fade-in">
-          <div className="w-full sm:w-[95vw] max-w-lg max-h-[92dvh] sm:max-h-[90vh] overflow-y-auto overscroll-contain liquid-glass rounded-t-3xl sm:rounded-3xl p-4 sm:p-7 pb-[max(1rem,env(safe-area-inset-bottom))] border border-[#FF6B00]/40 shadow-2xl relative animate-modal-pop">
+        <div className="fixed inset-0 z-[10000] flex items-end sm:items-center justify-center sm:p-4 bg-black/60 backdrop-blur-sm overflow-y-auto overscroll-contain animate-fade-in">
+          <div className="w-full sm:w-[95vw] max-w-lg max-h-[92dvh] sm:max-h-[90vh] overflow-y-auto overscroll-contain bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-t-3xl sm:rounded-3xl p-4 sm:p-7 pb-[max(1rem,env(safe-area-inset-bottom))] border border-slate-200 dark:border-[#FF6B00]/40 shadow-2xl relative animate-modal-pop">
             <div className="sm:hidden flex justify-center pt-1 pb-3">
-              <span className="h-1.5 w-10 rounded-full bg-white/20" />
+              <span className="h-1.5 w-10 rounded-full bg-slate-300 dark:bg-white/20" />
             </div>
             <button
               onClick={() => setIsPickupModalOpen(false)}
-              aria-label="ปิดฟอร์มรับเครื่องซ่อม"
-              className="absolute right-3 top-3 sm:right-5 sm:top-5 p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/[0.06] cursor-pointer min-w-[44px] min-h-[44px] flex items-center justify-center"
+              aria-label="ปิดฟอร์ม"
+              className="absolute right-3 top-3 sm:right-5 sm:top-5 p-2 rounded-xl text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/[0.06] cursor-pointer min-w-[44px] min-h-[44px] flex items-center justify-center"
             >
               <X className="w-5 h-5" />
             </button>
 
             <div className="flex items-center gap-2 mb-4">
-              <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
-                <Smartphone className="w-5 h-5" />
+              <div className={`p-2 rounded-xl border ${modalMode === 'service_sheet' ? 'bg-[#FF6B00]/15 text-[#E65A00] dark:bg-[#FF6B00]/20 dark:text-[#FF6B00] border-[#FF6B00]/30' : 'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-500/20 dark:text-amber-400 dark:border-amber-500/30'}`}>
+                {modalMode === 'service_sheet' ? <ClipboardList className="w-5 h-5" /> : <Smartphone className="w-5 h-5" />}
               </div>
               <div>
-                <h3 className="text-base font-bold text-white">
-                  บันทึกรับเครื่องซ่อมจากหน้างานกลับร้าน
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                  {modalMode === 'service_sheet'
+                    ? 'ออกใบ Service Sheet (รับฝาก / งานเพิ่มหน้างาน)'
+                    : 'บันทึกรับเครื่องซ่อมจากหน้างานกลับร้าน'}
                 </h3>
-                <p className="text-xs text-slate-400">
-                  {originTicketId ? 'อัปเดตข้อมูลเครื่องจาก Job ที่ได้รับมอบหมาย' : 'เปิดใบรับซ่อมใหม่จากหน้างานโดยช่าง Onsite'}
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  {modalMode === 'service_sheet'
+                    ? 'บันทึกงานบริการเสริมหรือรับฝากเครื่องจากลูกค้าหน้างาน (ไม่ปิดงานส่งสินค้าหลัก)'
+                    : 'ส่งต่อเครื่องจากงาน Onsite เข้าคิวซ่อมหน้าร้าน (ปิดงาน Onsite อัตโนมัติ)'}
                 </p>
               </div>
             </div>
 
             <form onSubmit={handleSubmitPickupForm} className="space-y-4 text-xs">
+              {/* S/N Smart Search & Auto-Fill */}
+              <div className="rounded-2xl p-3.5 border border-slate-200 dark:border-white/[0.1] bg-slate-50 dark:bg-white/[0.03] space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <label className="block text-slate-700 dark:text-slate-300 font-semibold">
+                    ค้นหาด้วย Serial Number (S/N) เพื่อดึงข้อมูลอัตโนมัติ
+                  </label>
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                    หรือกรอกข้อมูลเองด้านล่าง
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    placeholder="สแกนหรือพิมพ์ S/N เช่น BC-2026-002 (ถ้าเคยซื้อกับร้านระบบจะกรอกให้เอง)"
+                    value={sn}
+                    onChange={(e) => handleSnChange(e.target.value)}
+                    className="w-full rounded-xl px-3 py-2 bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 placeholder-slate-400 font-mono focus:outline-none focus:border-blue-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setIsScannerOpen(true)}
+                    title="สแกน S/N ด้วยกล้อง"
+                    aria-label="สแกน S/N ด้วยกล้อง"
+                    className="flex-shrink-0 p-2.5 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-800 border border-amber-300 dark:bg-amber-500/15 dark:hover:bg-amber-500/25 dark:text-amber-400 dark:border-amber-500/30 transition cursor-pointer active:scale-95"
+                  >
+                    <ScanLine className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {snLookup.found ? (
+                  <div className="rounded-xl p-2.5 bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/30 flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <div className="text-emerald-800 dark:text-emerald-200 space-y-0.5">
+                      <div className="font-bold flex items-center gap-1.5">
+                        <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                        <span>พบข้อมูลสินค้าที่เคยซื้อในระบบ — กรอกชื่อลูกค้าและรุ่นเครื่องให้อัตโนมัติแล้ว</span>
+                      </div>
+                      {(snLookup.billNo || snLookup.salesRef) && (
+                        <div className="text-[11px] font-mono opacity-90">
+                          เอกสาร: {snLookup.billNo || snLookup.salesRef}
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={clearAutoFill}
+                      className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-white dark:bg-white/10 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-white/15 hover:bg-slate-100 dark:hover:bg-white/20 transition cursor-pointer"
+                    >
+                      ล้างเพื่อกรอกเอง
+                    </button>
+                  </div>
+                ) : sn.trim().length >= 3 ? (
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    ไม่พบ S/N "{sn.trim()}" ในประวัติการขาย — สามารถกรอกข้อมูลลูกค้าและรุ่นเครื่องเองด้านล่างได้เลย
+                  </p>
+                ) : null}
+              </div>
+
               {/* Customer Info */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-slate-300 font-medium mb-1">ชื่อลูกค้า / บริษัท *</label>
+                  <label className="block text-slate-700 dark:text-slate-300 font-medium mb-1">ชื่อลูกค้า / บริษัท *</label>
                   <input
                     type="text"
                     required
                     placeholder="ชื่อผู้ติดต่อหรือบริษัท"
                     value={custName}
                     onChange={(e) => setCustName(e.target.value)}
-                    className="w-full liquid-glass-input rounded-xl px-3 py-2 text-white focus:outline-none"
+                    className="w-full rounded-xl px-3 py-2 bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 placeholder-slate-400 focus:outline-none focus:border-blue-500"
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-300 font-medium mb-1">เบอร์โทรติดต่อ</label>
+                  <label className="block text-slate-700 dark:text-slate-300 font-medium mb-1">เบอร์โทรติดต่อ</label>
                   <input
                     type="text"
                     placeholder="08x-xxx-xxxx"
                     value={custPhone}
                     onChange={(e) => setCustPhone(e.target.value)}
-                    className="w-full liquid-glass-input rounded-xl px-3 py-2 text-white focus:outline-none"
+                    className="w-full rounded-xl px-3 py-2 bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 placeholder-slate-400 focus:outline-none focus:border-blue-500"
                   />
                 </div>
               </div>
@@ -1128,68 +1292,54 @@ export const OnsiteView: React.FC = () => {
               {/* District & Location */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-slate-300 font-medium mb-1">อำเภอ / สายรถ *</label>
+                  <label className="block text-slate-700 dark:text-slate-300 font-medium mb-1">อำเภอ / สายรถ *</label>
                   <select
                     value={district}
                     onChange={(e) => setDistrict(e.target.value)}
-                    className="w-full liquid-glass-input rounded-xl px-3 py-2 text-white focus:outline-none"
+                    className="w-full rounded-xl px-3 py-2 bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 focus:outline-none focus:border-blue-500"
                   >
                     {DISTRICT_OPTIONS.map(opt => (
-                      <option key={opt.district} value={opt.district} className="bg-[#12141A]">
+                      <option key={opt.district} value={opt.district} className="bg-white dark:bg-[#12141A]">
                         {opt.district} - [{opt.zone}]
                       </option>
                     ))}
                   </select>
                 </div>
                 <div>
-                  <label className="block text-slate-300 font-medium mb-1">จุดรับเครื่อง / ที่อยู่</label>
+                  <label className="block text-slate-700 dark:text-slate-300 font-medium mb-1">จุดรับเครื่อง / ที่อยู่</label>
                   <input
                     type="text"
                     placeholder="เช่น หน้าร้าน, ออฟฟิศชั้น 2"
                     value={deliveryLocation}
                     onChange={(e) => setDeliveryLocation(e.target.value)}
-                    className="w-full liquid-glass-input rounded-xl px-3 py-2 text-white focus:outline-none"
+                    className="w-full rounded-xl px-3 py-2 bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 placeholder-slate-400 focus:outline-none focus:border-blue-500"
                   />
                 </div>
               </div>
 
               {district === 'ต่างจังหวัด / งานเหมาพิเศษ' && (
                 <div>
-                  <label className="block text-amber-400 font-medium mb-1">ระบุจังหวัด / งานพิเศษ</label>
+                  <label className="block text-amber-700 dark:text-amber-400 font-medium mb-1">ระบุจังหวัด / งานพิเศษ</label>
                   <input
                     type="text"
                     placeholder="เช่น ชุมพร, พังงา"
                     value={provinceCustom}
                     onChange={(e) => setProvinceCustom(e.target.value)}
-                    className="w-full liquid-glass-input rounded-xl px-3 py-2 text-white focus:outline-none"
+                    className="w-full rounded-xl px-3 py-2 bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 placeholder-slate-400 focus:outline-none focus:border-blue-500"
                   />
                 </div>
               )}
 
-              {/* Hardware Model & S/N */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-white/[0.08]">
-                <div>
-                  <label className="block text-slate-300 font-medium mb-1">รุ่นสินค้า / ยี่ห้อเครื่อง</label>
-                  <input
-                    type="text"
-                    placeholder="เช่น BossComputech POS X1, โน้ตบุ๊ก Dell"
-                    value={deviceModel}
-                    onChange={(e) => setDeviceModel(e.target.value)}
-                    className="w-full liquid-glass-input rounded-xl px-3 py-2 text-white focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-slate-300 font-medium mb-1">
-                    Serial Number (S/N)
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="เช่น BC-2026-002"
-                    value={sn}
-                    onChange={(e) => setSn(e.target.value)}
-                    className="w-full liquid-glass-input rounded-xl px-3 py-2 text-white font-mono focus:outline-none"
-                  />
-                </div>
+              {/* Hardware Model */}
+              <div className="pt-2 border-t border-slate-200 dark:border-white/[0.08]">
+                <label className="block text-slate-700 dark:text-slate-300 font-medium mb-1">รุ่นสินค้า / ยี่ห้อเครื่อง</label>
+                <input
+                  type="text"
+                  placeholder="เช่น BossComputech POS X1, โน้ตบุ๊ก Dell"
+                  value={deviceModel}
+                  onChange={(e) => setDeviceModel(e.target.value)}
+                  className="w-full rounded-xl px-3 py-2 bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 placeholder-slate-400 focus:outline-none focus:border-blue-500"
+                />
               </div>
 
               {/* Auto Warranty Status Badge */}
@@ -1204,8 +1354,8 @@ export const OnsiteView: React.FC = () => {
               )}
 
               {/* Accessories Checkboxes */}
-              <div className="pt-2 border-t border-white/[0.08]">
-                <label className="block text-slate-300 font-semibold mb-2">
+              <div className="pt-2 border-t border-slate-200 dark:border-white/[0.08]">
+                <label className="block text-slate-700 dark:text-slate-300 font-semibold mb-2">
                   อุปกรณ์ที่ติดมาด้วย (Accessories Checklist) *
                 </label>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -1217,14 +1367,14 @@ export const OnsiteView: React.FC = () => {
                         key={acc}
                         onClick={() => toggleAccessory(acc)}
                         className={`p-2 rounded-xl border text-left flex items-center gap-2 transition cursor-pointer ${isChecked
-                          ? 'bg-amber-500/15 border-amber-500/40 text-amber-300 font-semibold'
-                          : 'bg-white/[0.03] border-white/[0.06] text-slate-400 hover:text-white'
+                          ? 'bg-amber-100 border-amber-300 text-amber-900 dark:bg-amber-500/15 dark:border-amber-500/40 dark:text-amber-300 font-semibold'
+                          : 'bg-slate-50 dark:bg-white/[0.03] border-slate-200 dark:border-white/[0.06] text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                           }`}
                       >
                         {isChecked ? (
-                          <CheckSquare className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                          <CheckSquare className="w-4 h-4 text-amber-600 dark:text-amber-400 flex-shrink-0" />
                         ) : (
-                          <Square className="w-4 h-4 text-slate-500 flex-shrink-0" />
+                          <Square className="w-4 h-4 text-slate-400 dark:text-slate-500 flex-shrink-0" />
                         )}
                         <span className="text-xs">{acc}</span>
                       </button>
@@ -1238,30 +1388,50 @@ export const OnsiteView: React.FC = () => {
                     placeholder="อุปกรณ์อื่นๆ เพิ่มเติม (เช่น คีย์บอร์ด, เมาส์, Flash drive)"
                     value={accessoriesOther}
                     onChange={(e) => setAccessoriesOther(e.target.value)}
-                    className="w-full liquid-glass-input rounded-xl px-3 py-2 text-xs text-white focus:outline-none"
+                    className="w-full rounded-xl px-3 py-2 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 placeholder-slate-400 focus:outline-none focus:border-blue-500"
                   />
                 </div>
               </div>
 
-              {/* Symptom */}
+              {/* Symptom / Service Notes */}
               <div>
-                <label className="block text-slate-300 font-semibold mb-1">
-                  อาการเสียที่ลูกค้าแจ้ง / สภาพตัวเครื่อง *
+                <label className="block text-slate-700 dark:text-slate-300 font-semibold mb-1">
+                  {modalMode === 'service_sheet'
+                    ? 'รายละเอียดงานบริการ / อาการเสียที่รับฝาก *'
+                    : 'อาการเสียที่ลูกค้าแจ้ง / สภาพตัวเครื่อง *'}
                 </label>
                 <textarea
                   rows={3}
                   required
-                  placeholder="เช่น เปิดไม่ติด ไฟเข้าแต่พัดลมไม่หมุน, มีรอยแตกมุมซ้าย"
+                  placeholder={modalMode === 'service_sheet' ? 'เช่น ลูกค้าฝากเครื่องปริ้นเตอร์ Brother ให้ตรวจเช็กเพิ่ม, ลูกค้าขอเดินสาย LAN เพิ่ม 1 จุด' : 'เช่น เปิดไม่ติด ไฟเข้าแต่พัดลมไม่หมุน, มีรอยแตกมุมซ้าย'}
                   value={faultSymptom}
                   onChange={(e) => setFaultSymptom(e.target.value)}
-                  className="w-full liquid-glass-input rounded-2xl px-3 py-2 text-white focus:outline-none"
+                  className="w-full rounded-2xl px-3 py-2 bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 placeholder-slate-400 focus:outline-none focus:border-blue-500"
                 />
               </div>
 
+              {/* Checkbox for service sheet: Bring back to repair room */}
+              {modalMode === 'service_sheet' && (
+                <div className="p-3 rounded-2xl bg-amber-100 border border-amber-300 dark:bg-amber-500/10 dark:border-amber-500/30 space-y-1">
+                  <label className="flex items-center gap-2.5 cursor-pointer text-xs font-bold text-amber-900 dark:text-amber-300">
+                    <input
+                      type="checkbox"
+                      checked={sendToRepairShop}
+                      onChange={(e) => setSendToRepairShop(e.target.checked)}
+                      className="w-4 h-4 rounded text-[#FF6B00] focus:ring-0 cursor-pointer"
+                    />
+                    <span>นำเครื่องกลับเข้าห้องช่างซ่อม (สร้างใบรับซ่อม REP-... ส่งต่อช่างหน้าร้าน)</span>
+                  </label>
+                  <p className="text-[11px] text-amber-800 dark:text-slate-400 pl-6.5">
+                    * ไม่ปิดงานส่งสินค้าหลัก ช่าง Onsite สามารถส่งมอบออเดอร์เดิมต่อได้ตามปกติ
+                  </p>
+                </div>
+              )}
+
               {/* Recorded By Tech */}
-              <div className="p-2.5 rounded-xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-between text-[11px] text-slate-300">
-                <span className="text-slate-400">ช่าง Onsite ผู้บันทึกรับเครื่อง:</span>
-                <span className="text-amber-400 font-bold">{currentUser?.name || 'ช่าง Onsite'}</span>
+              <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 flex items-center justify-between text-[11px] text-slate-700 dark:text-slate-300">
+                <span className="text-slate-500 dark:text-slate-400">ช่าง Onsite ผู้บันทึก:</span>
+                <span className="text-amber-700 dark:text-amber-400 font-bold">{currentUser?.name || 'ช่าง Onsite'}</span>
               </div>
 
               {/* Buttons */}
@@ -1269,7 +1439,7 @@ export const OnsiteView: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setIsPickupModalOpen(false)}
-                  className="w-full sm:w-1/3 py-2.5 min-h-[44px] rounded-xl liquid-glass-card text-slate-400 hover:text-white text-xs font-semibold cursor-pointer"
+                  className="w-full sm:w-1/3 px-6 py-2.5 min-h-[44px] rounded-xl bg-slate-100 dark:bg-white/[0.04] hover:bg-slate-200 dark:hover:bg-white/[0.08] border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-xs font-semibold cursor-pointer"
                 >
                   ยกเลิก
                 </button>
@@ -1278,7 +1448,11 @@ export const OnsiteView: React.FC = () => {
                   className="w-full sm:w-2/3 py-2.5 min-h-[44px] bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 active:scale-95 text-black font-extrabold rounded-xl text-xs transition cursor-pointer shadow-xl shadow-amber-500/25 border border-white/20 flex items-center justify-center gap-1.5"
                 >
                   <CheckCircle className="w-4 h-4" />
-                  <span>บันทึกการรับเครื่อง & ส่งเข้าห้องซ่อม</span>
+                  <span>
+                    {modalMode === 'service_sheet'
+                      ? 'บันทึก Service Sheet & ออกใบรับ'
+                      : 'บันทึกการรับเครื่อง & ส่งเข้าห้องซ่อม'}
+                  </span>
                 </button>
               </div>
             </form>
@@ -1288,99 +1462,205 @@ export const OnsiteView: React.FC = () => {
       )}
 
       {/* ========================================================================= */}
-      {/* MODAL 2: RECEIPT POPUP (พิมพ์ใบรับซ่อมให้ลูกค้าทันที) */}
+      {/* MODAL 2: OFFICIAL A5 LANDSCAPE RECEIPT (ใบรับซ่อมสินค้า — shared template) */}
       {/* ========================================================================= */}
       {receiptTicket && createPortal(
-        <div className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center sm:p-4 bg-black/85 backdrop-blur-md overflow-y-auto overscroll-contain animate-fade-in">
-          <div className="w-full sm:w-[95vw] max-w-md max-h-[92dvh] sm:max-h-[90vh] overflow-y-auto overscroll-contain liquid-glass rounded-t-3xl sm:rounded-3xl p-4 sm:p-6 pb-[max(1rem,env(safe-area-inset-bottom))] border border-emerald-500/40 shadow-2xl relative text-xs animate-modal-pop">
+        <div
+          className="onsite-receipt-portal print:hidden fixed inset-0 z-[9999] flex items-end sm:items-center justify-center sm:p-4 bg-black/60 backdrop-blur-sm overflow-y-auto overscroll-contain animate-fade-in"
+          role="dialog"
+          aria-modal="true"
+          aria-label="ใบรับซ่อมสินค้า"
+        >
+          <div className="onsite-receipt-panel w-full sm:w-[95vw] max-w-4xl max-h-[92dvh] sm:max-h-[90vh] overflow-y-auto overscroll-contain bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-t-3xl sm:rounded-3xl p-4 sm:p-6 pb-[max(1rem,env(safe-area-inset-bottom))] border border-emerald-300 dark:border-emerald-500/40 shadow-2xl relative text-xs animate-modal-pop">
             <div className="sm:hidden flex justify-center pt-1 pb-3 no-print">
-              <span className="h-1.5 w-10 rounded-full bg-white/20" />
+              <span className="h-1.5 w-10 rounded-full bg-slate-300 dark:bg-white/20" />
             </div>
             <button
               onClick={() => setReceiptTicket(null)}
               aria-label="ปิดใบรับซ่อม"
-              className="absolute right-3 top-3 sm:right-4 sm:top-4 p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/[0.06] cursor-pointer no-print min-w-[44px] min-h-[44px] flex items-center justify-center"
+              className="absolute right-3 top-3 sm:right-4 sm:top-4 p-2 rounded-xl text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/[0.06] cursor-pointer no-print min-w-[44px] min-h-[44px] flex items-center justify-center z-10"
             >
               <X className="w-5 h-5" />
             </button>
 
-            {/* Printable Receipt Section */}
-            <div id="repair-receipt-print" className="space-y-4">
-              <div className="text-center pb-3 border-b border-white/[0.1]">
-                <h2 className="text-lg font-extrabold text-[#FF6B00] tracking-wider uppercase">
-                  BossComputech
-                </h2>
-                <p className="text-[10px] text-slate-400 data-meta">ใบรับเครื่องซ่อม / Service Intake Receipt</p>
-                <div className="mt-2 inline-block px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 font-mono font-extrabold text-sm data-key">
-                  {receiptTicket.ticket_no}
-                </div>
-              </div>
+            {(() => {
+              const live = receiptTicket;
+              const acc = live.included_accessories ||
+                [...(live.accessories || []), live.accessories_other || ''].filter(Boolean).join(', ');
+              const category = inferDeviceCategory(live.device_model);
+              const otherAcc = [
+                live.accessories_other || '',
+                live.replacement_sn ? `S/N ใหม่: ${live.replacement_sn}` : ''
+              ].filter(Boolean).join(' • ');
+              const notes = [
+                live.repair_detail || '',
+                live.parts_used ? `อะไหล่: ${live.parts_used}` : ''
+              ].filter(Boolean).join(' • ');
+              const dueDate = formatReceiptDate(live.finished_at);
+              const receivedBy = live.received_by || live.picked_up_by || currentUser?.name || '-';
+              const repairedBy = live.repaired_by || '-';
 
-              <div className="space-y-2 text-slate-300">
-                <div className="flex justify-between">
-                  <span className="text-slate-400">วันที่รับเครื่อง:</span>
-                  <span className="text-white font-mono">{new Date().toLocaleString('th-TH')}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">ลูกค้า:</span>
-                  <span className="text-white font-bold text-sm">{receiptTicket.customer_name}</span>
-                </div>
-                {receiptTicket.customer_phone && (
-                  <div className="flex justify-between">
-                    <span className="text-slate-400">เบอร์โทร:</span>
-                    <span className="text-white font-mono">{receiptTicket.customer_phone}</span>
-                  </div>
-                )}
-                <div className="flex justify-between">
-                  <span className="text-slate-400">อำเภอ/สายรถ:</span>
-                  <span className="text-white">{receiptTicket.district || '-'}</span>
-                </div>
-                {receiptTicket.device_model && (
-                  <div className="flex justify-between">
-                    <span className="text-slate-400">รุ่นสินค้า:</span>
-                    <span className="text-white font-semibold">{receiptTicket.device_model}</span>
-                  </div>
-                )}
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Serial Number (S/N):</span>
-                  <span className="text-[#FF6B00] font-mono font-extrabold data-key">{receiptTicket.walkin_sn}</span>
-                </div>
-                <div className="pt-2 border-t border-white/[0.06]">
-                  <span className="text-slate-400 block mb-0.5">อุปกรณ์ที่ติดมาด้วย:</span>
-                  <div className="text-white font-medium pl-1">
-                    {receiptTicket.accessories && receiptTicket.accessories.length > 0
-                      ? receiptTicket.accessories.join(', ')
-                      : 'ไม่มีอุปกรณ์อื่น'}
-                    {receiptTicket.accessories_other ? ` (${receiptTicket.accessories_other})` : ''}
-                  </div>
-                </div>
-                <div className="pt-2 border-t border-white/[0.06]">
-                  <span className="text-slate-400 block mb-0.5">อาการเสียที่ได้รับแจ้ง:</span>
-                  <p className="text-rose-300 font-medium pl-1">{receiptTicket.fault_symptom}</p>
-                </div>
-                <div className="pt-2 border-t border-white/[0.06] flex justify-between">
-                  <span className="text-slate-400">ช่าง Onsite ผู้รับเครื่อง:</span>
-                  <span className="text-amber-400 font-bold">{receiptTicket.picked_up_by || currentUser?.name || 'ช่าง Onsite'}</span>
-                </div>
-              </div>
+              const cell = 'border border-black px-1.5 py-0.5 align-top leading-tight';
+              const label = 'font-bold whitespace-nowrap';
+              const value = 'font-normal';
 
-              <div className="p-2.5 rounded-xl bg-white/[0.02] border border-white/[0.05] text-[10px] text-slate-400 text-center">
-                * โปรดเก็บหลักฐานนี้ไว้สำหรับตรวจสอบสถานะหรือรับเครื่องคืนกับทาง BossComputech
-              </div>
-            </div>
+              return (
+                <div
+                  id="repair-receipt-print"
+                  className="bg-white text-black rounded-lg p-3 sm:p-4 text-[10px] leading-tight print:p-0 print:text-[10px] print:leading-tight"
+                >
+                  {/* ---- Official Company Header ---- */}
+                  <div className="flex items-start justify-between gap-4 pb-1.5 mb-1.5 border-b-2 border-black">
+                    <div className="min-w-0">
+                      <div className="font-extrabold text-[12px] sm:text-[13px] leading-tight">{COMPANY_NAME}</div>
+                      <div className="mt-0.5">{COMPANY_ADDRESS}</div>
+                      <div className="mt-0.5">{COMPANY_PHONE}</div>
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      <div className="font-extrabold text-base sm:text-lg tracking-wide">ใบรับซ่อมสินค้า</div>
+                      <div className="mt-0.5 text-[10px]">
+                        <span className={label}>วันที่ </span>
+                        <span>{formatReceiptDateTime(live.received_at || live.created_at)}</span>
+                      </div>
+                      <div className="text-[10px]">
+                        <span className={label}>ออกโดย </span>
+                        <span>{receivedBy}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* ---- Structured Bordered Grid ---- */}
+                  <table className="w-full border-collapse border border-black text-black bg-white">
+                    <tbody>
+                      <tr>
+                        <td className={cell + ' w-[34%]'}>
+                          <span className={label}>เลขที่ใบรับซ่อม : </span>
+                          <span className={value + ' font-mono font-bold'}>{live.ticket_no}</span>
+                        </td>
+                        <td className={cell + ' w-[36%]'}>
+                          <span className={label}>วันที่รับซ่อม : </span>
+                          <span className={value}>{formatReceiptDateTime(live.received_at || live.created_at)}</span>
+                        </td>
+                        <td className={cell + ' w-[30%]'}>
+                          <span className={label}>เบอร์ติดต่อ : </span>
+                          <span className={value}>{live.customer_phone || '-'}</span>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className={cell}>
+                          <span className={label}>ชื่อลูกค้า : </span>
+                          <span className={value + ' font-semibold'}>{live.customer_name}</span>
+                        </td>
+                        <td className={cell} colSpan={2}>
+                          <span className={label}>รุ่น : </span>
+                          <span className={value}>{live.device_model || '-'}</span>
+                        </td>
+                      </tr>
+                      {/* ผู้รับเครื่อง / ช่างผู้ซ่อม */}
+                      <tr>
+                        <td className={cell} colSpan={2}>
+                          <span className={label}>รับเครื่องโดย (Onsite) : </span>
+                          <span className={value + ' font-semibold'}>{receivedBy}</span>
+                        </td>
+                        <td className={cell}>
+                          <span className={label}>ช่างผู้ซ่อม : </span>
+                          <span className={value + ' font-semibold'}>{repairedBy}</span>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className={cell} colSpan={3}>
+                          <span className={label}>ที่อยู่ : </span>
+                          <span className={value}>{live.delivery_location || live.district || '-'}</span>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className={cell}>
+                          <span className={label}>สินค้า : </span>
+                          <span className={value}>{category}</span>
+                        </td>
+                        <td className={cell} colSpan={2}>
+                          <span className={label}>Serial No. : </span>
+                          <span className={value + ' font-mono'}>{live.walkin_sn || '-'}</span>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className={cell} colSpan={3}>
+                          <span className={label}>สภาพเครื่อง : </span>
+                          <span className={value}>{live.accessories && live.accessories.length > 0 ? 'มีอุปกรณ์ติดมาด้วย (ตามรายการด้านล่าง)' : 'ตัวเครื่องเปล่า / ตามที่ตรวจรับ'}</span>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className={cell} colSpan={3}>
+                          <span className={label}>อาการเสีย : </span>
+                          <span className={value + ' font-semibold'}>{live.fault_symptom}</span>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className={cell} colSpan={3}>
+                          <span className={label}>อุปกรณ์ที่นำมาด้วย : </span>
+                          <span className={value}>{acc || 'ตัวเครื่องเปล่า (ไม่มีอุปกรณ์ติดมา)'}</span>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className={cell} colSpan={3}>
+                          <span className={label}>อุปกรณ์อื่นๆ : </span>
+                          <span className={value}>{otherAcc || '-'}</span>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className={cell} colSpan={3}>
+                          <span className={label}>บันทึกเพิ่มเติม : </span>
+                          <span className={value}>{notes || '-'}</span>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className={cell + ' w-1/2'}>
+                          <span className={label}>ประเมินค่าซ่อม : </span>
+                          <span className={value + ' font-bold'}>
+                            {live.repair_cost != null ? live.repair_cost.toLocaleString('th-TH') : '-'}
+                          </span>
+                          <span className={value}> บาท</span>
+                        </td>
+                        <td className={cell + ' w-1/2'} colSpan={2}>
+                          <span className={label}>วันนัดรับสินค้า : </span>
+                          <span className={value}>{dueDate || '........./........./.........'}</span>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+
+                  {/* ---- Terms & Signature Footer ---- */}
+                  <div className="mt-1 text-[10px] leading-tight">
+                    <span className="font-bold">หมายเหตุ : </span>
+                    <span>{RECEIPT_DISCLAIMER}</span>
+                  </div>
+
+                  <div className="mt-3 grid grid-cols-2 gap-8 text-[10px] leading-tight">
+                    <div className="text-center">
+                      <div className="mb-1">ลงชื่อ ........................................ ผู้ส่งซ่อม</div>
+                      <div>วันที่ ........./........./.........</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="mb-1">ลงชื่อ ........................................ พนักงาน</div>
+                      <div>วันที่ ........./........./.........</div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Modal Actions */}
             <div className="flex items-center gap-2 pt-4 border-t border-white/[0.08] no-print">
               <button
                 onClick={handlePrintReceipt}
-                className="flex-1 py-2 bg-[#FF6B00] hover:bg-[#E65A00] text-black font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-[#FF6B00]/25"
+                className="flex-1 py-2.5 bg-[#FF6B00] hover:bg-[#E65A00] text-black font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-[#FF6B00]/25"
               >
                 <Printer className="w-4 h-4" />
                 <span>พิมพ์ใบรับซ่อม</span>
               </button>
               <button
                 onClick={() => setReceiptTicket(null)}
-                className="px-4 py-2 rounded-xl liquid-glass-card text-slate-300 hover:text-white text-xs font-semibold cursor-pointer"
+                className="px-4 py-2.5 rounded-xl liquid-glass-card text-slate-300 hover:text-white text-xs font-semibold cursor-pointer"
               >
                 เสร็จสิ้น
               </button>
@@ -1389,6 +1669,18 @@ export const OnsiteView: React.FC = () => {
         </div>,
         document.body
       )}
+
+      {/* Camera S/N Scanner (unified intake modal) */}
+      <BarcodeScannerModal
+        open={isScannerOpen}
+        onClose={() => setIsScannerOpen(false)}
+        onScan={(code) => {
+          handleSnChange(code.trim());
+          setIsScannerOpen(false);
+        }}
+        title="สแกน S/N เครื่อง"
+        hint="ส่องกล้องไปที่บาร์โค้ด S/N บนตัวเครื่องหรือกล่องสินค้า"
+      />
     </div>
   );
 };

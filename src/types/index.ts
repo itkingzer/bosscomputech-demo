@@ -78,6 +78,22 @@ export function formatDateDMY(iso?: string | null): string {
 // สถานะประกันของสินค้า: waiting (รอแปะวอย) / active / expired / none
 export type WarrantyState = 'waiting' | 'active' | 'expired' | 'none';
 
+export interface WarrantyLookupResult {
+  found: boolean;
+  state: WarrantyState;
+  serialNumber: string;
+  modelName?: string;
+  customerName?: string;
+  billNo?: string | null;
+  warrantyYears: number;
+  warrantyMonths: number;
+  durationLabel: string;
+  voidDate: string | null;
+  expireDate: string | null;
+  remainingDays: number | null;
+  remainingLabel: string | null;
+}
+
 export function getWarrantyState(item: {
   warranty_void_date?: string | null;
   warranty_expire_date?: string | null;
@@ -89,6 +105,171 @@ export function getWarrantyState(item: {
   if (!item.warranty_void_date) return 'waiting';
   if (!item.warranty_expire_date) return 'active';
   return new Date() > new Date(item.warranty_expire_date) ? 'expired' : 'active';
+}
+
+function formatRemainingTime(now: Date, expireDate: Date): { days: number; label: string } {
+  const diffMs = expireDate.getTime() - now.getTime();
+  if (diffMs <= 0) return { days: 0, label: 'หมดประกันแล้ว' };
+  const totalDays = Math.ceil(diffMs / 86400000);
+  if (totalDays < 30) {
+    return { days: totalDays, label: `เหลืออีก ${totalDays} วัน` };
+  }
+  const approxMonths = Math.floor(totalDays / 30);
+  const remDays = totalDays % 30;
+  if (remDays === 0) {
+    return { days: totalDays, label: `เหลืออีก ${totalDays} วัน (${approxMonths} เดือน)` };
+  }
+  return { days: totalDays, label: `เหลืออีก ${totalDays} วัน (${approxMonths} เดือน ${remDays} วัน)` };
+}
+
+export function lookupWarrantyBySerial(
+  serialNumber: string | null | undefined,
+  items: Item[],
+  orders: Order[]
+): WarrantyLookupResult {
+  const raw = (serialNumber || '').trim();
+  const normalized = raw.toLowerCase();
+  if (!normalized) {
+    return {
+      found: false,
+      state: 'none',
+      serialNumber: '',
+      warrantyYears: 0,
+      warrantyMonths: 0,
+      durationLabel: '',
+      voidDate: null,
+      expireDate: null,
+      remainingDays: null,
+      remainingLabel: null
+    };
+  }
+
+  const candidates = items.filter(
+    (it) => (it.serial_number || '').trim().toLowerCase() === normalized
+  );
+  if (candidates.length === 0) {
+    return {
+      found: false,
+      state: 'none',
+      serialNumber: raw,
+      warrantyYears: 0,
+      warrantyMonths: 0,
+      durationLabel: '',
+      voidDate: null,
+      expireDate: null,
+      remainingDays: null,
+      remainingLabel: null
+    };
+  }
+
+  // Prefer a record that has active/applied warranty dates or an attached order
+  const matchedItem =
+    candidates.find((c) => c.warranty_expire_date || c.warranty_void_date || c.void_date) ||
+    candidates.find((c) => c.order_id) ||
+    candidates[0];
+
+  const matchedOrder = matchedItem.order_id
+    ? orders.find((o) => o.id === matchedItem.order_id)
+    : undefined;
+
+  const matchedOrderItem = matchedOrder?.items_list?.find(
+    (oi) => oi.model_name === matchedItem.model_name
+  ) || matchedOrder?.items_list?.[0];
+
+  let years = matchedItem.warranty_years ?? matchedOrderItem?.warranty_years ?? 0;
+  let months = matchedItem.warranty_months ?? matchedOrderItem?.warranty_months ?? 0;
+
+  const rawVoid =
+    matchedItem.warranty_void_date ||
+    (matchedItem.void_date ? `${matchedItem.void_date}T00:00:00` : null) ||
+    matchedItem.warranty_applied_at ||
+    null;
+
+  // Legacy items with void_date but without explicit duration default to 1 year
+  if (years <= 0 && months <= 0 && rawVoid) {
+    years = 1;
+  }
+
+  const expireIso =
+    matchedItem.warranty_expire_date ||
+    computeWarrantyExpire(rawVoid, years, months);
+
+  const durationLabel = formatWarrantyDuration(years, months);
+
+  if (!rawVoid && !expireIso) {
+    const state: WarrantyState = years > 0 || months > 0 ? 'waiting' : 'none';
+    return {
+      found: true,
+      state,
+      serialNumber: matchedItem.serial_number || raw,
+      modelName: matchedItem.model_name,
+      customerName: matchedOrder?.customer_name,
+      billNo: matchedOrder?.bill_no || matchedOrder?.sales_ref || null,
+      warrantyYears: years,
+      warrantyMonths: months,
+      durationLabel,
+      voidDate: null,
+      expireDate: null,
+      remainingDays: null,
+      remainingLabel: state === 'waiting' ? 'ยังไม่เริ่มนับประกัน (รอแปะวอย)' : null
+    };
+  }
+
+  if (expireIso) {
+    const now = new Date();
+    const expDate = new Date(expireIso);
+    if (!isNaN(expDate.getTime())) {
+      if (expDate.getTime() > now.getTime()) {
+        const rem = formatRemainingTime(now, expDate);
+        return {
+          found: true,
+          state: 'active',
+          serialNumber: matchedItem.serial_number || raw,
+          modelName: matchedItem.model_name,
+          customerName: matchedOrder?.customer_name,
+          billNo: matchedOrder?.bill_no || matchedOrder?.sales_ref || null,
+          warrantyYears: years,
+          warrantyMonths: months,
+          durationLabel,
+          voidDate: rawVoid,
+          expireDate: expireIso,
+          remainingDays: rem.days,
+          remainingLabel: rem.label
+        };
+      }
+      return {
+        found: true,
+        state: 'expired',
+        serialNumber: matchedItem.serial_number || raw,
+        modelName: matchedItem.model_name,
+        customerName: matchedOrder?.customer_name,
+        billNo: matchedOrder?.bill_no || matchedOrder?.sales_ref || null,
+        warrantyYears: years,
+        warrantyMonths: months,
+        durationLabel,
+        voidDate: rawVoid,
+        expireDate: expireIso,
+        remainingDays: 0,
+        remainingLabel: 'หมดประกันแล้ว'
+      };
+    }
+  }
+
+  return {
+    found: true,
+    state: 'active',
+    serialNumber: matchedItem.serial_number || raw,
+    modelName: matchedItem.model_name,
+    customerName: matchedOrder?.customer_name,
+    billNo: matchedOrder?.bill_no || matchedOrder?.sales_ref || null,
+    warrantyYears: years,
+    warrantyMonths: months,
+    durationLabel,
+    voidDate: rawVoid,
+    expireDate: expireIso,
+    remainingDays: null,
+    remainingLabel: null
+  };
 }
 
 export type UserRole =
@@ -136,9 +317,9 @@ export interface RouteInfo {
 export const ROUTE_DEFINITIONS: Record<RouteCode, RouteInfo> = {
   route_1: {
     code: 'route_1',
-    name: 'สาย 1 (พุนพิน-ท่าชนะ)',
+    name: 'สาย 1 (พุนพิน ท่าฉาง ไชยา ท่าชนะ)',
     shortName: 'สาย 1',
-    zone: 'พุนพิน-ท่าชนะ)',
+    zone: 'พุนพิน ท่าฉาง ไชย, ท่าชนะ',
     districts: ['พุนพิน', 'ท่าฉาง', 'ไชยา', 'ท่าชนะ'],
     color: '#38BDF8',
     badgeBg: 'bg-sky-500/15',
@@ -350,11 +531,13 @@ export interface StockPO {
 export type JobCategory =
   | 'delivery'       // ส่งของ / ติดวอยส่งให้ลูกค้า
   | 'repair_pickup'  // ซ่อมหน้างาน / ไปรับเครื่องกลับร้าน
+  | 'repair_return'  // นำเครื่องซ่อมที่เสร็จแล้วไปส่งคืนลูกค้า
   | 'installation';  // งานติดตั้ง / เดินสาย / ตู้ Server (ต้องส่งทีม)
 
 export const JOB_CATEGORY_LABELS: Record<JobCategory, { label: string; color: string; bg: string; border: string }> = {
   delivery: { label: 'ส่งของ / ติดวอย', color: 'text-emerald-400', bg: 'bg-emerald-500/15', border: 'border-emerald-500/30' },
   repair_pickup: { label: 'ซ่อมหน้างาน / รับเครื่อง', color: 'text-amber-400', bg: 'bg-amber-500/15', border: 'border-amber-500/30' },
+  repair_return: { label: 'ส่งคืนเครื่องซ่อมให้ลูกค้า', color: 'text-cyan-400', bg: 'bg-cyan-500/15', border: 'border-cyan-500/30' },
   installation: { label: 'ติดตั้ง / เดินสาย / ตู้ Server', color: 'text-blue-400', bg: 'bg-blue-500/15', border: 'border-blue-500/30' },
 };
 
@@ -407,6 +590,9 @@ export type RepairStatus =
   | 'unrepairable_warranty' // ซ่อมไม่ได้ (ส่งเคลมประกันศูนย์)
   | 'expired_warranty'      // หมดประกัน (แจ้งลูกค้าเสนอราคาซ่อม/ซื้อใหม่)
   | 'unrepairable'          // ซ่อมไม่ได้ (คืนเครื่อง/ไม่คุ้มซ่อม)
+  | 'awaiting_dispatch'     // เข้าคิวจัดสายรถ (ให้ช่าง Onsite ส่งคืน)
+  | 'dispatched_onsite'     // มอบหมายช่าง Onsite นำเครื่องซ่อมไปส่งคืนลูกค้า
+  | 'on_delivery'           // ช่าง Onsite กำลังนำส่งคืนลูกค้า (อยู่ระหว่างทาง)
   | 'returned_closed';      // ปิดงานส่งมอบคืนลูกค้า
 
 // ==============================================================================
@@ -420,8 +606,8 @@ export type RepairLifecycleStatus =
   | 'waiting_parts'   // รออะไหล่
   | 'rma_sent'        // ส่งเคลมศูนย์แล้ว
   | 'rma_returned'    // ได้ของเคลมกลับแล้ว / รอเทส
-  | 'ready_pickup'    // ซ่อม/เคลมเสร็จ รอลูกค้ารับ
-  | 'completed';      // ส่งมอบเรียบร้อย
+  | 'ready_pickup'    // ซ่อม/เคลมเสร็จ -> ส่งคืนหน้าร้าน (จบงานฝั่งช่าง)
+  | 'completed';      // ส่งคืนเครื่องซ่อมให้ลูกค้า / ปิดงาน (เฉพาะหน้าร้าน)
 
 export const SERVICE_TYPE_LABELS: Record<ServiceType, string> = {
   in_house_repair: 'ซ่อมเองหน้าร้าน',
@@ -467,12 +653,12 @@ export const REPAIR_LIFECYCLE_META: Record<
     dot: 'bg-cyan-500'
   },
   ready_pickup: {
-    label: 'ซ่อม/เคลมเสร็จ รอลูกค้ารับ',
+    label: 'ซ่อม/เคลมเสร็จ → ส่งคืนหน้าร้าน',
     badge: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30',
     dot: 'bg-emerald-500'
   },
   completed: {
-    label: 'ส่งมอบเรียบร้อย',
+    label: 'ส่งคืนเครื่องซ่อมให้ลูกค้า / ปิดงาน',
     badge: 'bg-slate-500/15 text-slate-600 dark:text-slate-300 border-slate-500/30',
     dot: 'bg-slate-500'
   }
@@ -486,6 +672,26 @@ export const REPAIR_LIFECYCLE_ORDER: RepairLifecycleStatus[] = [
   'rma_returned',
   'ready_pickup',
   'completed'
+];
+
+// สถานะที่ "ช่างซ่อมในร้าน" จัดการได้เท่านั้น (ไม่รวม 'completed' ซึ่งเป็นสิทธิ์ของหน้าร้าน)
+// ready_pickup = จบงานฝั่งช่าง ส่งเครื่องคืนห้องหน้าร้าน
+export const REPAIR_TECH_LIFECYCLE_ORDER: RepairLifecycleStatus[] = [
+  'pending_check',
+  'repairing',
+  'waiting_parts',
+  'rma_sent',
+  'rma_returned',
+  'ready_pickup'
+];
+
+// สถานะที่ถือว่า "งานยังไม่จบฝั่งช่าง" (แสดงบนโต๊ะช่าง)
+export const REPAIR_TECH_ACTIVE_STATUSES: RepairLifecycleStatus[] = [
+  'pending_check',
+  'repairing',
+  'waiting_parts',
+  'rma_sent',
+  'rma_returned'
 ];
 
 // คำนวณจำนวนวันเต็มที่ผ่านไปจาก ISO timestamp (ใช้แสดง "ส่งเคลมแล้ว X วัน")
@@ -518,6 +724,12 @@ export function fromDateInputValue(value?: string | null): string | null {
 
 export type IntakeChannel = 'front_desk_walkin' | 'onsite_pickup';
 
+// ช่องทางที่ "ผู้รับเครื่อง" รับเครื่องมาจากลูกค้า
+// - front_desk: รับที่หน้าร้าน
+// - onsite_pickup: ช่าง Onsite รับกลับมาจากหน้างาน (งานมอบหมายรับเครื่อง)
+// - onsite_service_sheet: ออกใบ Service Sheet รับฝาก/งานเพิ่มหน้างานโดยช่าง Onsite
+export type ReceivedChannel = 'front_desk' | 'onsite_pickup' | 'onsite_service_sheet';
+
 export interface RepairTicket {
   id: string;
   item_id: string | null;
@@ -533,6 +745,7 @@ export interface RepairTicket {
   fault_symptom: string;
   repair_detail: string | null;
   parts_used: string | null;
+  repair_cost?: number | null;         // ค่าใช้จ่ายในการซ่อม (บาท)
   repair_outcome?: string | null;
   district?: string;
   route_code?: RouteCode;
@@ -549,10 +762,17 @@ export interface RepairTicket {
   updated_at?: string;
   // --- Activity & Audit Log ---
   activity_logs?: ActivityLog[];
-  received_by?: string;               // ชื่อพนักงานผู้รับเครื่องซ่อม
+  received_by?: string;               // ชื่อพนักงาน/ช่าง Onsite ผู้รับเครื่องมาจากลูกค้า
+  received_channel?: ReceivedChannel; // 'front_desk' (รับหน้าร้าน) | 'onsite_pickup' (ช่าง Onsite รับกลับมา)
+  repaired_by?: string | null;        // ชื่อช่างซ่อมหน้าร้านที่รับผิดชอบซ่อม/ส่งเคลมเครื่องนี้
   started_at?: string | null;         // ISO timestamp เริ่มปฏิบัติงาน / รับเครื่องซ่อม
   assigned_at?: string | null;        // ISO timestamp จัดสายรถ & มอบหมายช่าง
   delivered_at?: string | null;       // ISO timestamp ส่งมอบ / ปิดงานซ่อม
+
+  // --- Repair Return / Handover Tracking ---
+  returned_by?: string | null;             // ผู้ส่งคืนเครื่องให้ลูกค้า (เช่น 'รับเองหน้าร้าน' หรือชื่อช่าง Onsite)
+  is_repair_return?: boolean;              // true = งานนี้คือการนำเครื่องซ่อมไปส่งคืนลูกค้า (Onsite return job)
+  due_date?: string | null;                // YYYY-MM-DD วันกำหนดส่งคืนลูกค้า
 
   // --- In-House Repair / Supplier RMA Tracking ---
   service_type?: ServiceType;              // 'in_house_repair' | 'rma_claim'
@@ -563,4 +783,50 @@ export interface RepairTicket {
   rma_returned_date?: string | null;       // ISO timestamp วันที่ได้รับของเคลมกลับจากศูนย์
   replacement_sn?: string | null;          // S/N ใหม่กรณีศูนย์เปลี่ยนตัวใหม่ (original เก็บใน walkin_sn)
   repair_status?: RepairLifecycleStatus;   // สถานะวงจรชีวิตงานซ่อม/RMA
+}
+
+export type DeliveryUrgencyTier = 'overdue' | 'today' | 'soon' | 'future' | 'none';
+
+export interface DeliveryUrgencyInfo {
+  hasDate: boolean;
+  daysRemaining: number;
+  overdueDays: number;
+  tier: DeliveryUrgencyTier;
+  formattedDate: string;
+}
+
+export function getDeliveryUrgency(dateStr?: string | null): DeliveryUrgencyInfo {
+  if (!dateStr) {
+    return { hasDate: false, daysRemaining: Number.POSITIVE_INFINITY, overdueDays: 0, tier: 'none', formattedDate: '' };
+  }
+  const trimmed = dateStr.trim();
+  let target: Date;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    const [y, m, d] = trimmed.split('-').map(Number);
+    target = new Date(y, m - 1, d);
+  } else {
+    const parsed = new Date(trimmed);
+    if (isNaN(parsed.getTime())) {
+      return { hasDate: false, daysRemaining: Number.POSITIVE_INFINITY, overdueDays: 0, tier: 'none', formattedDate: '' };
+    }
+    target = new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
+  }
+
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const daysRemaining = Math.round((target.getTime() - today.getTime()) / 86400000);
+  const dd = String(target.getDate()).padStart(2, '0');
+  const mm = String(target.getMonth() + 1).padStart(2, '0');
+  const formattedDate = `${dd}/${mm}/${target.getFullYear()}`;
+
+  if (daysRemaining < 0) {
+    return { hasDate: true, daysRemaining, overdueDays: Math.abs(daysRemaining), tier: 'overdue', formattedDate };
+  }
+  if (daysRemaining === 0) {
+    return { hasDate: true, daysRemaining: 0, overdueDays: 0, tier: 'today', formattedDate };
+  }
+  if (daysRemaining <= 3) {
+    return { hasDate: true, daysRemaining, overdueDays: 0, tier: 'soon', formattedDate };
+  }
+  return { hasDate: true, daysRemaining, overdueDays: 0, tier: 'future', formattedDate };
 }
