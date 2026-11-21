@@ -64,18 +64,7 @@ export const LoginPage: React.FC = () => {
       {/* Split-Screen Login Card */}
       <div className="max-w-5xl w-full mx-auto grid grid-cols-1 lg:grid-cols-2 rounded-2xl overflow-hidden shadow-2xl border border-white/[0.1] relative z-10 bg-[var(--bg-page)]">
 
-        {/* ============ LEFT PANEL: Banner ============ */}
-        {/* Mobile / tablet: sleek responsive header banner (fixed aspect, nothing cropped awkwardly) */}
-        <div className="relative lg:hidden w-full bg-black/40">
-          <img
-            src={loginBanner}
-            alt="Boss Computech and Service Co., Ltd."
-            className="w-full h-auto max-h-56 object-contain object-center"
-          />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent pointer-events-none" />
-        </div>
-
-        {/* Desktop: full-height cover banner */}
+        {/* ============ LEFT PANEL: Banner (Desktop only) ============ */}
         <div className="relative hidden lg:block bg-black/40 min-h-[560px]">
           <img
             src={loginBanner}
