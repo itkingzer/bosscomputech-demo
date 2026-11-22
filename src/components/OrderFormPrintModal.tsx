@@ -11,6 +11,7 @@ interface OrderFormPrintModalProps {
   onClose: () => void;
   order?: Order | null;
   project?: Project | null;
+  initialBatchNo?: number | null;
 }
 
 interface PrintLineItem {
@@ -28,9 +29,12 @@ export const OrderFormPrintModal: React.FC<OrderFormPrintModalProps> = ({
   isOpen,
   onClose,
   order,
-  project
+  project,
+  initialBatchNo = null
 }) => {
   const { items } = useApp();
+
+  const [selectedBatchNo, setSelectedBatchNo] = useState<number | null>(initialBatchNo);
 
   const [includeVat, setIncludeVat] = useState<boolean>(false);
   const [taxId, setTaxId] = useState<string>('');
@@ -47,6 +51,7 @@ export const OrderFormPrintModal: React.FC<OrderFormPrintModalProps> = ({
   useEffect(() => {
     if (!isOpen) return;
     if (project) {
+      setSelectedBatchNo(initialBatchNo ?? null);
       setIncludeVat(true);
       setPaymentChoice('project');
       setDeliveryChoice('install');
@@ -117,8 +122,28 @@ export const OrderFormPrintModal: React.FC<OrderFormPrintModalProps> = ({
     };
   }, [isOpen, onClose]);
 
+  const activeBatch = useMemo(() => {
+    if (!project || selectedBatchNo == null) return null;
+    return (project.batches || []).find(b => b.batch_no === selectedBatchNo) || null;
+  }, [project, selectedBatchNo]);
+
   const lineItems: PrintLineItem[] = useMemo(() => {
     if (project) {
+      if (activeBatch) {
+        return activeBatch.items.map(bi => {
+          const matchedPrjItem = (project.items || []).find(pi => pi.id === bi.project_item_id);
+          const unitPrice = matchedPrjItem?.unit_price || 0;
+          const warrantyYears = matchedPrjItem?.warranty_years || 0;
+          const addonLabel = matchedPrjItem?.is_addon ? ` [Add-on โดย ${matchedPrjItem.added_by || '-'}]` : '';
+          return {
+            description: `${bi.model_name}${addonLabel} (งวดที่ ${activeBatch.batch_no})`,
+            warranty: warrantyYears > 0 ? `${warrantyYears} ปี` : '-',
+            unitPrice,
+            qty: bi.qty || 0,
+            amount: unitPrice * (bi.qty || 0)
+          };
+        });
+      }
       return (project.items || []).map(it => ({
         description: `${it.model_name}${it.is_addon ? ` [Add-on โดย ${it.added_by || '-'}]` : ''}`,
         warranty: it.warranty_years && it.warranty_years > 0 ? `${it.warranty_years} ปี` : '-',
@@ -155,9 +180,17 @@ export const OrderFormPrintModal: React.FC<OrderFormPrintModalProps> = ({
   const linkedSerialNumbers = useMemo(() => {
     if (project) {
       const fromItems = items
-        .filter(i => i.project_id === project.id && i.serial_number && i.serial_number !== 'SERVICE-NO-SN')
+        .filter(
+          i =>
+            i.project_id === project.id &&
+            (activeBatch ? i.project_batch_no === activeBatch.batch_no : true) &&
+            i.serial_number &&
+            i.serial_number !== 'SERVICE-NO-SN'
+        )
         .map(i => i.serial_number);
-      const fromProject = (project.items || []).flatMap(pi => pi.serial_numbers || []);
+      const fromProject = activeBatch
+        ? []
+        : (project.items || []).flatMap(pi => pi.serial_numbers || []);
       return Array.from(new Set([...fromItems, ...fromProject])).slice(0, 6).join(', ');
     }
     if (order) {
@@ -185,9 +218,11 @@ export const OrderFormPrintModal: React.FC<OrderFormPrintModalProps> = ({
   const isInstallDoc = isProjectDoc || order?.delivery_mode === 'install';
   const isSaleDoc = !isProjectDoc && !!order;
 
-  const docNo = project ? project.id : order?.bill_no || order?.sales_ref || order?.id || '-';
+  const docNo = project
+    ? (activeBatch ? `${project.id} (งวดที่ ${activeBatch.batch_no})` : project.id)
+    : order?.bill_no || order?.sales_ref || order?.id || '-';
   const openDate = project
-    ? formatDateDMY(project.start_date || project.created_at)
+    ? formatDateDMY(activeBatch ? activeBatch.released_at : (project.start_date || project.created_at))
     : formatDateDMY(order?.created_at);
   const dueDate = project
     ? formatDateDMY(project.due_date)
@@ -200,8 +235,17 @@ export const OrderFormPrintModal: React.FC<OrderFormPrintModalProps> = ({
   const salesName = project ? project.created_by : order?.salesperson || order?.created_by || '-';
   const printedToday = formatDateDMY(new Date().toISOString());
 
+  const ITEMS_PER_PAGE = 12;
   const MIN_ROWS = 11;
-  const emptyRowsCount = Math.max(0, MIN_ROWS - lineItems.length);
+  const pages: { items: PrintLineItem[]; startIndex: number }[] = [];
+  if (lineItems.length === 0) {
+    pages.push({ items: [], startIndex: 0 });
+  } else {
+    for (let i = 0; i < lineItems.length; i += ITEMS_PER_PAGE) {
+      pages.push({ items: lineItems.slice(i, i + ITEMS_PER_PAGE), startIndex: i });
+    }
+  }
+  const totalPages = pages.length;
 
   const CheckBox = ({ checked, label }: { checked: boolean; label: string }) => (
     <span className="inline-flex items-center gap-1 mr-2.5 whitespace-nowrap">
@@ -232,7 +276,22 @@ export const OrderFormPrintModal: React.FC<OrderFormPrintModalProps> = ({
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            {project && project.batches && project.batches.length > 0 && (
+              <select
+                value={selectedBatchNo ?? ''}
+                onChange={(e) => setSelectedBatchNo(e.target.value ? Number(e.target.value) : null)}
+                aria-label="เลือกงวดเบิกที่ต้องการพิมพ์"
+                className="px-3 py-2 rounded-xl text-xs font-bold bg-purple-50 text-purple-900 border border-purple-300 dark:bg-purple-500/20 dark:text-purple-200 dark:border-purple-500/40 cursor-pointer focus:outline-none"
+              >
+                <option value="" className="bg-white dark:bg-slate-900">ทั้งโครงการ ({project.items.length} รายการ)</option>
+                {project.batches.map((b) => (
+                  <option key={b.id} value={b.batch_no} className="bg-white dark:bg-slate-900">
+                    เฉพาะงวดที่ {b.batch_no} ({b.items.length} รายการ)
+                  </option>
+                ))}
+              </select>
+            )}
             <button
               type="button"
               onClick={() => setIncludeVat(v => !v)}
@@ -358,13 +417,23 @@ export const OrderFormPrintModal: React.FC<OrderFormPrintModalProps> = ({
         </div>
       </div>
 
-      {/* Printable A4 Portrait Sheet */}
+      {/* Printable A4 Portrait Sheets (Auto-Paginated) */}
       <div
         id="order-form-2026-print"
         onClick={(e) => e.stopPropagation()}
-        className="w-[210mm] min-h-[285mm] bg-white text-black p-[8mm] shadow-2xl border border-slate-300 print:border-none print:shadow-none text-[11px] leading-[1.35] font-sans"
+        className="w-[210mm] space-y-6 print:space-y-0 font-sans"
       >
-        {/* TOP HEADER */}
+        {pages.map((page, pageIdx) => {
+          const isLastPage = pageIdx === totalPages - 1;
+          const emptyRowsCount = isLastPage ? Math.max(0, (totalPages === 1 ? MIN_ROWS : 6) - page.items.length) : 0;
+
+          return (
+            <div
+              key={pageIdx}
+              className="order-form-page w-[210mm] min-h-[285mm] print:min-h-0 bg-white text-black p-[8mm] shadow-2xl border border-slate-300 print:border-none print:shadow-none text-[11px] leading-[1.35] flex flex-col justify-between"
+            >
+              <div>
+                {/* TOP HEADER */}
         <div className="grid grid-cols-12 gap-2 pb-2 border-b-2 border-black">
           {/* Left Header */}
           <div className="col-span-7 flex flex-col justify-between space-y-1.5">
@@ -406,7 +475,9 @@ export const OrderFormPrintModal: React.FC<OrderFormPrintModalProps> = ({
               />
               <div className="flex-1 border-2 border-black text-center py-1 px-2">
                 <div className="font-extrabold text-[15px] tracking-wide">ORDER FORM 2026</div>
-                <div className="text-[9.5px] font-bold">ใบสั่งงาน / ใบส่งมอบสินค้า</div>
+                <div className="text-[9.5px] font-bold">
+                  ใบสั่งงาน / ใบส่งมอบสินค้า{totalPages > 1 ? ` (หน้า ${pageIdx + 1}/${totalPages})` : ''}
+                </div>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-[10px] mt-1.5">
@@ -465,9 +536,9 @@ export const OrderFormPrintModal: React.FC<OrderFormPrintModalProps> = ({
             </tr>
           </thead>
           <tbody>
-            {lineItems.map((row, idx) => (
-              <tr key={idx}>
-                <td className="border-x border-b border-black py-1 px-1.5 text-center">{idx + 1}</td>
+            {page.items.map((row, idx) => (
+              <tr key={page.startIndex + idx}>
+                <td className="border-x border-b border-black py-1 px-1.5 text-center">{page.startIndex + idx + 1}</td>
                 <td className="border-x border-b border-black py-1 px-2">{row.description}</td>
                 <td className="border-x border-b border-black py-1 px-1.5 text-center">{row.warranty}</td>
                 <td className="border-x border-b border-black py-1 px-1.5 text-right font-mono">{fmt2(row.unitPrice)}</td>
@@ -487,6 +558,17 @@ export const OrderFormPrintModal: React.FC<OrderFormPrintModalProps> = ({
             ))}
           </tbody>
         </table>
+              </div>
+
+              {!isLastPage ? (
+                <div className="border border-black mt-2 p-3 flex items-center justify-between bg-slate-50 text-[10.5px]">
+                  <span className="font-bold">หมายเหตุ: มีรายการสินค้า/บริการต่อในหน้าถัดไป (หน้า {pageIdx + 2}/{totalPages})</span>
+                  <span className="font-mono font-bold">
+                    รวมยอดหน้านี้: {fmt2(page.items.reduce((s, r) => s + r.amount, 0))} บาท
+                  </span>
+                </div>
+              ) : (
+                <div>
 
         {/* MID-LOWER BLOCK */}
         <div className="grid grid-cols-12 border-x border-b border-black text-[10px]">
@@ -591,6 +673,11 @@ export const OrderFormPrintModal: React.FC<OrderFormPrintModalProps> = ({
             </div>
           </div>
         </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>,
     document.body

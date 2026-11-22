@@ -1219,13 +1219,25 @@ html.light ::-webkit-scrollbar-thumb {
     max-width: 198mm !important;
     min-height: auto !important;
     margin: 0 auto !important;
-    padding: 2mm !important;
+    padding: 0 !important;
     background: #FFFFFF !important;
     color: #000000 !important;
     box-shadow: none !important;
     border: none !important;
+  }
+
+  #order-form-2026-print .order-form-page {
+    padding: 2mm !important;
+    margin: 0 !important;
+    box-shadow: none !important;
+    border: none !important;
     page-break-inside: avoid !important;
     break-inside: avoid !important;
+  }
+
+  #order-form-2026-print .order-form-page:not(:last-child) {
+    page-break-after: always !important;
+    break-after: page !important;
   }
 
   #order-form-2026-print * {

@@ -6,13 +6,14 @@ import {
   ShoppingCart, Clock, AlertTriangle, Truck, Tag, Send, Check,
   ArrowRight, ShieldCheck, FileCheck, Layers, Lock, X, Warehouse, Zap,
   Timer, Wrench, ChevronDown, ChevronRight, ClipboardList, PackageSearch,
-  Search, Filter, Trash2, ShoppingBag, Plus, Receipt, History, Hash, Camera
+  Search, Filter, Trash2, ShoppingBag, Plus, Receipt, History, Hash, Camera, Printer
 } from 'lucide-react';
 import { ROUTE_DEFINITIONS, Order, Item, ProductCategory, PRODUCT_CATEGORY_LABELS, Product, StockPO, Project, formatThaiDateTime } from '../types';
 import { ListControls, useListControls } from './ListControls';
 import { ActivityTimeline, LatestUpdateBadge } from './ActivityTimeline';
 import { EvidencePhotoUploader } from './EvidencePhotoUploader';
 import { ToastBanner } from './ui/ToastBanner';
+import { OrderFormPrintModal } from './OrderFormPrintModal';
 
 const DOA_WARRANTY_DAYS = 7;
 
@@ -118,6 +119,7 @@ export const PurchasingStockView: React.FC = () => {
   const [inventoryDetail, setInventoryDetail] = useState<{ key: string; model_name: string; category: ProductCategory; rawCount: number; readyCount: number; serials: string[]; qty: number } | null>(null);
   // Stock PO Detail Modal (ติดตาม PO)
   const [poDetail, setPoDetail] = useState<StockPO | null>(null);
+  const [printProjectTarget, setPrintProjectTarget] = useState<{ project: Project; batchNo?: number | null } | null>(null);
   // DOA Claim Tracking Modal
   const [doaClaimItem, setDoaClaimItem] = useState<Item | null>(null);
   const [doaRmaInput, setDoaRmaInput] = useState('');
@@ -2983,7 +2985,7 @@ export const PurchasingStockView: React.FC = () => {
                         </div>
                         {actionProject.batches.map((b) => (
                           <div key={b.id} className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex flex-wrap items-center justify-between gap-2">
-                            <div>
+                            <div className="min-w-0 flex-1">
                               <span className="font-mono font-extrabold text-purple-700 dark:text-purple-300">
                                 Batch #{b.batch_no} ({actionProject.id} • งวดที่ {b.batch_no})
                               </span>
@@ -2991,9 +2993,19 @@ export const PurchasingStockView: React.FC = () => {
                                 {b.items.map(bi => `${bi.model_name} x${bi.qty}`).join(', ')}
                               </span>
                             </div>
-                            <span className="text-[10px] font-mono text-slate-500">
-                              {formatThaiDateTime(b.released_at)} • {b.released_by}
-                            </span>
+                            <div className="flex items-center gap-2 flex-shrink-0">
+                              <span className="text-[10px] font-mono text-slate-500">
+                                {formatThaiDateTime(b.released_at)} • {b.released_by}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => setPrintProjectTarget({ project: actionProject, batchNo: b.batch_no })}
+                                className="px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white dark:bg-white/[0.08] dark:hover:bg-white/[0.15] border border-slate-300 dark:border-white/15 text-[10px] font-bold transition cursor-pointer inline-flex items-center gap-1"
+                              >
+                                <Printer className="w-3 h-3 text-[#FF6B00]" />
+                                <span>พิมพ์บิล งวดที่ {b.batch_no}</span>
+                              </button>
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -3036,6 +3048,14 @@ export const PurchasingStockView: React.FC = () => {
                         <span>ปล่อยของออกเป็นงวดเบิก (Release Batch #{nextBatchNo})</span>
                       </button>
                     )}
+                    <button
+                      type="button"
+                      onClick={() => setPrintProjectTarget({ project: actionProject, batchNo: null })}
+                      className="py-3 px-4 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-900 dark:bg-white/[0.08] dark:hover:bg-white/[0.14] dark:text-white border border-slate-300 dark:border-white/15 font-bold text-xs transition cursor-pointer flex items-center justify-center gap-1.5"
+                    >
+                      <Printer className="w-4 h-4 text-[#FF6B00]" />
+                      <span>พิมพ์บิลโปรเจกต์</span>
+                    </button>
                   </div>
                 </>
               );
@@ -3044,6 +3064,14 @@ export const PurchasingStockView: React.FC = () => {
         </div>,
         document.body
       )}
+
+      {/* Official A4 ORDER FORM 2026 Print Modal (Project / Batch) */}
+      <OrderFormPrintModal
+        isOpen={!!printProjectTarget}
+        onClose={() => setPrintProjectTarget(null)}
+        project={printProjectTarget?.project || null}
+        initialBatchNo={printProjectTarget?.batchNo ?? null}
+      />
     </div>
   );
 };
