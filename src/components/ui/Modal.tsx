@@ -91,7 +91,7 @@ export const Modal: React.FC<ModalProps> = ({
             <div
                 onClick={(e) => e.stopPropagation()}
                 className={`w-full sm:w-[95vw] ${maxWidthClass}
-          max-h-[92dvh] sm:max-h-[90vh]
+          max-h-[92dvh] sm:max-h-[88dvh]
           flex flex-col overflow-hidden
           rounded-t-3xl sm:rounded-3xl
           shadow-2xl border
@@ -126,11 +126,11 @@ export const Modal: React.FC<ModalProps> = ({
                             type="button"
                             onClick={onClose}
                             aria-label="ปิดหน้าต่าง"
-                            className="p-2.5 rounded-xl text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white
+                            className="p-2 rounded-xl text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white
                 bg-slate-100 dark:bg-white/[0.06] hover:bg-slate-200 dark:hover:bg-white/[0.12]
-                transition-all duration-150 active:scale-[0.97] min-w-[52px] min-h-[52px] flex items-center justify-center flex-shrink-0"
+                transition-all duration-150 active:scale-[0.97] min-w-[44px] min-h-[44px] sm:min-w-[40px] sm:min-h-[40px] flex items-center justify-center flex-shrink-0 cursor-pointer"
                         >
-                            <X className="w-6 h-6" />
+                            <X className="w-5 h-5" />
                         </button>
                     </div>
                 )}

@@ -36,7 +36,7 @@ export const SettingsModal: React.FC<{ isOpen: boolean; onClose: () => void }> =
 
   return createPortal(
     <div className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-4 animate-fade-in">
-      <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-t-3xl sm:rounded-3xl w-full sm:w-[95vw] max-w-md max-h-[92dvh] sm:max-h-[90vh] overflow-y-auto overscroll-contain p-4 sm:p-7 pb-[max(1rem,env(safe-area-inset-bottom))] relative animate-modal-pop">
+      <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-t-3xl sm:rounded-3xl w-full sm:w-[95vw] max-w-md max-h-[92dvh] sm:max-h-[88dvh] overflow-y-auto overscroll-contain p-4 sm:p-7 pb-[max(1rem,env(safe-area-inset-bottom))] relative animate-modal-pop">
         <div className="sm:hidden flex justify-center pt-1 pb-3">
           <span className="h-1.5 w-10 rounded-full bg-slate-300 dark:bg-white/20" />
         </div>
@@ -89,7 +89,7 @@ export const SettingsModal: React.FC<{ isOpen: boolean; onClose: () => void }> =
             </ul>
           </div>
 
-          <div className="flex items-center gap-2 pt-2">
+          <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center gap-2 pt-2">
             <button
               type="submit"
               className="flex-1 px-5 py-3 bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] hover:to-[#FF6B00] hover:brightness-105 text-black font-extrabold rounded-2xl text-xs transition-all duration-150 active:scale-[0.97] cursor-pointer shadow-lg shadow-[#FF6B00]/25 border border-white/20"

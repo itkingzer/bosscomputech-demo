@@ -1,19 +1,20 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense, lazy } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from './context/AppContext';
 import { LoginPage } from './components/LoginPage';
 import { DashboardView } from './components/DashboardView';
-import { SalesView } from './components/SalesView';
-import { AccountingView } from './components/AccountingView';
-import { PrepView } from './components/PrepView';
-import { FrontdeskView } from './components/FrontdeskView';
-import { OnsiteView } from './components/OnsiteView';
-import { RepairView } from './components/RepairView';
-import { AdminUserManagement } from './components/AdminUserManagement';
 import { SettingsModal } from './components/SettingsModal';
-import { ProfitDashboardView } from './components/ProfitDashboardView';
-import { CompletedLogsView } from './components/CompletedLogsView';
 import { RepairReceiptPrintDocument } from './components/RepairReceiptPrintDocument';
+
+const SalesView = lazy(() => import('./components/SalesView').then(m => ({ default: m.SalesView })));
+const AccountingView = lazy(() => import('./components/AccountingView').then(m => ({ default: m.AccountingView })));
+const PrepView = lazy(() => import('./components/PrepView').then(m => ({ default: m.PrepView })));
+const FrontdeskView = lazy(() => import('./components/FrontdeskView').then(m => ({ default: m.FrontdeskView })));
+const OnsiteView = lazy(() => import('./components/OnsiteView').then(m => ({ default: m.OnsiteView })));
+const RepairView = lazy(() => import('./components/RepairView').then(m => ({ default: m.RepairView })));
+const AdminUserManagement = lazy(() => import('./components/AdminUserManagement').then(m => ({ default: m.AdminUserManagement })));
+const ProfitDashboardView = lazy(() => import('./components/ProfitDashboardView').then(m => ({ default: m.ProfitDashboardView })));
+const CompletedLogsView = lazy(() => import('./components/CompletedLogsView').then(m => ({ default: m.CompletedLogsView })));
 import {
   LayoutDashboard, FilePlus2, Boxes, PackageCheck,
   Store, Truck, Wrench, Shield, LogOut, Settings, RotateCcw,
@@ -203,7 +204,7 @@ export const App: React.FC = () => {
         className={`
           fixed top-0 bottom-0 left-0 z-40 w-[82vw] max-w-[19rem] sm:w-72 liquid-glass-sidebar flex flex-col justify-between
           transition-transform duration-300 ease-out will-change-transform
-          lg:w-72 lg:max-w-none
+          lg:w-64 xl:w-72 lg:max-w-none
           ${isMobileSidebarOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'}
           ${isDesktopSidebarOpen ? 'lg:translate-x-0' : 'lg:-translate-x-full'}
         `}
@@ -368,10 +369,10 @@ export const App: React.FC = () => {
       {/* ========================================================================= */}
       {/* MAIN CONTENT AREA */}
       {/* ========================================================================= */}
-      <div className={`flex-1 flex flex-col min-w-0 relative z-10 transition-[padding] duration-300 ease-out ${isDesktopSidebarOpen ? 'lg:pl-72' : 'lg:pl-0'}`}>
+      <div className={`flex-1 flex flex-col min-w-0 relative z-10 transition-[padding] duration-300 ease-out ${isDesktopSidebarOpen ? 'lg:pl-64 xl:pl-72' : 'lg:pl-0'}`}>
 
         {/* Top Floating App Bar */}
-        <header className="sticky top-0 z-30 px-3 sm:px-6 lg:px-8 py-2.5 sm:py-3.5 liquid-glass border-b border-white/[0.06] flex items-center justify-between gap-2">
+        <header className="sticky top-0 z-30 px-3 sm:px-5 lg:px-6 xl:px-8 py-2.5 sm:py-3.5 liquid-glass border-b border-white/[0.06] flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
             {/* Hamburger (mobile / tablet only) */}
             <button
@@ -402,8 +403,8 @@ export const App: React.FC = () => {
                 className="w-8 h-8 sm:w-9 sm:h-9 rounded-full object-cover ring-1 ring-white/20 shadow-md flex-shrink-0"
               />
               <div className="min-w-0">
-                <div className="text-[10px] sm:text-[11px] font-extrabold text-white leading-tight truncate">
-                  Boss Computech <span className="text-[#FF6B00]">and Service Co., Ltd.</span>
+                <div className="text-[11px] font-extrabold text-white leading-tight truncate">
+                  Boss Computech <span className="hidden sm:inline text-[#FF6B00]">and Service Co., Ltd.</span>
                 </div>
                 <h1 className="text-[10px] sm:text-xs font-medium text-slate-400 flex items-center justify-center lg:justify-start gap-2">
                   <span className="truncate lg:whitespace-normal">{allNavItems.find(n => n.id === activeTab)?.label}</span>
@@ -451,7 +452,8 @@ export const App: React.FC = () => {
               className="hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/30 text-[11px] font-semibold transition-all duration-150 active:scale-[0.97] cursor-pointer min-h-[40px] whitespace-nowrap"
             >
               <Eraser className="w-3.5 h-3.5 flex-shrink-0" />
-              <span>เริ่มใช้งานจริง (ล้างบิลทดสอบ / เหลือสต๊อก)</span>
+              <span className="hidden xl:inline">เริ่มใช้งานจริง (ล้างบิลทดสอบ / เหลือสต๊อก)</span>
+              <span className="xl:hidden">ล้างบิลทดสอบ</span>
             </button>
 
             <button
@@ -480,18 +482,27 @@ export const App: React.FC = () => {
 
         {/* Dynamic Content Views — keyed by activeTab so each switch replays a
             fast 250ms slide-up instead of snapping abruptly. */}
-        <main className="flex-1 px-3 sm:px-6 lg:px-8 py-4 sm:py-6 max-w-7xl w-full mx-auto min-w-0 overflow-y-auto">
+        <main className="flex-1 px-3 sm:px-5 lg:px-6 xl:px-8 py-4 sm:py-5 xl:py-6 max-w-7xl w-full mx-auto min-w-0 overflow-y-auto">
           <div key={activeTab} className="animate-slide-up">
-            {activeTab === 'dashboard' && <DashboardView />}
-            {activeTab === 'sales' && <SalesView />}
-            {activeTab === 'profit' && <ProfitDashboardView />}
-            {activeTab === 'accounting' && <AccountingView />}
-            {activeTab === 'prep' && <PrepView />}
-            {activeTab === 'frontdesk' && <FrontdeskView />}
-            {activeTab === 'onsite' && <OnsiteView />}
-            {activeTab === 'repair' && <RepairView />}
-            {activeTab === 'completed-logs' && <CompletedLogsView />}
-            {activeTab === 'admin' && currentUser.role === 'admin' && <AdminUserManagement />}
+            <Suspense
+              fallback={
+                <div className="liquid-glass-card rounded-2xl p-8 flex items-center justify-center gap-3 text-slate-400 text-sm">
+                  <span className="w-4 h-4 rounded-full border-2 border-[#FF6B00] border-t-transparent animate-spin" />
+                  <span>กำลังโหลดหน้าจอ...</span>
+                </div>
+              }
+            >
+              {activeTab === 'dashboard' && <DashboardView />}
+              {activeTab === 'sales' && <SalesView />}
+              {activeTab === 'profit' && <ProfitDashboardView />}
+              {activeTab === 'accounting' && <AccountingView />}
+              {activeTab === 'prep' && <PrepView />}
+              {activeTab === 'frontdesk' && <FrontdeskView />}
+              {activeTab === 'onsite' && <OnsiteView />}
+              {activeTab === 'repair' && <RepairView />}
+              {activeTab === 'completed-logs' && <CompletedLogsView />}
+              {activeTab === 'admin' && currentUser.role === 'admin' && <AdminUserManagement />}
+            </Suspense>
           </div>
         </main>
 
@@ -523,7 +534,7 @@ export const App: React.FC = () => {
               aria-modal="true"
               aria-labelledby="clear-demo-modal-title"
               onClick={(e) => e.stopPropagation()}
-              className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-t-3xl sm:rounded-3xl w-full sm:w-[95vw] max-w-md p-5 sm:p-6 pb-[max(1.25rem,env(safe-area-inset-bottom))] relative animate-modal-pop"
+              className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-t-3xl sm:rounded-3xl w-full sm:w-[95vw] max-w-md max-h-[92dvh] sm:max-h-[88dvh] overflow-y-auto overscroll-contain p-5 sm:p-6 pb-[max(1.25rem,env(safe-area-inset-bottom))] relative animate-modal-pop"
             >
               <div className="sm:hidden flex justify-center pt-1 pb-3">
                 <span className="h-1.5 w-10 rounded-full bg-slate-300 dark:bg-white/20" />

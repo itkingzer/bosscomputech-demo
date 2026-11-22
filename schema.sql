@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS public.items (
     model_name TEXT NOT NULL,
     serial_number TEXT UNIQUE,
     status TEXT NOT NULL DEFAULT 'pending_prep' CHECK (status IN (
+        'raw_stock',
         'in_stock',
         'pending_prep_stock',
         'pending_prep',
@@ -47,6 +48,7 @@ CREATE TABLE IF NOT EXISTS public.items (
     prep_type TEXT DEFAULT 'outbound_dispatch',   -- inbound_stock | outbound_dispatch | stock_po
     category TEXT,                          -- หมวดหมู่สินค้า (จาก Stock PO)
     stock_po_id UUID,                       -- อ้างอิงใบ Stock PO ต้นทาง
+    received_at TIMESTAMPTZ,                -- วันที่รับของเข้าห้องสต๊อก (ใช้คำนวณประกัน DOA 7 วัน)
     unit_cost NUMERIC(12,2) DEFAULT 0,      -- ราคาทุนต่อหน่วย (INTERNAL ONLY)
     supplier TEXT,                          -- แหล่งที่มา เช่น สต๊อกร้าน, SIS, Synnex, Abshop, PKT
     po_no TEXT,                             -- เลขที่ PO / ใบสั่งซื้อ เช่น PKT/2569-083
@@ -54,7 +56,7 @@ CREATE TABLE IF NOT EXISTS public.items (
     delivery_mode TEXT DEFAULT 'install',   -- ประเภทการส่งมอบ
     assigned_prep_tech TEXT,                -- ช่างเตรียมผู้รับงาน
     prep_accepted_at TIMESTAMPTZ,           -- เวลาที่ช่างเตรียมรับงาน
-    job_category TEXT DEFAULT 'delivery' CHECK (job_category IN ('delivery', 'repair_pickup', 'installation')),
+    job_category TEXT DEFAULT 'delivery' CHECK (job_category IN ('delivery', 'repair_pickup', 'repair_return', 'installation')),
     assigned_techs TEXT[] NOT NULL DEFAULT '{}',   -- ทีมช่าง Onsite (เลือกได้หลายคน)
     assigned_onsite_tech TEXT,                      -- backward-compat: ช่างหลัก = assigned_techs[0]
     prepped_at TIMESTAMPTZ,                 -- เวลาที่เตรียมเสร็จเก็บเข้าสต๊อกรอส่ง
@@ -85,7 +87,7 @@ CREATE TABLE IF NOT EXISTS public.repair_tickets (
     route_code TEXT,                        -- รหัสสายรถ route_1 ถึง route_6
     delivery_location TEXT,
     province_custom TEXT,
-    job_category TEXT DEFAULT 'repair_pickup' CHECK (job_category IN ('delivery', 'repair_pickup', 'installation')),
+    job_category TEXT DEFAULT 'repair_pickup' CHECK (job_category IN ('delivery', 'repair_pickup', 'repair_return', 'installation')),
     assigned_techs TEXT[] NOT NULL DEFAULT '{}',   -- ทีมช่าง (เลือกได้หลายคน)
     assigned_onsite_tech TEXT,                      -- backward-compat: ช่างหลัก = assigned_techs[0]
     status TEXT NOT NULL DEFAULT 'open' CHECK (status IN (
@@ -95,6 +97,9 @@ CREATE TABLE IF NOT EXISTS public.repair_tickets (
         'unrepairable_warranty',
         'expired_warranty',
         'unrepairable',
+        'awaiting_dispatch',
+        'dispatched_onsite',
+        'on_delivery',
         'returned_closed'
     )),
     -- Repair lifecycle (7 states) — วงจรชีวิตงานซ่อม / ส่งเคลม
@@ -202,12 +207,14 @@ ALTER TABLE public.stock_pos ADD COLUMN IF NOT EXISTS activity_logs JSONB NOT NU
 ALTER TABLE public.stock_pos ADD COLUMN IF NOT EXISTS created_by TEXT;
 ALTER TABLE public.stock_pos ADD COLUMN IF NOT EXISTS ordered_at TIMESTAMPTZ;
 
--- Migration: Stock PO / Proactive Replenishment columns on items (safe to re-run)
+-- Migration: Stock PO / Proactive Replenishment & Unified Status Constraints (safe to re-run)
 ALTER TABLE public.items ADD COLUMN IF NOT EXISTS category TEXT;
 ALTER TABLE public.items ADD COLUMN IF NOT EXISTS stock_po_id UUID;
+ALTER TABLE public.items ADD COLUMN IF NOT EXISTS received_at TIMESTAMPTZ;
 ALTER TABLE public.items ADD COLUMN IF NOT EXISTS unit_cost NUMERIC(12,2) DEFAULT 0;
 ALTER TABLE public.items DROP CONSTRAINT IF EXISTS items_status_check;
 ALTER TABLE public.items ADD CONSTRAINT items_status_check CHECK (status IN (
+    'raw_stock',
     'in_stock',
     'pending_prep_stock',
     'pending_prep',
@@ -218,6 +225,28 @@ ALTER TABLE public.items ADD CONSTRAINT items_status_check CHECK (status IN (
     'in_repair',
     'repaired_ready_return'
 ));
+ALTER TABLE public.items DROP CONSTRAINT IF EXISTS items_job_category_check;
+ALTER TABLE public.items ADD CONSTRAINT items_job_category_check CHECK (
+    job_category IN ('delivery', 'repair_pickup', 'repair_return', 'installation')
+);
+
+ALTER TABLE public.repair_tickets DROP CONSTRAINT IF EXISTS repair_tickets_status_check;
+ALTER TABLE public.repair_tickets ADD CONSTRAINT repair_tickets_status_check CHECK (status IN (
+    'open',
+    'in_progress',
+    'repaired',
+    'unrepairable_warranty',
+    'expired_warranty',
+    'unrepairable',
+    'awaiting_dispatch',
+    'dispatched_onsite',
+    'on_delivery',
+    'returned_closed'
+));
+ALTER TABLE public.repair_tickets DROP CONSTRAINT IF EXISTS repair_tickets_job_category_check;
+ALTER TABLE public.repair_tickets ADD CONSTRAINT repair_tickets_job_category_check CHECK (
+    job_category IN ('delivery', 'repair_pickup', 'repair_return', 'installation')
+);
 
 -- Indexes for lightning fast lookups, S/N traceability & Route filtering
 CREATE INDEX IF NOT EXISTS idx_orders_status ON public.orders(order_status);

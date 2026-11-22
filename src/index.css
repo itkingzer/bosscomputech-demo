@@ -107,8 +107,8 @@
 /* MOBILE-FIRST RESPONSIVE & TOUCH-FRIENDLY UTILITIES                         */
 /* ========================================================================= */
 
-/* Touch-friendly minimum target (44x44px per WCAG 2.5.5 / Apple HIG) */
-@media (max-width: 1023px) {
+/* Touch-friendly minimum target on phones (< 768px), while keeping 3:2 tablets (>= 768px) desktop-crisp */
+@media (max-width: 767px) {
 
   /* Form controls: comfortable thumb-sized hit areas on touch devices */
   input:not([type='checkbox']):not([type='radio']),

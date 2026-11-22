@@ -123,7 +123,7 @@ export const DashboardView: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Top Metrics Cards with Liquid Glass */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3.5">
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 sm:gap-3.5">
         {isSyncing ? (
           /* Skeleton placeholders while Supabase data is being fetched */
           Array.from({ length: 6 }).map((_, idx) => (
@@ -193,7 +193,7 @@ export const DashboardView: React.FC = () => {
       </div>
 
       {/* Unified Global Search (S/N, RMA, SO, Bill, PO, Customer) */}
-      <div className="liquid-glass rounded-3xl p-6 sm:p-7 shadow-2xl border border-white/[0.08] relative">
+      <div className="liquid-glass rounded-3xl p-4 sm:p-6 lg:p-7 shadow-2xl border border-white/[0.08] relative">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-5">
           <div>
             <h2 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
@@ -207,7 +207,7 @@ export const DashboardView: React.FC = () => {
             </p>
           </div>
 
-          <form onSubmit={handleSearch} className="w-full md:w-[28rem] relative">
+          <form onSubmit={handleSearch} className="w-full md:w-80 lg:w-96 xl:w-[28rem] flex-shrink-0 relative">
             <input
               type="text"
               placeholder="พิมพ์ S/N, เลขบิล, SO, PO, REP-... หรือชื่อลูกค้า..."
@@ -272,19 +272,17 @@ export const DashboardView: React.FC = () => {
                   key={tab.id}
                   type="button"
                   onClick={() => setSearchFilter(tab.id)}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition cursor-pointer ${
-                    active
-                      ? 'bg-[#FF6B00] text-black border-[#FF6B00] shadow-sm shadow-[#FF6B00]/25'
-                      : 'bg-slate-100 dark:bg-white/[0.04] text-slate-700 dark:text-slate-300 border-slate-200 dark:border-white/[0.08] hover:border-[#FF6B00]/40'
-                  }`}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition cursor-pointer ${active
+                    ? 'bg-[#FF6B00] text-black border-[#FF6B00] shadow-sm shadow-[#FF6B00]/25'
+                    : 'bg-slate-100 dark:bg-white/[0.04] text-slate-700 dark:text-slate-300 border-slate-200 dark:border-white/[0.08] hover:border-[#FF6B00]/40'
+                    }`}
                 >
                   <span>{tab.label}</span>
                   <span
-                    className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono ${
-                      active
-                        ? 'bg-black/15 text-black'
-                        : 'bg-slate-200 dark:bg-white/10 text-slate-700 dark:text-slate-300'
-                    }`}
+                    className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono ${active
+                      ? 'bg-black/15 text-black'
+                      : 'bg-slate-200 dark:bg-white/10 text-slate-700 dark:text-slate-300'
+                      }`}
                   >
                     {tab.count}
                   </span>
@@ -401,15 +399,14 @@ export const DashboardView: React.FC = () => {
                                 })()}
 
                                 <span
-                                  className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border ${
-                                    w.state === 'active'
-                                      ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30'
-                                      : w.state === 'expired'
+                                  className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border ${w.state === 'active'
+                                    ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30'
+                                    : w.state === 'expired'
                                       ? 'bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/30'
                                       : w.state === 'waiting'
-                                      ? 'bg-amber-500/15 text-amber-800 dark:text-amber-300 border-amber-500/30'
-                                      : 'bg-slate-200/80 dark:bg-white/[0.06] text-slate-700 dark:text-slate-300 border-slate-300 dark:border-white/[0.1]'
-                                  }`}
+                                        ? 'bg-amber-500/15 text-amber-800 dark:text-amber-300 border-amber-500/30'
+                                        : 'bg-slate-200/80 dark:bg-white/[0.06] text-slate-700 dark:text-slate-300 border-slate-300 dark:border-white/[0.1]'
+                                    }`}
                                 >
                                   {w.state === 'active' ? (
                                     <ShieldCheck className="w-3.5 h-3.5" />
@@ -420,10 +417,10 @@ export const DashboardView: React.FC = () => {
                                     {w.state === 'active'
                                       ? `อยู่ในประกัน (${w.durationLabel}${w.expireDate ? ` • หมด ${formatDateDMY(w.expireDate)}` : ''})`
                                       : w.state === 'expired'
-                                      ? `หมดประกันแล้ว (${formatDateDMY(w.expireDate)})`
-                                      : w.state === 'waiting'
-                                      ? `รอแปะวอย (${w.durationLabel})`
-                                      : 'ไม่มีข้อมูลประกันในระบบ'}
+                                        ? `หมดประกันแล้ว (${formatDateDMY(w.expireDate)})`
+                                        : w.state === 'waiting'
+                                          ? `รอแปะวอย (${w.durationLabel})`
+                                          : 'ไม่มีข้อมูลประกันในระบบ'}
                                   </span>
                                 </span>
 
@@ -568,10 +565,10 @@ export const DashboardView: React.FC = () => {
                 (searchFilter === 'repair' && repairMatches.length === 0) ||
                 (searchFilter === 'so' && matchedOrders.length === 0) ||
                 (searchFilter === 'po' && matchedStockPOs.length === 0)) && (
-                <div className="text-center text-slate-500 dark:text-slate-400 py-6 text-xs">
-                  ไม่พบรายการในหมวดที่เลือกสำหรับ "{searchQuery}"
-                </div>
-              )}
+                  <div className="text-center text-slate-500 dark:text-slate-400 py-6 text-xs">
+                    ไม่พบรายการในหมวดที่เลือกสำหรับ "{searchQuery}"
+                  </div>
+                )}
             </div>
           )}
         </div>

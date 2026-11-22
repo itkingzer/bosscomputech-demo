@@ -137,7 +137,7 @@ export const ProfitDashboardView: React.FC = () => {
     return (
         <div className="space-y-6">
             {/* Header */}
-            <div className="liquid-glass rounded-3xl p-6 sm:p-7 shadow-2xl border border-white/[0.08]">
+            <div className="liquid-glass rounded-3xl p-4 sm:p-6 lg:p-7 shadow-2xl border border-white/[0.08]">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
                     <div>
                         <h2 className="text-base font-bold text-white flex items-center gap-2">
@@ -165,7 +165,7 @@ export const ProfitDashboardView: React.FC = () => {
             </div>
 
             {/* KPI Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
                 {kpiCards.map((card) => {
                     const Icon = card.icon;
                     return (
@@ -182,7 +182,7 @@ export const ProfitDashboardView: React.FC = () => {
 
             {/* Low margin alert */}
             {totals.lowMarginCount > 0 && (
-                <div className="rounded-2xl p-4 bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-3">
+                <div className="rounded-2xl p-4 bg-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                     <div className="flex items-center gap-2 text-amber-300 text-xs font-semibold">
                         <AlertTriangle className="w-4 h-4" />
                         <span>พบออเดอร์กำไรต่ำ (GP ต่ำกว่า {LOW_MARGIN_THRESHOLD}%) จำนวน {totals.lowMarginCount} รายการ</span>
