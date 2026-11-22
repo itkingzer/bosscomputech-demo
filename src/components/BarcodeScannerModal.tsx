@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Html5Qrcode } from 'html5-qrcode';
-import { Camera, X, ScanLine, ShieldAlert, Loader2 } from 'lucide-react';
+import { Camera, X, ScanLine, ShieldAlert, Loader2, RefreshCw } from 'lucide-react';
 
 interface BarcodeScannerModalProps {
     /** Whether the modal is open */
@@ -17,6 +17,50 @@ interface BarcodeScannerModalProps {
 }
 
 const SCANNER_ELEMENT_ID = 'bc-barcode-scanner-region';
+const PREFERRED_CAMERA_KEY = 'boss_scanner_camera_id';
+
+interface CameraDevice {
+    id: string;
+    label: string;
+}
+
+/**
+ * Pick the main 1x rear camera on multi-lens phones (avoiding ultra-wide / macro / telephoto).
+ */
+function pickBestBackCameraId(cameras: CameraDevice[]): string | null {
+    if (cameras.length === 0) return null;
+
+    const savedId = (() => {
+        try {
+            return localStorage.getItem(PREFERRED_CAMERA_KEY);
+        } catch {
+            return null;
+        }
+    })();
+    if (savedId && cameras.some((c) => c.id === savedId)) {
+        return savedId;
+    }
+
+    const scoreCamera = (cam: CameraDevice, idx: number): number => {
+        const lbl = (cam.label || '').toLowerCase();
+        if (/front|user|selfie|หน้า/.test(lbl)) return -1000;
+
+        let score = 0;
+        if (/back|rear|environment|หลัง/.test(lbl)) score += 100;
+        if (/main|standard|1x|camera2\s*0\b/.test(lbl)) score += 60;
+        // Penalize ultra-wide, macro, telephoto, depth lenses that struggle with close barcode focus
+        if (/ultra|wide|0\.5|0\.6|macro|tele|depth|bokeh|tof/.test(lbl)) score -= 80;
+        // Slight preference for earlier enumerated back camera (Android usually puts main 1x at index 0)
+        score -= idx;
+        return score;
+    };
+
+    const ranked = [...cameras]
+        .map((cam, idx) => ({ cam, score: scoreCamera(cam, idx) }))
+        .sort((a, b) => b.score - a.score);
+
+    return ranked[0].score > -500 ? ranked[0].cam.id : cameras[0].id;
+}
 
 /**
  * Reusable mobile camera Barcode / QR scanner modal.
@@ -40,6 +84,9 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
     const onCloseRef = useRef(onClose);
     const [error, setError] = useState<string | null>(null);
     const [starting, setStarting] = useState(false);
+    const [cameras, setCameras] = useState<CameraDevice[]>([]);
+    const [activeCameraId, setActiveCameraId] = useState<string | null>(null);
+    const [cameraSwitchNonce, setCameraSwitchNonce] = useState(0);
 
     useEffect(() => {
         onScanRef.current = onScan;
@@ -111,8 +158,30 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
             try {
                 scannerRef.current = scanner;
 
+                // Enumerate cameras to pick the main 1x rear lens (instead of ultra-wide) on multi-camera phones
+                let targetCamera: string | { facingMode: 'environment' } = { facingMode: 'environment' };
+                try {
+                    const detected = await Html5Qrcode.getCameras();
+                    if (!cancelled && detected.length > 0) {
+                        const list = detected.map((d) => ({ id: d.id, label: d.label || `กล้อง ${d.id.slice(0, 6)}` }));
+                        setCameras(list);
+                        const chosenId =
+                            activeCameraId && list.some((c) => c.id === activeCameraId)
+                                ? activeCameraId
+                                : pickBestBackCameraId(list);
+                        if (chosenId) {
+                            setActiveCameraId(chosenId);
+                            targetCamera = chosenId;
+                        }
+                    }
+                } catch {
+                    /* fallback to facingMode: 'environment' */
+                }
+
+                if (cancelled) return;
+
                 await scanner.start(
-                    { facingMode: 'environment' },
+                    targetCamera,
                     {
                         fps: 10,
                         qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
@@ -161,7 +230,20 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
             window.clearTimeout(timer);
             void stopScanner();
         };
-    }, [open]);
+    }, [open, cameraSwitchNonce]);
+
+    const handleCycleCamera = () => {
+        if (cameras.length <= 1) return;
+        const currentIdx = cameras.findIndex((c) => c.id === activeCameraId);
+        const nextCam = cameras[(currentIdx + 1) % cameras.length];
+        setActiveCameraId(nextCam.id);
+        try {
+            localStorage.setItem(PREFERRED_CAMERA_KEY, nextCam.id);
+        } catch {
+            /* ignore */
+        }
+        setCameraSwitchNonce((n) => n + 1);
+    };
 
     // Close on Escape key.
     useEffect(() => {
@@ -255,18 +337,31 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                 </div>
 
                 {/* Footer */}
-                <div className="px-5 py-4 flex items-center justify-between gap-3 border-t border-slate-200 dark:border-white/10">
-                    <span className="flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
-                        <ScanLine className="w-3.5 h-3.5" />
-                        ระบบจะกรอก S/N ให้อัตโนมัติเมื่อสแกนสำเร็จ
+                <div className="px-5 py-4 flex items-center justify-between gap-2 border-t border-slate-200 dark:border-white/10">
+                    <span className="flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400 min-w-0 truncate">
+                        <ScanLine className="w-3.5 h-3.5 flex-shrink-0" />
+                        <span className="truncate">ระบบจะกรอก S/N ให้อัตโนมัติเมื่อสแกนสำเร็จ</span>
                     </span>
-                    <button
-                        type="button"
-                        onClick={handleClose}
-                        className="px-6 py-2.5 rounded-xl text-xs font-bold bg-slate-100 dark:bg-white/[0.06] text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-white/[0.12] transition-all duration-150 active:scale-[0.97] cursor-pointer min-h-[40px]"
-                    >
-                        ยกเลิก
-                    </button>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                        {cameras.length > 1 && (
+                            <button
+                                type="button"
+                                onClick={handleCycleCamera}
+                                title="สลับเลนส์ / กล้อง"
+                                className="px-3 py-2.5 rounded-xl text-xs font-bold bg-[#FF6B00]/15 text-[#E65A00] dark:text-[#FF6B00] border border-[#FF6B00]/30 hover:bg-[#FF6B00]/25 transition-all duration-150 active:scale-[0.97] cursor-pointer min-h-[40px] flex items-center gap-1.5"
+                            >
+                                <RefreshCw className="w-3.5 h-3.5" />
+                                <span>สลับเลนส์</span>
+                            </button>
+                        )}
+                        <button
+                            type="button"
+                            onClick={handleClose}
+                            className="px-5 py-2.5 rounded-xl text-xs font-bold bg-slate-100 dark:bg-white/[0.06] text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-white/[0.12] transition-all duration-150 active:scale-[0.97] cursor-pointer min-h-[40px]"
+                        >
+                            ยกเลิก
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>,
