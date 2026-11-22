@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { ShieldCheck, Lock, User, ArrowRight, Sun, Moon } from 'lucide-react';
+import { ShieldCheck, Lock, User, ArrowRight, ArrowLeft, Sun, Moon } from 'lucide-react';
 import { UserRole } from '../types';
 import companyLogo from '../assets/BossCom.jpg';
 import loginBanner from '../assets/BossComBanner.png';
 
-export const LoginPage: React.FC = () => {
+export const LoginPage: React.FC<{ onBackToLanding?: () => void }> = ({ onBackToLanding }) => {
   const { login, users, theme, toggleTheme } = useApp();
   const [selectedUsername, setSelectedUsername] = useState('admin');
   const [customUsername, setCustomUsername] = useState('');
@@ -40,6 +40,20 @@ export const LoginPage: React.FC = () => {
       {/* Background Liquid Light Orbs */}
       <div className="liquid-blob-1"></div>
       <div className="liquid-blob-2"></div>
+
+      {/* Back to Customer Landing Top Left */}
+      {onBackToLanding && (
+        <div className="absolute top-4 left-4 sm:top-6 sm:left-6 z-20">
+          <button
+            type="button"
+            onClick={onBackToLanding}
+            className="min-h-[44px] px-3.5 py-2 rounded-2xl liquid-glass border border-slate-200 dark:border-white/10 hover:border-[#FF6B00]/40 text-slate-700 dark:text-slate-200 hover:text-[#FF6B00] transition-all cursor-pointer flex items-center gap-2 shadow-lg text-xs font-bold"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            <span>หน้าตรวจสอบสถานะ (ลูกค้า)</span>
+          </button>
+        </div>
+      )}
 
       {/* Theme Toggle Top Right */}
       <div className="absolute top-4 right-4 sm:top-6 sm:right-6 z-20">

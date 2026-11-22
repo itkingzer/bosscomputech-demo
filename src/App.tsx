@@ -5,6 +5,7 @@ import { LoginPage } from './components/LoginPage';
 import { DashboardView } from './components/DashboardView';
 import { SettingsModal } from './components/SettingsModal';
 import { RepairReceiptPrintDocument } from './components/RepairReceiptPrintDocument';
+import { CustomerLandingPage } from './components/CustomerLandingPage';
 
 const SalesView = lazy(() => import('./components/SalesView').then(m => ({ default: m.SalesView })));
 const PurchasingStockView = lazy(() => import('./components/PurchasingStockView').then(m => ({ default: m.PurchasingStockView })));
@@ -52,6 +53,7 @@ export const App: React.FC = () => {
   const [isClearDemoModalOpen, setIsClearDemoModalOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [showStaffLogin, setShowStaffLogin] = useState(false);
 
   // Reset activeTab & transient overlays whenever the logged-in user changes (including logout)
   useEffect(() => {
@@ -59,6 +61,7 @@ export const App: React.FC = () => {
       setIsSettingsOpen(false);
       setIsClearDemoModalOpen(false);
       setIsMobileSidebarOpen(false);
+      setShowStaffLogin(false);
       return;
     }
     setActiveTab(currentUser.role === 'admin' ? 'dashboard' : currentUser.role);
@@ -126,9 +129,12 @@ export const App: React.FC = () => {
     }
   }, [isMobileSidebarOpen]);
 
-  // If not logged in, show Login Page (must be after all hooks to preserve hook order on logout)
+  // If not logged in, show Customer Landing Page by default (or Staff Login when toggled)
   if (!currentUser) {
-    return <LoginPage />;
+    if (showStaffLogin) {
+      return <LoginPage onBackToLanding={() => setShowStaffLogin(false)} />;
+    }
+    return <CustomerLandingPage onOpenStaffLogin={() => setShowStaffLogin(true)} />;
   }
 
   // Badge counts (aligned with each view's active queue)
