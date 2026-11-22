@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from '../context/AppContext';
+import { ToastBanner } from './ui/ToastBanner';
 import {
   Wrench, CheckCircle, Clock, Printer, Plus, CheckSquare, Square,
   FileText, Camera, ClipboardList, ArrowRight, Truck,
@@ -390,7 +391,7 @@ export const RepairView: React.FC = () => {
     setSelectedAccessories(updated);
   };
 
-  const handleCreateTicketSubmit = (e: React.FormEvent) => {
+  const handleCreateTicketSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!custName.trim() || !faultSymptom.trim()) {
       alert('กรุณากรอกชื่อลูกค้าและอาการเสีย');
@@ -401,12 +402,14 @@ export const RepairView: React.FC = () => {
     const finalSn = sn.trim() || `SN-${Math.floor(1000 + Math.random() * 9000)}`;
     const includedAcc = [...selectedAccessories, accessoriesOther.trim()].filter(Boolean).join(', ');
 
-    createRepairTicket({
+    await createRepairTicket({
       item_id: newMatchedItemId,
       walkin_sn: finalSn,
       customer_name: custName.trim(),
       customer_phone: custPhone.trim(),
       intake_channel: 'front_desk_walkin',
+      received_by: currentUser?.name || 'หน้าร้าน/ช่างซ่อม',
+      received_channel: 'front_desk',
       device_model: deviceModel.trim(),
       accessories: selectedAccessories,
       accessories_other: accessoriesOther.trim(),
@@ -417,7 +420,7 @@ export const RepairView: React.FC = () => {
       repair_outcome: null,
       district: district,
       route_code: calculatedRoute,
-      delivery_location: `อ.${district}`,
+      delivery_location: district === 'ต่างจังหวัด / งานเหมาพิเศษ' ? district : `อ.${district}`,
       job_category: 'repair_pickup',
       assigned_techs: [],
       assigned_onsite_tech: null,
@@ -615,24 +618,19 @@ export const RepairView: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {toast && (
-        <div className="fixed bottom-6 right-6 z-50 p-4 rounded-2xl liquid-glass border border-[#FF6B00] text-white text-xs flex items-center gap-2 shadow-2xl">
-          <CheckCircle className="w-4 h-4 text-[#FF6B00]" />
-          <span>{toast}</span>
-        </div>
-      )}
+      <ToastBanner message={toast} onClose={() => setToast('')} />
 
       {/* Main Repair Workbench */}
-      <div className="liquid-glass rounded-3xl p-6 sm:p-7 shadow-2xl border border-white/[0.08]">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-5 pb-4 border-b border-white/[0.08]">
+      <div className="liquid-glass rounded-3xl p-6 sm:p-7 shadow-2xl border border-slate-200 dark:border-white/[0.08]">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-5 pb-4 border-b border-slate-200 dark:border-white/[0.08]">
           <div>
-            <h2 className="text-base font-bold text-white flex items-center gap-2">
-              <div className="p-2 rounded-xl bg-rose-500/15 text-rose-400 border border-rose-500/30">
+            <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+              <div className="p-2 rounded-xl bg-rose-100 text-rose-700 border border-rose-300 dark:bg-rose-500/15 dark:text-rose-400 dark:border-rose-500/30">
                 <Wrench className="w-5 h-5" />
               </div>
               <span>โต๊ะช่างซ่อม & ติดตามงานเคลม (In-House Repair & RMA Tracking)</span>
             </h2>
-            <p className="text-xs text-slate-400 mt-1">
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
               ติดตามวงจรชีวิตงานซ่อมหน้าร้านและการส่งเคลมศูนย์/Supplier (RMA) แบบครบขั้นตอน
             </p>
           </div>
@@ -645,7 +643,7 @@ export const RepairView: React.FC = () => {
               <Plus className="w-4 h-4" />
               <span>เปิดใบรับซ่อมใหม่ (REP-2569-XXX)</span>
             </button>
-            <span className="text-xs px-3 py-1.5 rounded-2xl bg-rose-500/15 text-rose-400 border border-rose-500/30 font-semibold">
+            <span className="text-xs px-3 py-1.5 rounded-2xl bg-rose-100 text-rose-700 border border-rose-300 dark:bg-rose-500/15 dark:text-rose-400 dark:border-rose-500/30 font-semibold">
               {openTickets.length} งานค้างซ่อม
             </span>
           </div>
@@ -663,11 +661,11 @@ export const RepairView: React.FC = () => {
                 onClick={() => setActiveTab(tab.id)}
                 className={`px-3 py-1.5 rounded-xl text-[11px] font-semibold border transition-all duration-150 active:scale-[0.97] cursor-pointer inline-flex items-center gap-1.5 ${isActive
                   ? 'bg-[#FF6B00] text-black border-[#FF6B00] shadow-md shadow-[#FF6B00]/25'
-                  : 'bg-white/[0.04] text-slate-300 border-white/[0.08] hover:bg-white/[0.08]'
+                  : 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200 dark:bg-white/[0.04] dark:text-slate-300 dark:border-white/[0.08] dark:hover:bg-white/[0.08]'
                   }`}
               >
                 {tab.label}
-                <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${isActive ? 'bg-black/20 text-black' : 'bg-white/[0.08] text-slate-400'}`}>
+                <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${isActive ? 'bg-black/20 text-black' : 'bg-slate-200 text-slate-600 dark:bg-white/[0.08] dark:text-slate-400'}`}>
                   {count}
                 </span>
               </button>
@@ -676,9 +674,9 @@ export const RepairView: React.FC = () => {
         </div>
 
         {filteredTickets.length === 0 ? (
-          <div className="text-center py-12 text-slate-500 border border-dashed border-white/[0.1] rounded-2xl">
-            <CheckCircle className="w-10 h-10 mx-auto mb-2 text-rose-400 opacity-60" />
-            <p className="text-sm font-medium text-slate-200">ไม่มีงานในหมวดนี้</p>
+          <div className="text-center py-12 text-slate-500 border border-dashed border-slate-300 dark:border-white/[0.1] rounded-2xl">
+            <CheckCircle className="w-10 h-10 mx-auto mb-2 text-rose-500 dark:text-rose-400 opacity-60" />
+            <p className="text-sm font-medium text-slate-700 dark:text-slate-200">ไม่มีงานในหมวดนี้</p>
             <p className="text-xs text-slate-500 mt-0.5">ลองเลือกแท็บอื่น หรือเปิดใบรับซ่อมใหม่</p>
           </div>
         ) : (

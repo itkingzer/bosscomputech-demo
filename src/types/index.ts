@@ -60,8 +60,11 @@ export function computeWarrantyExpire(
   const m = months || 0;
   if (y <= 0 && m <= 0) return null;
   const exp = new Date(base);
-  exp.setFullYear(exp.getFullYear() + y);
-  exp.setMonth(exp.getMonth() + m);
+  const targetMonth = exp.getMonth() + m;
+  const targetYear = exp.getFullYear() + y + Math.floor(targetMonth / 12);
+  const normalizedMonth = ((targetMonth % 12) + 12) % 12;
+  const maxDayInTargetMonth = new Date(targetYear, normalizedMonth + 1, 0).getDate();
+  exp.setFullYear(targetYear, normalizedMonth, Math.min(base.getDate(), maxDayInTargetMonth));
   return exp.toISOString();
 }
 
@@ -125,7 +128,8 @@ function formatRemainingTime(now: Date, expireDate: Date): { days: number; label
 export function lookupWarrantyBySerial(
   serialNumber: string | null | undefined,
   items: Item[],
-  orders: Order[]
+  orders: Order[],
+  projects?: Project[]
 ): WarrantyLookupResult {
   const raw = (serialNumber || '').trim();
   const normalized = raw.toLowerCase();
@@ -172,12 +176,23 @@ export function lookupWarrantyBySerial(
     ? orders.find((o) => o.id === matchedItem.order_id)
     : undefined;
 
-  const matchedOrderItem = matchedOrder?.items_list?.find(
-    (oi) => oi.model_name === matchedItem.model_name
-  ) || matchedOrder?.items_list?.[0];
+  const matchedProject = matchedItem.project_id && projects
+    ? projects.find((p) => p.id === matchedItem.project_id)
+    : undefined;
 
-  let years = matchedItem.warranty_years ?? matchedOrderItem?.warranty_years ?? 0;
+  const matchedOrderItem =
+    matchedOrder?.items_list?.find(
+      (oi) => (oi.model_name || '').trim().toLowerCase() === (matchedItem.model_name || '').trim().toLowerCase()
+    ) || (matchedOrder?.items_list?.length === 1 ? matchedOrder.items_list[0] : undefined);
+
+  const matchedProjectItem = matchedProject?.items?.find(
+    (pi) => pi.id === matchedItem.project_item_id || pi.model_name === matchedItem.model_name
+  );
+
+  let years = matchedItem.warranty_years ?? matchedOrderItem?.warranty_years ?? matchedProjectItem?.warranty_years ?? 0;
   let months = matchedItem.warranty_months ?? matchedOrderItem?.warranty_months ?? 0;
+  const resolvedCustomerName = matchedOrder?.customer_name || (matchedProject ? `${matchedProject.customer_name} (${matchedProject.site_name})` : undefined);
+  const resolvedBillNo = matchedOrder?.bill_no || matchedOrder?.sales_ref || matchedProject?.id || matchedItem.project_id || null;
 
   const rawVoid =
     matchedItem.warranty_void_date ||
@@ -203,8 +218,8 @@ export function lookupWarrantyBySerial(
       state,
       serialNumber: matchedItem.serial_number || raw,
       modelName: matchedItem.model_name,
-      customerName: matchedOrder?.customer_name,
-      billNo: matchedOrder?.bill_no || matchedOrder?.sales_ref || null,
+      customerName: resolvedCustomerName,
+      billNo: resolvedBillNo,
       warrantyYears: years,
       warrantyMonths: months,
       durationLabel,
@@ -226,8 +241,8 @@ export function lookupWarrantyBySerial(
           state: 'active',
           serialNumber: matchedItem.serial_number || raw,
           modelName: matchedItem.model_name,
-          customerName: matchedOrder?.customer_name,
-          billNo: matchedOrder?.bill_no || matchedOrder?.sales_ref || null,
+          customerName: resolvedCustomerName,
+          billNo: resolvedBillNo,
           warrantyYears: years,
           warrantyMonths: months,
           durationLabel,
@@ -242,8 +257,8 @@ export function lookupWarrantyBySerial(
         state: 'expired',
         serialNumber: matchedItem.serial_number || raw,
         modelName: matchedItem.model_name,
-        customerName: matchedOrder?.customer_name,
-        billNo: matchedOrder?.bill_no || matchedOrder?.sales_ref || null,
+        customerName: resolvedCustomerName,
+        billNo: resolvedBillNo,
         warrantyYears: years,
         warrantyMonths: months,
         durationLabel,
@@ -260,8 +275,8 @@ export function lookupWarrantyBySerial(
     state: 'active',
     serialNumber: matchedItem.serial_number || raw,
     modelName: matchedItem.model_name,
-    customerName: matchedOrder?.customer_name,
-    billNo: matchedOrder?.bill_no || matchedOrder?.sales_ref || null,
+    customerName: resolvedCustomerName,
+    billNo: resolvedBillNo,
     warrantyYears: years,
     warrantyMonths: months,
     durationLabel,
@@ -275,17 +290,22 @@ export function lookupWarrantyBySerial(
 export type UserRole =
   | 'admin'         // Full system access, all tabs, user management, config
   | 'sales'         // 1. ฝ่ายขาย
-  | 'accounting'    // 2. บัญชี & สต๊อก
-  | 'prep'          // 3. ช่างเตรียมสินค้า (เตรียมเข้าสต๊อก / เตรียมออกไปส่ง & ติดวอย)
-  | 'frontdesk'     // 4. คนนั่งหน้าร้าน / จัดคิว & รายงาน
-  | 'onsite'        // 5. ช่าง Onsite (จัดส่ง & ติดตั้ง & รับเครื่องซ่อม)
-  | 'repair';       // 6. ช่างซ่อมในร้าน
+  | 'accounting'    // 2. จัดซื้อ & สต๊อก (Purchasing & Stock)
+  | 'finance'       // 3. ฝ่ายบัญชี (Accounting: วางบิล / ออกใบกำกับภาษี / ตรวจ PO & DOA)
+  | 'prep'          // 4. ช่างเตรียมสินค้า (เตรียมเข้าสต๊อก / เตรียมออกไปส่ง & ติดวอย)
+  | 'frontdesk'     // 5. คนนั่งหน้าร้าน / จัดคิว & รายงาน
+  | 'onsite'        // 6. ช่าง Onsite (จัดส่ง & ติดตั้ง & รับเครื่องซ่อม)
+  | 'repair'        // 7. ช่างซ่อมในร้าน
+  | 'hr';           // 8. ฝ่ายบุคคล (HR: จัดการรายชื่อพนักงาน & สรุปภาระงาน)
 
 export interface UserAccount {
   id: string;
   username: string;
   password?: string;
   name: string;
+  nickname?: string;
+  department?: string;
+  is_active?: boolean;
   role: UserRole;
   avatar?: string;
   phone?: string;
@@ -485,6 +505,11 @@ export interface Order {
   stock_cut_at?: string | null;       // ISO timestamp ตัดสต๊อกส่งช่างเตรียม
   dispatched_at?: string | null;      // ISO timestamp ปล่อยรถส่งของ / ลูกค้ารับ
   fulfilled_at?: string | null;       // ISO timestamp ส่งมอบสมบูรณ์
+  // --- Accounting / Billing ---
+  billing_status?: 'pending' | 'billed';
+  billed_at?: string | null;
+  billed_by?: string | null;
+  tax_invoice_no?: string | null;
 }
 
 export type ItemStatus =
@@ -497,7 +522,10 @@ export type ItemStatus =
   | 'assigned_onsite'      // หน้าร้านจ่ายงานให้ช่าง Onsite นำไปส่ง
   | 'delivered'            // ช่าง Onsite หรือหน้าร้านส่งมอบให้ลูกค้าสำเร็จ
   | 'in_repair'            // เครื่องอยู่ในกระบวนการซ่อม
-  | 'repaired_ready_return'; // ซ่อมเสร็จ รอส่งมอบคืน
+  | 'repaired_ready_return' // ซ่อมเสร็จ รอส่งมอบคืน
+  | 'doa_reported'         // ช่างเทสพบปัญหา DOA แจ้งกลับฝ่ายจัดซื้อ PO
+  | 'doa_sent_supplier'    // จัดซื้อแจ้งเคลม / ส่งคืน Supplier แล้ว (รอตัวใหม่)
+  | 'doa_replaced';        // รับตัวใหม่จาก Supplier แล้ว (ปิดเคส DOA และส่งตัวใหม่เข้า raw_stock)
 
 export type PrepType = 'inbound_stock' | 'outbound_dispatch' | 'stock_po';
 
@@ -521,10 +549,106 @@ export interface StockPO {
   notes?: string | null;
   created_at: string;
   updated_at?: string;
-  // --- Activity & Audit Log ---
+  // ---Activity & Audit Log ---
   activity_logs?: ActivityLog[];
   created_by?: string;                // ชื่อพนักงานผู้สั่งซื้อ
   ordered_at?: string | null;         // ISO timestamp สั่งซื้อ PO
+  project_id?: string | null;         // ผูกกับรหัสโปรเจกต์ PRJ-2026-XXX (ถ้ามี)
+}
+
+// ==============================================================================
+// Project & Site Installation Module (PRJ-2026-XXX)
+// รองรับงานรับเหมาติดตั้งหลายวัน แบ่งเบิกของเป็นงวด (Batches) และแอดรายการเพิ่มข้ามเซลล์ (Add-On Attribution)
+// ==============================================================================
+export type ProjectStatus = 'planning' | 'in_progress' | 'handover_pending' | 'completed';
+
+export type ProjectItemType = 'equipment' | 'consumable';
+
+export interface ProjectItem {
+  id: string;
+  product_id?: string;
+  model_name: string;
+  item_type: ProjectItemType; // 'equipment' (ผ่านช่าง Prep สแกน S/N + ติดวอย) | 'consumable' (วัสดุสิ้นเปลือง/ค่าแรง ส่งตรง Onsite)
+  unit?: ProductUnit;
+  qty_required: number;
+  qty_allocated: number;
+  qty_prepared: number;
+  unit_cost: number;
+  unit_price: number;
+  warranty_years?: number;
+  is_addon: boolean;
+  added_by?: string;
+  added_at?: string;
+  serial_numbers?: string[];
+}
+
+export interface ProjectBatchItem {
+  project_item_id: string;
+  model_name: string;
+  item_type: ProjectItemType;
+  qty: number;
+  item_ids?: string[];
+}
+
+export interface ProjectBatch {
+  id: string;
+  batch_no: number;
+  released_at: string;
+  released_by: string;
+  note?: string;
+  items: ProjectBatchItem[];
+}
+
+export type ProjectMaterialRequestStatus = 'pending' | 'approved_ordered' | 'fulfilled';
+
+export interface ProjectMaterialRequest {
+  id: string;
+  item_name: string;
+  product_id?: string;
+  qty: number;
+  reason: string;
+  requested_by: string;
+  requested_at: string;
+  status: ProjectMaterialRequestStatus;
+}
+
+export interface ProjectDailyLog {
+  id: string;
+  date: string;
+  tech_name: string;
+  progress_percent: number;
+  note: string;
+  photo_urls: string[];
+}
+
+export interface Project {
+  id: string; // PRJ-2026-XXX
+  site_name: string;
+  customer_name: string;
+  phone: string;
+  location: string;
+  district?: string;
+  route_code?: RouteCode;
+  created_by: string; // Lead Sales
+  start_date: string;
+  due_date: string;
+  status: ProjectStatus;
+  assigned_techs: string[];
+  items: ProjectItem[];
+  batches: ProjectBatch[];
+  material_requests: ProjectMaterialRequest[];
+  daily_logs: ProjectDailyLog[];
+  handover_photo_urls?: string[];
+  handover_note?: string;
+  completed_at?: string | null;
+  created_at: string;
+  updated_at?: string;
+  activity_logs?: ActivityLog[];
+  // --- Accounting / Billing ---
+  billing_status?: 'pending' | 'billed';
+  billed_at?: string | null;
+  billed_by?: string | null;
+  tax_invoice_no?: string | null;
 }
 
 // ประเภทงาน Onsite (Job Category)
@@ -544,6 +668,9 @@ export const JOB_CATEGORY_LABELS: Record<JobCategory, { label: string; color: st
 export interface Item {
   id: string;
   order_id?: string | null;
+  project_id?: string | null;         // รหัสโปรเจกต์ PRJ-2026-XXX (กรณีเบิกเข้าไซต์งานติดตั้ง)
+  project_batch_no?: number | null;   // งวดเบิกที่ X ของโปรเจกต์
+  project_item_id?: string | null;    // อ้างอิงรายการใน Project.items
   model_name: string;
   serial_number: string | null;
   status: ItemStatus;
@@ -563,6 +690,8 @@ export interface Item {
   assigned_techs: string[];            // ทีมช่าง (เลือกได้หลายคน)
   /** @deprecated use assigned_techs[0] */
   assigned_onsite_tech?: string | null; // เก็บไว้ backward-compat กับ Supabase query เดิม
+  onsite_accepted_by?: string | null;   // ช่าง Onsite ที่กดรับงาน
+  onsite_accepted_at?: string | null;   // เวลาที่ช่าง Onsite กดรับงาน
   void_date: string | null; // YYYY-MM-DD (ช่างเตรียมสินค้า/ผู้ปล่อยของเป็นคนติดก่อนนำส่งจริง)
   warranty_years?: number;            // ระยะเวลาประกัน (ปี) ที่ผูกมาจากรายการขาย
   warranty_months?: number;           // ระยะเวลาประกัน (เดือน) ที่ผูกมาจากรายการขาย
@@ -573,6 +702,7 @@ export interface Item {
   updated_at?: string;
   // --- Activity & Audit Log ---
   activity_logs?: ActivityLog[];
+  logo_applied?: boolean;                   // ติดโลโก้บริษัทเรียบร้อยแล้ว (ทำครั้งเดียวใน Stage A)
   received_into_storage_at?: string | null; // ISO timestamp รับของเข้าห้องสต๊อก (เริ่มนับ DOA 7 วัน)
   prep_accepted_log_at?: string | null;     // ISO timestamp ช่างกดรับงาน
   logo_scanned_at?: string | null;          // ISO timestamp ติดโลโก้ & สแกน S/N
@@ -581,6 +711,17 @@ export interface Item {
   assigned_at?: string | null;              // ISO timestamp จัดสายรถ & มอบหมายช่าง
   dispatched_at?: string | null;            // ISO timestamp ปล่อยรถส่งของ / ลูกค้ารับ
   delivered_at?: string | null;             // ISO timestamp ส่งมอบติดตั้งเสร็จสิ้น
+  // --- DOA Defect & Supplier Replacement Tracking ---
+  doa_reason?: string | null;               // อาการเสีย DOA ที่ช่างแจ้ง
+  doa_notes?: string | null;                // รายละเอียดเพิ่มเติมจากช่าง/จัดซื้อ
+  doa_reported_at?: string | null;          // ISO timestamp ที่ช่างแจ้ง DOA
+  doa_reported_by?: string | null;          // ชื่อช่างที่แจ้ง DOA
+  doa_rma_no?: string | null;               // เลขที่ RMA / Tracking ที่ส่งเคลม Supplier
+  doa_sent_date?: string | null;            // วันที่ส่งเคลม Supplier (YYYY-MM-DD)
+  doa_replaced_at?: string | null;          // ISO timestamp ที่รับตัวใหม่จาก Supplier
+  doa_replacement_item_id?: string | null;  // ID ของเครื่องตัวใหม่ที่สร้างเข้า raw_stock
+  // --- Evidence Photos (DOA / Onsite Delivery) ---
+  photo_urls?: string[] | null;             // URLs (Supabase Storage) หรือ Data URLs (Demo) สูงสุด 3 รูป
 }
 
 export type RepairStatus =
@@ -783,6 +924,8 @@ export interface RepairTicket {
   rma_returned_date?: string | null;       // ISO timestamp วันที่ได้รับของเคลมกลับจากศูนย์
   replacement_sn?: string | null;          // S/N ใหม่กรณีศูนย์เปลี่ยนตัวใหม่ (original เก็บใน walkin_sn)
   repair_status?: RepairLifecycleStatus;   // สถานะวงจรชีวิตงานซ่อม/RMA
+  // --- Evidence Photos (Onsite Pickup / Service Sheet / Return Proof) ---
+  photo_urls?: string[] | null;            // URLs (Supabase Storage) หรือ Data URLs (Demo) สูงสุด 3 รูป
 }
 
 export type DeliveryUrgencyTier = 'overdue' | 'today' | 'soon' | 'future' | 'none';

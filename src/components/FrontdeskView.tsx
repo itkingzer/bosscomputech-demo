@@ -19,6 +19,8 @@ import {
 import { ListControls, useListControls } from './ListControls';
 import { ActivityTimeline, LatestUpdateBadge } from './ActivityTimeline';
 import { BarcodeScannerModal } from './BarcodeScannerModal';
+import { EvidencePhotoUploader } from './EvidencePhotoUploader';
+import { ToastBanner } from './ui/ToastBanner';
 import { lookupPurchaseBySn } from '../utils/snLookup';
 
 // ---------------------------------------------------------------------------
@@ -273,7 +275,7 @@ export const FrontdeskView: React.FC = () => {
   const {
     currentUser, users, orders, items, repairTickets,
     createRepairTicket, createOnsiteServiceCall,
-    applyVoidAndDispatch, assignOnsite, assignRepairTicketOnsite,
+    applyVoidAndDispatch, assignOnsite, confirmCustomerPickup, updateOrderRoute,
     selfPickupRepairTicket, dispatchRepairReturnOnsite, queueRepairTicketForDispatch,
     triggerPrintRepairReceipt, updateOrderDeliveryDate, updateRepairTicketDueDate
   } = useApp();
@@ -286,7 +288,7 @@ export const FrontdeskView: React.FC = () => {
   };
 
   const onsiteTechs = useMemo(
-    () => users.filter(u => u.role === 'onsite'),
+    () => users.filter(u => u.role === 'onsite' && u.is_active !== false),
     [users]
   );
 
@@ -468,8 +470,12 @@ export const FrontdeskView: React.FC = () => {
   // PILLAR 2A — Prepared Orders & Repair Return Dispatch
   // =========================================================================
   const readyItems = useMemo(
-    () => items.filter(i => i.status === 'prepped_in_stock' || i.status === 'ready_for_dispatch'),
-    [items]
+    () => items.filter(i => {
+      if (i.status !== 'prepped_in_stock' && i.status !== 'ready_for_dispatch') return false;
+      const ord = i.order_id ? orders.find(o => o.id === i.order_id) : null;
+      return ord?.delivery_mode !== 'customer_pickup';
+    }),
+    [items, orders]
   );
 
   const awaitingDispatchTickets = useMemo(
@@ -527,10 +533,15 @@ export const FrontdeskView: React.FC = () => {
       if (dispatchOrder && dispatchDueDate !== (dispatchOrder.delivery_date || '')) {
         await updateOrderDeliveryDate(dispatchOrder.id, dispatchDueDate);
       }
-      await applyVoidAndDispatch(dispatchItem.id, dispatchVoidDate);
+      if (dispatchOrder && dispatchRoute !== dispatchOrder.route_code) {
+        await updateOrderRoute(dispatchOrder.id, dispatchRoute);
+      }
+      if (dispatchItem.status === 'prepped_in_stock' || !dispatchItem.warranty_void_date) {
+        await applyVoidAndDispatch(dispatchItem.id, dispatchVoidDate);
+      }
       await assignOnsite(dispatchItem.id, dispatchTechs, 'delivery');
       setDispatchTarget(null);
-      showToast('แปะวอยประกันและจัดสายรถส่งมอบเรียบร้อยแล้ว');
+      showToast('จัดสายรถและมอบหมายช่างส่งมอบเรียบร้อยแล้ว');
     } else if (dispatchTarget.type === 'repair') {
       if (!dispatchTicket) return;
       if (dispatchDueDate !== (dispatchTicket.due_date || '')) {
@@ -677,7 +688,7 @@ export const FrontdeskView: React.FC = () => {
 
   const confirmPickup = async () => {
     if (!pickupItem) return;
-    await applyVoidAndDispatch(pickupItem.id, pickupVoidDate);
+    await confirmCustomerPickup(pickupItem.id, pickupVoidDate);
     setPickupItemId(null);
     showToast('ยืนยันรับสินค้าและปิดงานเรียบร้อยแล้ว');
   };
@@ -780,11 +791,7 @@ export const FrontdeskView: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Toast */}
-      {toast && (
-        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[10001] px-4 py-2.5 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-sm font-bold shadow-xl animate-modal-pop">
-          {toast}
-        </div>
-      )}
+      <ToastBanner message={toast} onClose={() => setToast('')} />
 
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -1851,6 +1858,18 @@ export const FrontdeskView: React.FC = () => {
                     </div>
                   </div>
                 )}
+              </div>
+            )}
+
+            {trackerTicket.photo_urls && trackerTicket.photo_urls.length > 0 && (
+              <div className="rounded-2xl border border-slate-200 dark:border-white/[0.08] bg-slate-50 dark:bg-white/[0.03] p-3">
+                <EvidencePhotoUploader
+                  value={trackerTicket.photo_urls}
+                  onChange={() => {}}
+                  folder="onsite"
+                  editable={false}
+                  label="รูปถ่ายหลักฐานหน้างาน / รับเครื่อง"
+                />
               </div>
             )}
 

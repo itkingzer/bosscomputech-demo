@@ -3,9 +3,10 @@ import { createPortal } from 'react-dom';
 import { useApp } from '../context/AppContext';
 import { Users, UserPlus, Trash2, Shield, Database, CheckCircle } from 'lucide-react';
 import { UserRole } from '../types';
+import { ToastBanner } from './ui/ToastBanner';
 
 export const AdminUserManagement: React.FC = () => {
-  const { users, addUser, deleteUser, resetAllDemoData } = useApp();
+  const { currentUser, users, addUser, deleteUser, resetAllDemoData } = useApp();
   const [showAddModal, setShowAddModal] = useState(false);
   const [name, setName] = useState('');
   const [username, setUsername] = useState('');
@@ -14,21 +15,34 @@ export const AdminUserManagement: React.FC = () => {
   const [badge, setBadge] = useState('');
   const [toast, setToast] = useState('');
 
+  if (currentUser?.role !== 'admin') {
+    return (
+      <div className="liquid-glass rounded-3xl p-8 text-center border border-slate-200 dark:border-white/[0.08]">
+        <Shield className="w-10 h-10 mx-auto mb-3 text-rose-500" />
+        <h2 className="text-base font-bold text-slate-900 dark:text-white">ไม่มีสิทธิ์เข้าถึงส่วนจัดการระบบ</h2>
+        <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">เฉพาะ Super Admin เท่านั้นที่สามารถจัดการบัญชีผู้ใช้ได้</p>
+      </div>
+    );
+  }
+
   const handleAddUser = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name || !username) return;
+    const cleanName = name.trim();
+    const cleanUsername = username.toLowerCase().trim();
+    if (!cleanName || !cleanUsername) return;
 
-    if (users.some(u => u.username.toLowerCase() === username.toLowerCase())) {
+    if (users.some(u => u.username.toLowerCase() === cleanUsername)) {
       alert('Username นี้มีอยู่ในระบบแล้ว');
       return;
     }
 
     addUser({
-      name,
-      username: username.toLowerCase().trim(),
+      name: cleanName,
+      username: cleanUsername,
+      password: 'password123',
       role,
-      phone: phone || '-',
-      badge: badge || role.toUpperCase()
+      phone: phone.trim() || '-',
+      badge: badge.trim() || role.toUpperCase()
     });
 
     setName('');
@@ -47,32 +61,29 @@ export const AdminUserManagement: React.FC = () => {
   const roleLabel: Record<UserRole, string> = {
     admin: 'ผู้ดูแลระบบ (Admin)',
     sales: '1. ฝ่ายขาย',
-    accounting: '2. บัญชี & สต๊อก',
-    prep: '3. ช่างเตรียมสินค้า',
-    frontdesk: '4. แอดมินหน้าร้าน',
-    onsite: '5. ช่าง Onsite',
-    repair: '6. ช่างซ่อมในร้าน'
+    accounting: '2. จัดซื้อ & สต๊อก',
+    finance: '3. บัญชี (Accounting)',
+    prep: '4. ช่างเตรียมสินค้า',
+    frontdesk: '5. แอดมินหน้าร้าน',
+    onsite: '6. ช่าง Onsite',
+    repair: '7. ช่างซ่อมในร้าน',
+    hr: '8. บุคคล (HR)'
   };
 
   return (
     <div className="space-y-6">
-      {toast && (
-        <div className="fixed bottom-6 right-6 z-50 p-4 rounded-2xl liquid-glass border border-[#FF6B00] text-white text-xs flex items-center gap-2 shadow-2xl">
-          <CheckCircle className="w-4 h-4 text-[#FF6B00]" />
-          <span>{toast}</span>
-        </div>
-      )}
+      <ToastBanner message={toast} onClose={() => setToast('')} />
 
       {/* Admin Header in Liquid Glass */}
-      <div className="liquid-glass rounded-3xl p-6 sm:p-7 shadow-2xl border border-white/[0.08] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="liquid-glass rounded-3xl p-6 sm:p-7 shadow-2xl border border-slate-200 dark:border-white/[0.08] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
             <div className="p-2 rounded-xl bg-[#FF6B00]/15 text-[#FF6B00] border border-[#FF6B00]/30">
               <Shield className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-lg font-bold text-white">แผงควบคุมผู้ดูแลระบบ (Admin Control Center)</h2>
-              <p className="text-xs text-slate-400 mt-0.5">จัดการรายชื่อผู้ใช้ บัญชีแยกแผนก กำหนดสิทธิ์ และควบคุมฐานข้อมูล</p>
+              <h2 className="text-lg font-bold text-slate-900 dark:text-white">แผงควบคุมผู้ดูแลระบบ (Admin Control Center)</h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">จัดการรายชื่อผู้ใช้ บัญชีแยกแผนก กำหนดสิทธิ์ และควบคุมฐานข้อมูล</p>
             </div>
           </div>
         </div>
@@ -92,7 +103,7 @@ export const AdminUserManagement: React.FC = () => {
                 showNotice('รีเซ็ตข้อมูลตัวอย่างทั้งหมดเรียบร้อยแล้ว');
               }
             }}
-            className="px-3.5 py-2.5 rounded-2xl liquid-glass-card hover:border-rose-500/50 hover:text-rose-400 text-slate-400 text-xs transition-all duration-150 active:scale-[0.97] cursor-pointer flex items-center gap-1.5"
+            className="px-3.5 py-2.5 rounded-2xl liquid-glass-card hover:border-rose-500/50 hover:text-rose-500 dark:hover:text-rose-400 text-slate-600 dark:text-slate-400 text-xs transition-all duration-150 active:scale-[0.97] cursor-pointer flex items-center gap-1.5"
           >
             <Database className="w-4 h-4" />
             <span>รีเซ็ตเดโม่</span>
@@ -101,9 +112,9 @@ export const AdminUserManagement: React.FC = () => {
       </div>
 
       {/* Users Table in Liquid Glass */}
-      <div className="liquid-glass rounded-3xl p-6 shadow-2xl border border-white/[0.08]">
+      <div className="liquid-glass rounded-3xl p-6 shadow-2xl border border-slate-200 dark:border-white/[0.08]">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-sm font-bold text-white flex items-center gap-2">
+          <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
             <Users className="w-4 h-4 text-[#FF6B00]" />
             รายชื่อผู้ใช้และสิทธิ์การเข้าถึง ({users.length} บัญชี)
           </h3>
@@ -111,7 +122,7 @@ export const AdminUserManagement: React.FC = () => {
 
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
-            <thead className="bg-white/[0.03] text-slate-400 border-b border-white/[0.06]">
+            <thead className="bg-slate-100 dark:bg-white/[0.03] text-slate-600 dark:text-slate-400 border-b border-slate-200 dark:border-white/[0.06]">
               <tr>
                 <th className="py-3 px-4">ชื่อ - นามสกุล</th>
                 <th className="py-3 px-4">Username</th>
@@ -121,22 +132,22 @@ export const AdminUserManagement: React.FC = () => {
                 <th className="py-3 px-4 text-right">การกระทำ</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-white/[0.05]">
+            <tbody className="divide-y divide-slate-200 dark:divide-white/[0.05]">
               {users.map((u) => (
-                <tr key={u.id} className="hover:bg-white/[0.03] transition">
-                  <td className="py-3.5 px-4 font-bold text-white text-base flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-xl bg-white/[0.05] border border-white/[0.08] flex items-center justify-center font-bold text-xs text-[#FF6B00]">
+                <tr key={u.id} className="hover:bg-slate-50 dark:hover:bg-white/[0.03] transition">
+                  <td className="py-3.5 px-4 font-bold text-slate-900 dark:text-white text-base flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-xl bg-slate-100 dark:bg-white/[0.05] border border-slate-200 dark:border-white/[0.08] flex items-center justify-center font-bold text-xs text-[#FF6B00]">
                       {u.name.slice(0, 1)}
                     </div>
                     <span>{u.name}</span>
                   </td>
                   <td className="py-3.5 px-4 font-mono font-bold text-[#FF6B00] data-key">{u.username}</td>
                   <td className="py-3.5 px-4">
-                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold border border-[#FF6B00]/30 bg-[#FF6B00]/10 text-slate-200">
+                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold border border-[#FF6B00]/30 bg-[#FF6B00]/10 text-slate-800 dark:text-slate-200">
                       {roleLabel[u.role]}
                     </span>
                   </td>
-                  <td className="py-3.5 px-4 text-slate-300 data-meta">{u.phone || '-'}</td>
+                  <td className="py-3.5 px-4 text-slate-600 dark:text-slate-300 data-meta">{u.phone || '-'}</td>
                   <td className="py-3.5 px-4 text-slate-400 font-mono text-[11px] data-meta">{u.badge || '-'}</td>
                   <td className="py-3.5 px-4 text-right">
                     {u.id === 'u-admin' ? (
@@ -209,11 +220,13 @@ export const AdminUserManagement: React.FC = () => {
                   className="w-full rounded-2xl px-3.5 py-2 bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 focus:outline-none focus:border-blue-500"
                 >
                   <option value="sales" className="bg-white dark:bg-[#12141A]">1. ฝ่ายขาย (Sales)</option>
-                  <option value="accounting" className="bg-white dark:bg-[#12141A]">2. บัญชี & สต๊อก (Accounting)</option>
-                  <option value="prep" className="bg-white dark:bg-[#12141A]">3. ช่างเตรียมสินค้า (Prep Tech)</option>
-                  <option value="frontdesk" className="bg-white dark:bg-[#12141A]">4. แอดมินหน้าร้าน (Front-Desk Dispatcher)</option>
-                  <option value="onsite" className="bg-white dark:bg-[#12141A]">5. ช่าง Onsite (Field Tech)</option>
-                  <option value="repair" className="bg-white dark:bg-[#12141A]">6. ช่างซ่อมในร้าน (In-House Repair)</option>
+                  <option value="accounting" className="bg-white dark:bg-[#12141A]">2. จัดซื้อ &amp; สต๊อก (Purchasing &amp; Stock)</option>
+                  <option value="finance" className="bg-white dark:bg-[#12141A]">3. บัญชี (Accounting)</option>
+                  <option value="prep" className="bg-white dark:bg-[#12141A]">4. ช่างเตรียมสินค้า (Prep Tech)</option>
+                  <option value="frontdesk" className="bg-white dark:bg-[#12141A]">5. แอดมินหน้าร้าน (Front-Desk Dispatcher)</option>
+                  <option value="onsite" className="bg-white dark:bg-[#12141A]">6. ช่าง Onsite (Field Tech)</option>
+                  <option value="repair" className="bg-white dark:bg-[#12141A]">7. ช่างซ่อมในร้าน (In-House Repair)</option>
+                  <option value="hr" className="bg-white dark:bg-[#12141A]">8. บุคคล (HR)</option>
                   <option value="admin" className="bg-white dark:bg-[#12141A]">ผู้ดูแลระบบ (Admin)</option>
                 </select>
               </div>

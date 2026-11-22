@@ -339,3 +339,128 @@ DROP TRIGGER IF EXISTS trg_stock_pos_updated_at ON public.stock_pos;
 CREATE TRIGGER trg_stock_pos_updated_at
 BEFORE UPDATE ON public.stock_pos
 FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+-- ==============================================================================
+-- Migration: Phase 2-4 Alignment (DOA, Evidence Photos, Billing, Projects, Users)
+-- Safe to re-run (idempotent)
+-- ==============================================================================
+
+-- 1. Orders: Billing & Accounting columns
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS billing_status TEXT DEFAULT 'pending' CHECK (billing_status IN ('pending', 'billed'));
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS billed_at TIMESTAMPTZ;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS billed_by TEXT;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS tax_invoice_no TEXT;
+
+-- 2. Items: Logo, Evidence Photos, DOA, Project link, and Onsite Accept columns
+ALTER TABLE public.items ADD COLUMN IF NOT EXISTS logo_applied BOOLEAN DEFAULT false;
+ALTER TABLE public.items ADD COLUMN IF NOT EXISTS photo_urls JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE public.items ADD COLUMN IF NOT EXISTS project_id TEXT;
+ALTER TABLE public.items ADD COLUMN IF NOT EXISTS project_batch_no INTEGER;
+ALTER TABLE public.items ADD COLUMN IF NOT EXISTS project_item_id TEXT;
+ALTER TABLE public.items ADD COLUMN IF NOT EXISTS onsite_accepted_by TEXT;
+ALTER TABLE public.items ADD COLUMN IF NOT EXISTS onsite_accepted_at TIMESTAMPTZ;
+ALTER TABLE public.items ADD COLUMN IF NOT EXISTS doa_reason TEXT;
+ALTER TABLE public.items ADD COLUMN IF NOT EXISTS doa_notes TEXT;
+ALTER TABLE public.items ADD COLUMN IF NOT EXISTS doa_reported_at TIMESTAMPTZ;
+ALTER TABLE public.items ADD COLUMN IF NOT EXISTS doa_reported_by TEXT;
+ALTER TABLE public.items ADD COLUMN IF NOT EXISTS doa_rma_no TEXT;
+ALTER TABLE public.items ADD COLUMN IF NOT EXISTS doa_sent_date DATE;
+ALTER TABLE public.items ADD COLUMN IF NOT EXISTS doa_replaced_at TIMESTAMPTZ;
+ALTER TABLE public.items ADD COLUMN IF NOT EXISTS doa_replacement_item_id UUID;
+
+ALTER TABLE public.items DROP CONSTRAINT IF EXISTS items_status_check;
+ALTER TABLE public.items ADD CONSTRAINT items_status_check CHECK (status IN (
+    'raw_stock',
+    'in_stock',
+    'pending_prep_stock',
+    'pending_prep',
+    'prepped_in_stock',
+    'ready_for_dispatch',
+    'assigned_onsite',
+    'delivered',
+    'in_repair',
+    'repaired_ready_return',
+    'doa_reported',
+    'doa_sent_supplier',
+    'doa_replaced'
+));
+
+-- 3. Repair Tickets: Evidence Photos, Channel, Cost & Return tracking
+ALTER TABLE public.repair_tickets ADD COLUMN IF NOT EXISTS received_channel TEXT;
+ALTER TABLE public.repair_tickets ADD COLUMN IF NOT EXISTS photo_urls JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE public.repair_tickets ADD COLUMN IF NOT EXISTS repair_cost NUMERIC(12,2) DEFAULT 0;
+ALTER TABLE public.repair_tickets ADD COLUMN IF NOT EXISTS repaired_by TEXT;
+ALTER TABLE public.repair_tickets ADD COLUMN IF NOT EXISTS is_repair_return BOOLEAN DEFAULT false;
+ALTER TABLE public.repair_tickets ADD COLUMN IF NOT EXISTS due_date DATE;
+ALTER TABLE public.repair_tickets ADD COLUMN IF NOT EXISTS returned_by TEXT;
+
+-- 4. Stock POs: Project link
+ALTER TABLE public.stock_pos ADD COLUMN IF NOT EXISTS project_id TEXT;
+
+-- 5. Projects Table (Phase 3: Project / Site Installation)
+CREATE TABLE IF NOT EXISTS public.projects (
+    id TEXT PRIMARY KEY,
+    site_name TEXT NOT NULL,
+    customer_name TEXT NOT NULL,
+    phone TEXT,
+    location TEXT,
+    district TEXT,
+    route_code TEXT,
+    province_custom TEXT,
+    created_by TEXT NOT NULL,
+    start_date DATE,
+    due_date DATE,
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'in_progress', 'completed', 'cancelled')),
+    assigned_techs TEXT[] NOT NULL DEFAULT '{}',
+    billing_status TEXT DEFAULT 'pending' CHECK (billing_status IN ('pending', 'billed')),
+    billed_at TIMESTAMPTZ,
+    billed_by TEXT,
+    tax_invoice_no TEXT,
+    items JSONB NOT NULL DEFAULT '[]'::jsonb,
+    batches JSONB NOT NULL DEFAULT '[]'::jsonb,
+    material_requests JSONB NOT NULL DEFAULT '[]'::jsonb,
+    daily_logs JSONB NOT NULL DEFAULT '[]'::jsonb,
+    activity_logs JSONB NOT NULL DEFAULT '[]'::jsonb,
+    notes TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- 6. Users Table (Phase 4: HR Staff Directory & Admin Management)
+CREATE TABLE IF NOT EXISTS public.users (
+    id TEXT PRIMARY KEY,
+    username TEXT UNIQUE NOT NULL,
+    password TEXT,
+    name TEXT NOT NULL,
+    nickname TEXT,
+    role TEXT NOT NULL,
+    assigned_route TEXT,
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE public.projects DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.users DISABLE ROW LEVEL SECURITY;
+
+DO $$
+BEGIN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.projects;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$
+BEGIN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.users;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DROP TRIGGER IF EXISTS trg_projects_updated_at ON public.projects;
+CREATE TRIGGER trg_projects_updated_at
+BEFORE UPDATE ON public.projects
+FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_users_updated_at ON public.users;
+CREATE TRIGGER trg_users_updated_at
+BEFORE UPDATE ON public.users
+FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();

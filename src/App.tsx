@@ -7,7 +7,9 @@ import { SettingsModal } from './components/SettingsModal';
 import { RepairReceiptPrintDocument } from './components/RepairReceiptPrintDocument';
 
 const SalesView = lazy(() => import('./components/SalesView').then(m => ({ default: m.SalesView })));
+const PurchasingStockView = lazy(() => import('./components/PurchasingStockView').then(m => ({ default: m.PurchasingStockView })));
 const AccountingView = lazy(() => import('./components/AccountingView').then(m => ({ default: m.AccountingView })));
+const HrDirectoryView = lazy(() => import('./components/HrDirectoryView').then(m => ({ default: m.HrDirectoryView })));
 const PrepView = lazy(() => import('./components/PrepView').then(m => ({ default: m.PrepView })));
 const FrontdeskView = lazy(() => import('./components/FrontdeskView').then(m => ({ default: m.FrontdeskView })));
 const OnsiteView = lazy(() => import('./components/OnsiteView').then(m => ({ default: m.OnsiteView })));
@@ -18,16 +20,18 @@ const CompletedLogsView = lazy(() => import('./components/CompletedLogsView').th
 import {
   LayoutDashboard, FilePlus2, Boxes, PackageCheck,
   Store, Truck, Wrench, Shield, LogOut, Settings, RotateCcw,
-  ChevronRight, Menu, X, Sparkles, Sun, Moon, TrendingUp, History,
-  Eraser, AlertTriangle, CheckCircle2
+  Menu, X, Sun, Moon, TrendingUp, History,
+  Eraser, AlertTriangle, Receipt, Users
 } from 'lucide-react';
+import { ToastBanner } from './components/ui/ToastBanner';
+import { getRoleDisplayName } from './utils/domainHelpers';
 import companyLogo from './assets/BossCom.jpg';
 
 export const App: React.FC = () => {
   const {
     currentUser, logout, isSupabaseLive, isSyncing,
-    orders, items, repairTickets, resetAllDemoData, clearDemoKeepStock,
-    theme, toggleTheme, printingRepairTicket, closePrintRepairReceipt
+    orders, items, repairTickets, projects, resetAllDemoData, clearDemoKeepStock,
+    theme, toggleTheme, printingRepairTicket
   } = useApp();
 
   // Sync theme class & data-theme on <html> so all document.body Portal modals respond immediately
@@ -127,12 +131,22 @@ export const App: React.FC = () => {
     return <LoginPage />;
   }
 
-  // Badge counts
+  // Badge counts (aligned with each view's active queue)
   const pendingAccounting = orders.filter(o => o.order_status === 'pending_purchasing' || o.order_status === 'waiting_po' || o.order_status === 'po_received_in_stock').length;
   const pendingPrep = items.filter(i => i.status === 'pending_prep').length;
-  const readyDispatch = items.filter(i => i.status === 'ready_for_dispatch').length;
-  const assignedOnsite = items.filter(i => i.status === 'assigned_onsite').length;
-  const inRepair = repairTickets.filter(r => r.status === 'in_progress' || r.status === 'open').length;
+  const readyDispatch =
+    items.filter(i => (i.status === 'ready_for_dispatch' || i.status === 'prepped_in_stock') && Boolean(i.order_id)).length +
+    repairTickets.filter(r => r.status === 'awaiting_dispatch' || r.repair_status === 'ready_pickup').length;
+  const assignedOnsite =
+    items.filter(i => i.status === 'assigned_onsite' && !i.project_id).length +
+    projects.filter(p => p.status !== 'completed').length +
+    repairTickets.filter(r => r.status === 'dispatched_onsite' || (r.intake_channel === 'onsite_pickup' && r.status !== 'returned_closed')).length;
+  const inRepair = repairTickets.filter(r =>
+    r.status !== 'returned_closed' &&
+    r.repair_status !== 'completed' &&
+    r.repair_status !== 'ready_pickup' &&
+    !r.delivered_at
+  ).length;
 
   // Master definition of nav items
   const allNavItems = [
@@ -140,10 +154,12 @@ export const App: React.FC = () => {
     { id: 'sales', role: 'sales', label: 'ฝ่ายขาย (Sales)', icon: FilePlus2, badge: null, desc: 'ORDER FORM 2026 (ใบขาว)' },
     { id: 'profit', role: 'sales', label: 'สรุปยอด & กำไร (GP)', icon: TrendingUp, badge: null, desc: 'ยอดขาย, ต้นทุน, GP & ค่าคอม' },
     { id: 'accounting', role: 'accounting', label: 'จัดซื้อ & สต๊อก', icon: Boxes, badge: pendingAccounting, desc: 'ใบชมพู & ใบสั่งซื้อ PO' },
+    { id: 'finance', role: 'finance', label: 'บัญชี (Accounting)', icon: Receipt, badge: null, desc: 'วางบิล, ใบกำกับ & ORDER FORM' },
     { id: 'prep', role: 'prep', label: 'ช่างเตรียมสินค้า', icon: PackageCheck, badge: pendingPrep, desc: '2 จังหวะ: เตรียม/ปล่อยของ' },
     { id: 'frontdesk', role: 'frontdesk', label: 'หน้าร้าน / จัดคิว', icon: Store, badge: readyDispatch, desc: 'จ่ายงาน & รับเครื่องซ่อม' },
     { id: 'onsite', role: 'onsite', label: 'ช่าง Onsite', icon: Truck, badge: assignedOnsite, desc: 'ส่งมอบ & รับเครื่องกลับ' },
     { id: 'repair', role: 'repair', label: 'ช่างซ่อมในร้าน', icon: Wrench, badge: inRepair, desc: 'ตรวจเช็ค & ออกใบรับซ่อม' },
+    { id: 'hr', role: 'hr', label: 'บุคคล (HR)', icon: Users, badge: null, desc: 'รายชื่อพนักงาน & ภาระงาน' },
     { id: 'completed-logs', role: 'all', label: 'ประวัติงาน & Log', icon: History, badge: null, desc: 'งานที่ปิดแล้ว & ไทม์ไลน์ย้อนหลัง' },
     { id: 'admin', role: 'admin', label: 'จัดการผู้ใช้ & สิทธิ์', icon: Shield, badge: null, desc: 'แอดมินระบบส่วนกลาง' },
   ];
@@ -163,19 +179,6 @@ export const App: React.FC = () => {
     if (nav.id === 'profit' && (currentUser.role as string) === 'manager') return true;
     return nav.role === currentUser.role;
   });
-
-  const getRoleDisplayName = (role: string) => {
-    switch (role) {
-      case 'admin': return 'Super Admin';
-      case 'sales': return 'ฝ่ายขาย (Sales)';
-      case 'accounting': return 'บัญชี & สต๊อก';
-      case 'prep': return 'ช่างเตรียมสินค้า';
-      case 'frontdesk': return 'แอดมินหน้าร้าน';
-      case 'onsite': return 'ช่าง Onsite';
-      case 'repair': return 'ช่างซ่อมในร้าน';
-      default: return role.toUpperCase();
-    }
-  };
 
   return (
     <div className="min-h-screen bg-[var(--bg-page)] text-[var(--text-primary)] flex relative overflow-x-hidden transition-colors duration-300">
@@ -379,7 +382,7 @@ export const App: React.FC = () => {
               onClick={() => setIsMobileSidebarOpen(true)}
               aria-label="เปิดเมนูนำทาง"
               aria-expanded={isMobileSidebarOpen}
-              className="lg:hidden p-2.5 -ml-1 rounded-xl liquid-glass-card text-slate-300 hover:text-white min-w-[44px] min-h-[44px] flex items-center justify-center flex-shrink-0"
+              className="lg:hidden p-2.5 -ml-1 rounded-xl liquid-glass-card text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white min-w-[44px] min-h-[44px] flex items-center justify-center flex-shrink-0"
             >
               <Menu className="w-5 h-5" />
             </button>
@@ -390,7 +393,7 @@ export const App: React.FC = () => {
               aria-label={isDesktopSidebarOpen ? 'ซ่อนเมนูด้านข้าง' : 'แสดงเมนูด้านข้าง'}
               aria-expanded={isDesktopSidebarOpen}
               title={isDesktopSidebarOpen ? 'ซ่อนเมนูด้านข้าง' : 'แสดงเมนูด้านข้าง'}
-              className="hidden lg:flex p-2.5 -ml-1 rounded-xl liquid-glass-card text-slate-300 hover:text-white transition min-w-[44px] min-h-[44px] items-center justify-center flex-shrink-0"
+              className="hidden lg:flex p-2.5 -ml-1 rounded-xl liquid-glass-card text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white transition min-w-[44px] min-h-[44px] items-center justify-center flex-shrink-0"
             >
               <Menu className="w-5 h-5" />
             </button>
@@ -400,15 +403,15 @@ export const App: React.FC = () => {
               <img
                 src={companyLogo}
                 alt="Boss Computech Logo"
-                className="w-8 h-8 sm:w-9 sm:h-9 rounded-full object-cover ring-1 ring-white/20 shadow-md flex-shrink-0"
+                className="w-8 h-8 sm:w-9 sm:h-9 rounded-full object-cover ring-1 ring-slate-300 dark:ring-white/20 shadow-md flex-shrink-0"
               />
               <div className="min-w-0">
-                <div className="text-[11px] font-extrabold text-white leading-tight truncate">
+                <div className="text-[11px] font-extrabold text-slate-900 dark:text-white leading-tight truncate">
                   Boss Computech <span className="hidden sm:inline text-[#FF6B00]">and Service Co., Ltd.</span>
                 </div>
-                <h1 className="text-[10px] sm:text-xs font-medium text-slate-400 flex items-center justify-center lg:justify-start gap-2">
+                <h1 className="text-[10px] sm:text-xs font-medium text-slate-600 dark:text-slate-400 flex items-center justify-center lg:justify-start gap-2">
                   <span className="truncate lg:whitespace-normal">{allNavItems.find(n => n.id === activeTab)?.label}</span>
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/[0.06] text-slate-400 border border-white/[0.08] font-normal hidden lg:inline-block">
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-200/70 dark:bg-white/[0.06] text-slate-700 dark:text-slate-400 border border-slate-300 dark:border-white/[0.08] font-normal hidden lg:inline-block">
                     Role: {currentUser.role}
                   </span>
                 </h1>
@@ -434,7 +437,7 @@ export const App: React.FC = () => {
               onClick={toggleTheme}
               title={theme === 'dark' ? 'เปลี่ยนเป็นธีมสว่าง (Liquid Glass Light)' : 'เปลี่ยนเป็นธีมมืด (Liquid Glass Dark)'}
               aria-label={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
-              className="relative p-2 rounded-xl liquid-glass-card text-slate-300 hover:text-[#FF6B00] transition-all cursor-pointer flex items-center justify-center group overflow-hidden"
+              className="relative p-2 rounded-xl liquid-glass-card text-slate-600 dark:text-slate-300 hover:text-[#FF6B00] transition-all cursor-pointer flex items-center justify-center group overflow-hidden"
             >
               <div className="relative w-4 h-4 flex items-center justify-center">
                 {theme === 'dark' ? (
@@ -495,11 +498,13 @@ export const App: React.FC = () => {
               {activeTab === 'dashboard' && <DashboardView />}
               {activeTab === 'sales' && <SalesView />}
               {activeTab === 'profit' && <ProfitDashboardView />}
-              {activeTab === 'accounting' && <AccountingView />}
+              {activeTab === 'accounting' && <PurchasingStockView />}
+              {activeTab === 'finance' && <AccountingView />}
               {activeTab === 'prep' && <PrepView />}
               {activeTab === 'frontdesk' && <FrontdeskView />}
               {activeTab === 'onsite' && <OnsiteView />}
               {activeTab === 'repair' && <RepairView />}
+              {activeTab === 'hr' && <HrDirectoryView />}
               {activeTab === 'completed-logs' && <CompletedLogsView />}
               {activeTab === 'admin' && currentUser.role === 'admin' && <AdminUserManagement />}
             </Suspense>
@@ -591,28 +596,7 @@ export const App: React.FC = () => {
         )}
 
       {/* Toast Notification */}
-      {toastMessage &&
-        createPortal(
-          <div className="fixed top-4 right-4 left-4 sm:left-auto z-[10000] max-w-md animate-slide-up">
-            <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-2xl px-4 py-3 border border-emerald-300 dark:border-emerald-500/40 shadow-2xl flex items-center gap-3">
-              <div className="p-1.5 rounded-xl bg-emerald-100 text-emerald-700 border border-emerald-300 dark:bg-emerald-500/15 dark:text-emerald-400 dark:border-emerald-500/30 flex-shrink-0">
-                <CheckCircle2 className="w-4 h-4" />
-              </div>
-              <p className="text-xs font-semibold text-slate-900 dark:text-white flex-1 leading-relaxed">
-                {toastMessage}
-              </p>
-              <button
-                type="button"
-                onClick={() => setToastMessage(null)}
-                aria-label="ปิดการแจ้งเตือน"
-                className="p-1 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/[0.06] transition cursor-pointer flex-shrink-0"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          </div>,
-          document.body
-        )}
+      <ToastBanner message={toastMessage || ''} onClose={() => setToastMessage(null)} durationMs={4500} />
 
       {/* Dedicated Portal Print Layer for Repair Receipts (#repair-print-root) */}
       {printingRepairTicket &&

@@ -164,7 +164,7 @@ export const RepairReceiptPrintDocument: React.FC<RepairReceiptPrintDocumentProp
             <td className={cell} colSpan={3}>
               <span className={label}>สภาพเครื่อง : </span>
               <span className={value}>
-                {ticket.accessories && ticket.accessories.length > 0
+                {acc
                   ? 'มีอุปกรณ์ติดมาด้วย (ตามรายการด้านล่าง)'
                   : 'ตัวเครื่องเปล่า / ตามที่ตรวจรับ'}
               </span>

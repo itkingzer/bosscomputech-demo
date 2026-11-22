@@ -35,18 +35,18 @@ interface SnDetailModalProps {
 
 export const SnDetailModal: React.FC<SnDetailModalProps> = ({ match, onClose }) => {
   const timeline = useMemo(
-    () => (match ? buildCombinedTimeline(match.item, match.order, match.linkedRepairs) : []),
+    () => (match ? buildCombinedTimeline(match.item, match.order, match.linkedRepairs, match.project) : []),
     [match]
   );
 
   const financial = useMemo(
-    () => (match ? computeFinancialSummary(match.item, match.order, match.linkedRepairs) : null),
+    () => (match ? computeFinancialSummary(match.item, match.order, match.linkedRepairs, match.project) : null),
     [match]
   );
 
   if (!match) return null;
 
-  const { item, order, linkedRepairs, deliveryStatus, repairSummary, warranty } = match;
+  const { item, order, project, linkedRepairs, deliveryStatus, repairSummary, warranty } = match;
 
   const technicians = Array.from(
     new Set(
@@ -54,6 +54,7 @@ export const SnDetailModal: React.FC<SnDetailModalProps> = ({ match, onClose }) 
         item?.assigned_prep_tech || '',
         item?.assigned_onsite_tech || '',
         ...(item?.assigned_techs || []),
+        ...(project?.assigned_techs || []),
         ...linkedRepairs.flatMap((t) => [
           t.repaired_by || '',
           t.returned_by || '',
@@ -66,7 +67,7 @@ export const SnDetailModal: React.FC<SnDetailModalProps> = ({ match, onClose }) 
     )
   );
 
-  const orderCreatedAt = order?.created_at_log || order?.created_at || item?.created_at || linkedRepairs[0]?.created_at;
+  const orderCreatedAt = order?.created_at_log || order?.created_at || project?.created_at || item?.created_at || linkedRepairs[0]?.created_at;
 
   return (
     <Modal
@@ -229,7 +230,7 @@ export const SnDetailModal: React.FC<SnDetailModalProps> = ({ match, onClose }) 
                 <span>สถานที่จัดส่ง / พื้นที่</span>
               </div>
               <div className="font-semibold text-slate-900 dark:text-white mt-0.5">
-                {order?.delivery_location || linkedRepairs[0]?.delivery_location || '-'}
+                {order?.delivery_location || project?.location || linkedRepairs[0]?.delivery_location || '-'}
               </div>
             </div>
 
@@ -239,11 +240,11 @@ export const SnDetailModal: React.FC<SnDetailModalProps> = ({ match, onClose }) 
                 <span>เลขที่เอกสารอ้างอิง</span>
               </div>
               <div className="font-mono font-bold text-[#FF6B00] mt-0.5">
-                {match.billNo || match.salesRef || match.ticketNo || '-'}
+                {match.billNo || match.salesRef || match.ticketNo || project?.id || '-'}
               </div>
-              {order?.salesperson && (
+              {(order?.salesperson || project?.created_by) && (
                 <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                  พนักงานขาย: <span className="font-semibold text-slate-700 dark:text-slate-200">{order.salesperson}</span>
+                  พนักงานขาย: <span className="font-semibold text-slate-700 dark:text-slate-200">{order?.salesperson || project?.created_by}</span>
                 </div>
               )}
             </div>
@@ -409,6 +410,57 @@ export const SnDetailModal: React.FC<SnDetailModalProps> = ({ match, onClose }) 
                 <span className="font-mono font-extrabold text-rose-700 dark:text-rose-300">
                   {formatBaht(financial.repairCostTotal)}
                 </span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 4.5. Project Site Summary (if linked to PRJ-...) */}
+        {project && (
+          <div className="rounded-2xl border border-purple-300 dark:border-purple-500/30 bg-purple-50/70 dark:bg-purple-500/10 p-4 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h4 className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                <Package className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                <span>ข้อมูลไซต์งานโปรเจกต์ ({project.id} • {project.site_name})</span>
+              </h4>
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-purple-600 text-white">
+                งวดเบิกทั้งหมด {project.batches?.length || 0} งวด
+              </span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+              <div className="p-2.5 rounded-xl bg-white dark:bg-slate-900/70 border border-purple-200 dark:border-purple-500/20">
+                <div className="text-[10px] text-slate-500 dark:text-slate-400">เซลล์เจ้าของโครงการ</div>
+                <div className="font-bold text-slate-900 dark:text-white mt-0.5">{project.created_by}</div>
+              </div>
+              <div className="p-2.5 rounded-xl bg-white dark:bg-slate-900/70 border border-purple-200 dark:border-purple-500/20">
+                <div className="text-[10px] text-slate-500 dark:text-slate-400">ระยะเวลาโครงการ</div>
+                <div className="font-mono font-bold text-slate-900 dark:text-white mt-0.5">
+                  {project.start_date} → {project.due_date}
+                </div>
+              </div>
+              <div className="p-2.5 rounded-xl bg-white dark:bg-slate-900/70 border border-purple-200 dark:border-purple-500/20">
+                <div className="text-[10px] text-slate-500 dark:text-slate-400">S/N อุปกรณ์ในไซต์งาน</div>
+                <div className="font-mono font-bold text-[#C2410C] dark:text-[#FF6B00] mt-0.5 truncate">
+                  {project.items.flatMap(pi => pi.serial_numbers || []).join(', ') || '-'}
+                </div>
+              </div>
+            </div>
+            {project.daily_logs && project.daily_logs.length > 0 && (
+              <div className="space-y-1.5">
+                <div className="text-[11px] font-bold text-purple-900 dark:text-purple-200">
+                  บันทึกความคืบหน้าหน้างาน ({project.daily_logs.length} วัน):
+                </div>
+                {project.daily_logs.map((dlog) => (
+                  <div key={dlog.id} className="p-2.5 rounded-xl bg-white dark:bg-slate-900/70 border border-purple-200 dark:border-purple-500/20 text-xs flex flex-col gap-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-mono font-bold text-purple-700 dark:text-purple-300">{dlog.date} • {dlog.tech_name}</span>
+                      <span className="px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 font-mono font-extrabold text-[10px]">
+                        คืบหน้า {dlog.progress_percent}%
+                      </span>
+                    </div>
+                    <p className="text-slate-700 dark:text-slate-300 text-[11px]">{dlog.note}</p>
+                  </div>
+                ))}
               </div>
             )}
           </div>

@@ -36,16 +36,26 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
 }) => {
     const scannerRef = useRef<Html5Qrcode | null>(null);
     const hasScannedRef = useRef(false);
+    const onScanRef = useRef(onScan);
+    const onCloseRef = useRef(onClose);
     const [error, setError] = useState<string | null>(null);
     const [starting, setStarting] = useState(false);
 
+    useEffect(() => {
+        onScanRef.current = onScan;
+        onCloseRef.current = onClose;
+    }, [onScan, onClose]);
+
     // Stop & release the camera stream safely (idempotent).
-    const stopScanner = async () => {
-        const scanner = scannerRef.current;
-        scannerRef.current = null;
+    const stopScanner = async (targetScanner?: Html5Qrcode | null) => {
+        const scanner = targetScanner ?? scannerRef.current;
+        if (!targetScanner) {
+            scannerRef.current = null;
+        } else if (scannerRef.current === targetScanner) {
+            scannerRef.current = null;
+        }
         if (!scanner) return;
         try {
-            // stop() throws if the scanner was never started; guard with isScanning.
             if (scanner.isScanning) {
                 await scanner.stop();
             }
@@ -62,12 +72,17 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
     useEffect(() => {
         if (!open) return;
 
+        let cancelled = false;
         hasScannedRef.current = false;
         setError(null);
         setStarting(true);
 
+        const prevOverflow = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+
         // Give the portal DOM a tick to mount the scanner region before init.
         const timer = window.setTimeout(async () => {
+            if (cancelled) return;
             // HTTPS / secure-context guard (camera requires a secure origin).
             const isSecure =
                 window.isSecureContext ||
@@ -75,21 +90,25 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                 window.location.hostname === '127.0.0.1';
 
             if (!isSecure) {
-                setError(
-                    'กล้องต้องใช้งานผ่าน HTTPS เท่านั้น (หรือ localhost) — กรุณาเปิดเว็บไซต์ด้วย https:// แล้วลองใหม่อีกครั้ง'
-                );
-                setStarting(false);
+                if (!cancelled) {
+                    setError(
+                        'กล้องต้องใช้งานผ่าน HTTPS เท่านั้น (หรือ localhost) — กรุณาเปิดเว็บไซต์ด้วย https:// แล้วลองใหม่อีกครั้ง'
+                    );
+                    setStarting(false);
+                }
                 return;
             }
 
             if (!navigator.mediaDevices?.getUserMedia) {
-                setError('อุปกรณ์หรือเบราว์เซอร์นี้ไม่รองรับการเปิดกล้อง — กรุณาใช้มือถือ/แท็บเล็ตที่ทันสมัย');
-                setStarting(false);
+                if (!cancelled) {
+                    setError('อุปกรณ์หรือเบราว์เซอร์นี้ไม่รองรับการเปิดกล้อง — กรุณาใช้มือถือ/แท็บเล็ตที่ทันสมัย');
+                    setStarting(false);
+                }
                 return;
             }
 
+            const scanner = new Html5Qrcode(SCANNER_ELEMENT_ID, { verbose: false });
             try {
-                const scanner = new Html5Qrcode(SCANNER_ELEMENT_ID, { verbose: false });
                 scannerRef.current = scanner;
 
                 await scanner.start(
@@ -103,22 +122,28 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                         aspectRatio: 1.0
                     },
                     (decodedText) => {
-                        if (hasScannedRef.current) return;
+                        if (cancelled || hasScannedRef.current) return;
                         hasScannedRef.current = true;
-                        // Optional haptic feedback on supported devices.
                         navigator.vibrate?.(100);
-                        // Stop the camera immediately, then hand the value back.
-                        void stopScanner().finally(() => {
-                            onScan(decodedText);
-                            onClose();
+                        void stopScanner(scanner).finally(() => {
+                            onScanRef.current(decodedText);
+                            onCloseRef.current();
                         });
                     },
                     () => {
                         /* per-frame decode failures are expected; ignore */
                     }
                 );
+
+                // If user closed modal while scanner.start() was pending, stop stream immediately.
+                if (cancelled) {
+                    await stopScanner(scanner);
+                    return;
+                }
                 setStarting(false);
             } catch (err) {
+                await stopScanner(scanner);
+                if (cancelled) return;
                 const message = err instanceof Error ? err.message : String(err);
                 const denied = /permission|denied|notallowed/i.test(message);
                 setError(
@@ -127,38 +152,40 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                         : 'ไม่สามารถเปิดกล้องได้ — กรุณาตรวจสอบว่าอุปกรณ์มีกล้องและอนุญาตสิทธิ์การใช้งานกล้องแล้ว'
                 );
                 setStarting(false);
-                await stopScanner();
             }
         }, 60);
 
         return () => {
+            cancelled = true;
+            document.body.style.overflow = prevOverflow;
             window.clearTimeout(timer);
             void stopScanner();
         };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [open]);
 
     // Close on Escape key.
     useEffect(() => {
         if (!open) return;
         const onKey = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') handleClose();
+            if (e.key === 'Escape') {
+                e.stopPropagation();
+                handleClose();
+            }
         };
-        window.addEventListener('keydown', onKey);
-        return () => window.removeEventListener('keydown', onKey);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
+        window.addEventListener('keydown', onKey, true);
+        return () => window.removeEventListener('keydown', onKey, true);
     }, [open]);
 
     const handleClose = () => {
         void stopScanner();
-        onClose();
+        onCloseRef.current();
     };
 
     if (!open) return null;
 
     return createPortal(
         <div
-            className="fixed inset-0 z-[10000] flex items-center justify-center p-3 sm:p-4 bg-black/70 backdrop-blur-sm overflow-y-auto overscroll-contain animate-fade-in"
+            className="fixed inset-0 z-[10050] flex items-center justify-center p-3 sm:p-4 bg-black/70 backdrop-blur-sm overflow-y-auto overscroll-contain animate-fade-in"
             role="dialog"
             aria-modal="true"
             aria-label={title}

@@ -12,31 +12,58 @@ export const SettingsModal: React.FC<{ isOpen: boolean; onClose: () => void }> =
   const [url, setUrl] = useState(supabaseUrl);
   const [key, setKey] = useState(supabaseKey);
 
-  // Lock background scroll while the settings modal is open
+  // Sync local form state when modal opens or external config changes
+  useEffect(() => {
+    if (isOpen) {
+      setUrl(supabaseUrl);
+      setKey(supabaseKey);
+    }
+  }, [isOpen, supabaseUrl, supabaseKey]);
+
+  // Lock background scroll & close on Escape while the settings modal is open
   useEffect(() => {
     if (!isOpen) return;
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
     return () => {
       document.body.style.overflow = prevOverflow;
+      window.removeEventListener('keydown', onKey);
     };
-  }, [isOpen]);
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
-    if (url && key) {
-      updateSupabaseConfig(url.trim(), key.trim());
+    const cleanUrl = url.trim();
+    const cleanKey = key.trim();
+    if (!cleanUrl && !cleanKey) {
+      disconnectSupabase();
+      onClose();
+    } else if (cleanUrl && cleanKey) {
+      updateSupabaseConfig(cleanUrl, cleanKey);
       onClose();
     } else {
-      alert('กรุณากรอกทั้ง Supabase URL และ Key');
+      alert('กรุณากรอกทั้ง Supabase URL และ Key (หรือเว้นว่างทั้งสองช่องเพื่อใช้ Demo Mode)');
     }
   };
 
   return createPortal(
-    <div className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-4 animate-fade-in">
-      <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-t-3xl sm:rounded-3xl w-full sm:w-[95vw] max-w-md max-h-[92dvh] sm:max-h-[88dvh] overflow-y-auto overscroll-contain p-4 sm:p-7 pb-[max(1rem,env(safe-area-inset-bottom))] relative animate-modal-pop">
+    <div
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label="ตั้งค่าการเชื่อมต่อ Supabase"
+      className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-4 animate-fade-in"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-t-3xl sm:rounded-3xl w-full sm:w-[95vw] max-w-md max-h-[92dvh] sm:max-h-[88dvh] overflow-y-auto overscroll-contain p-4 sm:p-7 pb-[max(1rem,env(safe-area-inset-bottom))] relative animate-modal-pop"
+      >
         <div className="sm:hidden flex justify-center pt-1 pb-3">
           <span className="h-1.5 w-10 rounded-full bg-slate-300 dark:bg-white/20" />
         </div>

@@ -1,7 +1,37 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
-import { UserAccount, Order, Item, RepairTicket, RepairStatus, RepairLifecycleStatus, ServiceType, RouteCode, JobCategory, Product, StockPO, ProductCategory, getRouteByDistrict, ActivityLog, computeWarrantyExpire, REPAIR_LIFECYCLE_META, ReceivedChannel, ROUTE_DEFINITIONS, WarrantyLookupResult, lookupWarrantyBySerial as lookupWarrantyHelper } from '../types';
-import { INITIAL_USERS, INITIAL_ORDERS, INITIAL_ITEMS, INITIAL_REPAIR_TICKETS, INITIAL_PRODUCTS, INITIAL_STOCK_POS } from '../data/initialData';
+import { UserAccount, Order, Item, RepairTicket, RepairStatus, RepairLifecycleStatus, ServiceType, RouteCode, JobCategory, Product, StockPO, ProductCategory, getRouteByDistrict, ActivityLog, computeWarrantyExpire, REPAIR_LIFECYCLE_META, ReceivedChannel, ROUTE_DEFINITIONS, WarrantyLookupResult, lookupWarrantyBySerial as lookupWarrantyHelper, Project, ProjectItem, ProjectItemType, ProjectMaterialRequestStatus } from '../types';
+import { INITIAL_USERS, INITIAL_ORDERS, INITIAL_ITEMS, INITIAL_REPAIR_TICKETS, INITIAL_PRODUCTS, INITIAL_STOCK_POS, INITIAL_PROJECTS } from '../data/initialData';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { newUuid, isSerialDuplicate } from '../utils/domainHelpers';
+
+const safeLoadJson = <T,>(key: string, fallback: T): T => {
+  try {
+    const saved = localStorage.getItem(key);
+    if (!saved) return fallback;
+    return JSON.parse(saved) as T;
+  } catch (err) {
+    console.warn(`Failed to parse localStorage key "${key}":`, err);
+    return fallback;
+  }
+};
+
+const safeSaveJson = (key: string, value: unknown): void => {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch (err) {
+    console.warn(`Failed to save localStorage key "${key}":`, err);
+  }
+};
+
+const generateUniqueTicketNo = (existingTickets: RepairTicket[]): string => {
+  const thaiYear = new Date().getFullYear() + 543;
+  const used = new Set(existingTickets.map(t => t.ticket_no).filter(Boolean));
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const candidate = `REP-${thaiYear}-${Math.floor(100 + Math.random() * 900)}`;
+    if (!used.has(candidate)) return candidate;
+  }
+  return `REP-${thaiYear}-${String(Date.now()).slice(-5)}`;
+};
 
 // ==============================================================================
 // Activity & Audit Log helpers
@@ -47,6 +77,7 @@ export interface OnsiteHandoffPayload {
   fault_symptom: string;
   received_channel?: ReceivedChannel;
   send_to_repair_shop?: boolean;
+  photo_urls?: string[];
 }
 
 interface AppContextType {
@@ -55,13 +86,103 @@ interface AppContextType {
   logout: () => void;
   users: UserAccount[];
   addUser: (user: Omit<UserAccount, 'id'>) => void;
+  updateUser: (id: string, updates: Partial<UserAccount>) => void;
   deleteUser: (id: string) => void;
+  markOrderBilled: (orderId: string, taxInvoiceNo?: string) => void;
+  markProjectBilled: (projectId: string, taxInvoiceNo?: string) => void;
 
   orders: Order[];
   items: Item[];
   repairTickets: RepairTicket[];
   products: Product[];
   stockPOs: StockPO[];
+  projects: Project[];
+
+  // Project & Site Installation Module (PRJ-2026-XXX)
+  createProject: (payload: {
+    id?: string;
+    site_name: string;
+    customer_name: string;
+    phone: string;
+    location: string;
+    district?: string;
+    created_by: string;
+    start_date: string;
+    due_date: string;
+    assigned_techs: string[];
+    items: {
+      product_id?: string;
+      model_name: string;
+      item_type: ProjectItemType;
+      unit?: Product['unit'];
+      qty_required: number;
+      unit_cost: number;
+      unit_price: number;
+      warranty_years?: number;
+    }[];
+  }) => Project;
+  addProjectAddonItems: (
+    projectId: string,
+    payload: {
+      added_by: string;
+      items: {
+        product_id?: string;
+        model_name: string;
+        item_type: ProjectItemType;
+        unit?: Product['unit'];
+        qty_required: number;
+        unit_cost: number;
+        unit_price: number;
+        warranty_years?: number;
+      }[];
+      note?: string;
+    }
+  ) => void;
+  releaseProjectBatch: (
+    projectId: string,
+    payload: {
+      items: { project_item_id: string; qty: number }[];
+      note?: string;
+    }
+  ) => { batchNo: number; equipmentCount: number; consumableCount: number } | null;
+  prepFinishProjectEquipment: (
+    itemId: string,
+    serialNumber: string,
+    voidDate: string,
+    prepNote?: string
+  ) => boolean;
+  addProjectDailyLog: (
+    projectId: string,
+    payload: {
+      date?: string;
+      tech_name: string;
+      progress_percent: number;
+      note: string;
+      photo_urls: string[];
+    }
+  ) => void;
+  createProjectMaterialRequest: (
+    projectId: string,
+    payload: {
+      item_name: string;
+      product_id?: string;
+      qty: number;
+      reason: string;
+      requested_by: string;
+    }
+  ) => void;
+  updateProjectMaterialRequestStatus: (
+    projectId: string,
+    requestId: string,
+    status: ProjectMaterialRequestStatus
+  ) => void;
+  completeProjectHandover: (
+    projectId: string,
+    payload: {
+      note?: string;
+      photo_urls?: string[];
+    }
+  ) => void;
 
   // Product Catalog CRUD (สินค้า/บริการที่ใช้ซ้ำได้)
   addProduct: (product: Omit<Product, 'id' | 'created_at' | 'updated_at'>) => void;
@@ -69,13 +190,18 @@ interface AppContextType {
   deleteProduct: (id: string) => void;
 
   createOrder: (order: Omit<Order, 'id' | 'created_at' | 'order_status'> & { planned_model?: string; planned_quantity?: number }) => void;
-  updateOrderPOStatus: (orderId: string, status: 'waiting_po' | 'pending_purchasing' | 'po_received_in_stock') => void;
-  receivePOIntoStock: (orderId: string, supplier?: string, poNo?: string) => void;
+  updateOrderPOStatus: (orderId: string, status: 'waiting_po' | 'pending_purchasing' | 'po_received_in_stock', supplier?: string, poNo?: string) => void;
+  receivePOIntoStock: (
+    orderId: string,
+    supplier?: string,
+    poNo?: string,
+    missingItems?: { model_name: string; qty: number; category?: ProductCategory; unit_cost?: number }[]
+  ) => void;
   updateOrderCosts: (orderId: string, extraCost: number, itemCosts: Record<number, number>) => void;
   cutStock: (
     orderId: string,
     billNo: string,
-    itemsToCut: { model_name: string; quantity: number; supplier?: string; po_no?: string; prep_note?: string; unit_cost?: number; stockItemId?: string }[]
+    itemsToCut: { model_name: string; quantity: number; item_type?: 'hardware' | 'service'; supplier?: string; po_no?: string; prep_note?: string; unit_cost?: number; stockItemId?: string }[]
   ) => void;
 
   // Proactive Stock Replenishment (Stock PO -> Storage Room raw_stock -> Prep -> In-Stock Ready -> Sales)
@@ -90,15 +216,21 @@ interface AppContextType {
   acceptPrepTask: (itemId: string, techName: string) => void;
   prepFinishToStock: (itemId: string, serialNumber: string, prepNote?: string) => boolean;
   prepFinishToReadyStock: (itemId: string, serialNumber: string, prepNote?: string) => boolean;
+  prepFinishLogoToStageB: (itemId: string, serialNumber: string, prepNote?: string) => boolean;
   prepFinishAndDispatch: (itemId: string, serialNumber: string, voidDate: string, prepNote?: string) => boolean;
   applyVoidAndDispatch: (itemId: string, voidDate: string) => void;
   prepInboundStock: (modelName: string, serialNumber: string, notes?: string) => boolean;
   prepOutboundDispatch: (itemId: string, serialNumber: string, voidDate: string) => boolean;
 
+  // DOA Defect Reporting & Supplier Replacement Tracking
+  reportItemDOA: (itemId: string, payload: { serialNumber?: string; reason: string; notes?: string; photoUrls?: string[] }) => Promise<void>;
+  markDoaSentToSupplier: (itemId: string, payload: { rmaNo: string; sentDate: string; notes?: string }) => Promise<void>;
+  receiveDoaReplacement: (itemId: string, payload?: { sendDirectlyToPrep?: boolean; notes?: string }) => Promise<void>;
+
   assignOnsite: (itemId: string, techs: string[], jobCategory?: JobCategory) => void;
   assignRepairTicketOnsite: (ticketId: string, techs: string[], jobCategory?: JobCategory) => void;
   acceptOnsiteJob: (itemId: string, techName: string) => void;
-  confirmOnsiteDelivery: (itemId: string, deliveryNotes?: string) => void;
+  confirmOnsiteDelivery: (itemId: string, deliveryNotes?: string, photoUrls?: string[]) => void;
   /**
    * ช่าง Onsite ส่งต่อเครื่องเข้าคิวซ่อมหน้าร้าน (Handoff to Repair Tech)
    * - สร้างใบรับซ่อมใหม่ (REP-...) ด้วย received_channel = 'onsite_pickup'
@@ -138,6 +270,8 @@ interface AppContextType {
    */
   queueRepairTicketForDispatch: (ticketId: string) => void;
   updateOrderDeliveryDate: (orderId: string, deliveryDate: string) => void;
+  updateOrderRoute: (orderId: string, routeCode: RouteCode) => Promise<void>;
+  confirmCustomerPickup: (itemId: string, voidDate: string) => Promise<void>;
   updateRepairTicketDueDate: (ticketId: string, dueDate: string) => void;
   /**
    * ลูกค้ารับเครื่องซ่อมเองที่หน้าร้าน (ปิดงานทันที)
@@ -161,7 +295,7 @@ interface AppContextType {
    * - repair_status = 'completed', status = 'returned_closed', returned_by = ชื่อช่าง Onsite
    * - บันทึก activity log + ย้ายเข้า CompletedLogsView
    */
-  completeRepairReturnOnsite: (ticketId: string, note?: string) => void;
+  completeRepairReturnOnsite: (ticketId: string, note?: string, photoUrls?: string[]) => Promise<void>;
   /** อัปเดตสถานะวงจรชีวิตงานซ่อม/RMA + บันทึก activity log อัตโนมัติ */
   updateRepairLifecycle: (ticketId: string, repairStatus: RepairLifecycleStatus, note?: string) => void;
   /** อัปเดตข้อมูล RMA (Supplier / Tracking / วันที่ส่ง-รับคืน / S/N ใหม่) + activity log อัตโนมัติ */
@@ -248,10 +382,9 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // Auth state
-  const [currentUser, setCurrentUser] = useState<UserAccount | null>(() => {
-    const saved = localStorage.getItem('boss_current_user');
-    return saved ? JSON.parse(saved) : null;
-  });
+  const [currentUser, setCurrentUser] = useState<UserAccount | null>(() =>
+    safeLoadJson<UserAccount | null>('boss_current_user', null)
+  );
 
   // Ref เก็บผู้ใช้ปัจจุบัน เพื่อให้ async action บันทึกชื่อผู้กระทำได้ถูกต้องเสมอ
   const currentUserRef = useRef<UserAccount | null>(currentUser);
@@ -260,42 +393,45 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [currentUser]);
 
   // Users state
-  const [users, setUsers] = useState<UserAccount[]>(() => {
-    const saved = localStorage.getItem('boss_users');
-    return saved ? JSON.parse(saved) : INITIAL_USERS;
-  });
+  const [users, setUsers] = useState<UserAccount[]>(() =>
+    safeLoadJson<UserAccount[]>('boss_users', INITIAL_USERS)
+  );
 
   // Data states
-  const [orders, setOrders] = useState<Order[]>(() => {
-    const saved = localStorage.getItem('boss_orders');
-    return saved ? JSON.parse(saved) : INITIAL_ORDERS;
-  });
+  const [orders, setOrders] = useState<Order[]>(() =>
+    safeLoadJson<Order[]>('boss_orders', INITIAL_ORDERS)
+  );
 
-  const [items, setItems] = useState<Item[]>(() => {
-    const saved = localStorage.getItem('boss_items');
-    return saved ? JSON.parse(saved) : INITIAL_ITEMS;
-  });
+  const [items, setItems] = useState<Item[]>(() =>
+    safeLoadJson<Item[]>('boss_items', INITIAL_ITEMS)
+  );
 
-  const [repairTickets, setRepairTickets] = useState<RepairTicket[]>(() => {
-    const saved = localStorage.getItem('boss_repair_tickets');
-    return saved ? JSON.parse(saved) : INITIAL_REPAIR_TICKETS;
-  });
+  const [repairTickets, setRepairTickets] = useState<RepairTicket[]>(() =>
+    safeLoadJson<RepairTicket[]>('boss_repair_tickets', INITIAL_REPAIR_TICKETS)
+  );
 
   // Product Catalog (localStorage Demo Mode + Supabase `products` sync)
-  const [products, setProducts] = useState<Product[]>(() => {
-    const saved = localStorage.getItem('boss_products');
-    return saved ? JSON.parse(saved) : INITIAL_PRODUCTS;
-  });
+  const [products, setProducts] = useState<Product[]>(() =>
+    safeLoadJson<Product[]>('boss_products', INITIAL_PRODUCTS)
+  );
 
   // Stock POs (Proactive Stock Replenishment - localStorage Demo Mode + Supabase `stock_pos` sync)
-  const [stockPOs, setStockPOs] = useState<StockPO[]>(() => {
-    const saved = localStorage.getItem('boss_stock_pos');
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [stockPOs, setStockPOs] = useState<StockPO[]>(() =>
+    safeLoadJson<StockPO[]>('boss_stock_pos', INITIAL_STOCK_POS)
+  );
 
-  // Supabase state
-  const [supabaseUrl, setSupabaseUrl] = useState(() => localStorage.getItem('boss_sb_url') || '');
-  const [supabaseKey, setSupabaseKey] = useState(() => localStorage.getItem('boss_sb_key') || '');
+  // Projects (Project & Site Installation Module PRJ-2026-XXX - localStorage Demo Mode)
+  const [projects, setProjects] = useState<Project[]>(() =>
+    safeLoadJson<Project[]>('boss_projects', INITIAL_PROJECTS)
+  );
+
+  // Supabase state (matches imageStorageService env fallback)
+  const [supabaseUrl, setSupabaseUrl] = useState(
+    () => localStorage.getItem('boss_sb_url') || (import.meta.env.VITE_SUPABASE_URL as string | undefined) || ''
+  );
+  const [supabaseKey, setSupabaseKey] = useState(
+    () => localStorage.getItem('boss_sb_key') || (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined) || ''
+  );
   const [isSupabaseLive, setIsSupabaseLive] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [supabaseClient, setSupabaseClient] = useState<SupabaseClient | null>(null);
@@ -334,7 +470,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const lookupWarrantyBySerial = (serialNumber: string | null | undefined): WarrantyLookupResult => {
-    return lookupWarrantyHelper(serialNumber, items, orders);
+    return lookupWarrantyHelper(serialNumber, items, orders, projects);
   };
 
   useEffect(() => {
@@ -354,35 +490,39 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Sync to localStorage
   useEffect(() => {
     if (currentUser) {
-      localStorage.setItem('boss_current_user', JSON.stringify(currentUser));
+      safeSaveJson('boss_current_user', currentUser);
     } else {
       localStorage.removeItem('boss_current_user');
     }
   }, [currentUser]);
 
   useEffect(() => {
-    localStorage.setItem('boss_users', JSON.stringify(users));
+    safeSaveJson('boss_users', users);
   }, [users]);
 
   useEffect(() => {
-    localStorage.setItem('boss_orders', JSON.stringify(orders));
+    safeSaveJson('boss_orders', orders);
   }, [orders]);
 
   useEffect(() => {
-    localStorage.setItem('boss_items', JSON.stringify(items));
+    safeSaveJson('boss_items', items);
   }, [items]);
 
   useEffect(() => {
-    localStorage.setItem('boss_repair_tickets', JSON.stringify(repairTickets));
+    safeSaveJson('boss_repair_tickets', repairTickets);
   }, [repairTickets]);
 
   useEffect(() => {
-    localStorage.setItem('boss_products', JSON.stringify(products));
+    safeSaveJson('boss_products', products);
   }, [products]);
 
   useEffect(() => {
-    localStorage.setItem('boss_stock_pos', JSON.stringify(stockPOs));
+    safeSaveJson('boss_stock_pos', stockPOs);
   }, [stockPOs]);
+
+  useEffect(() => {
+    safeSaveJson('boss_projects', projects);
+  }, [projects]);
 
   // Connect Supabase if configured
   useEffect(() => {
@@ -451,15 +591,88 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const addUser = (userData: Omit<UserAccount, 'id'>) => {
     const newUser: UserAccount = {
+      is_active: true,
       ...userData,
       id: 'u-' + Date.now()
     };
     setUsers(prev => [...prev, newUser]);
   };
 
+  const updateUser = (id: string, updates: Partial<UserAccount>) => {
+    setUsers(prev => prev.map(u => (u.id === id ? { ...u, ...updates } : u)));
+  };
+
   const deleteUser = (id: string) => {
     if (id === 'u-admin') return;
     setUsers(prev => prev.filter(u => u.id !== id));
+  };
+
+  const markOrderBilled = async (orderId: string, taxInvoiceNo?: string) => {
+    const nowIso = new Date().toISOString();
+    const actor = currentUserRef.current?.name || 'ฝ่ายบัญชี';
+    const cleanInv = (taxInvoiceNo || '').trim() || null;
+    const logEntry = makeLog(
+      'วางบิล / ออกใบกำกับภาษีแล้ว',
+      actor,
+      currentUserRef.current?.role,
+      cleanInv ? `เลขที่ใบกำกับ/วางบิล: ${cleanInv}` : 'อัปเดตสถานะเป็นวางบิลเรียบร้อย'
+    );
+    const target = orders.find(o => o.id === orderId);
+    const nextLogs = appendLog(target?.activity_logs, logEntry);
+    const resolvedInv = cleanInv ?? target?.tax_invoice_no ?? null;
+
+    if (isSupabaseLive && supabaseClient) {
+      await supabaseClient.from('orders').update({
+        billing_status: 'billed',
+        billed_at: nowIso,
+        billed_by: actor,
+        tax_invoice_no: resolvedInv,
+        updated_at: nowIso,
+        activity_logs: nextLogs
+      }).eq('id', orderId);
+    }
+    setOrders(prev =>
+      prev.map(o =>
+        o.id === orderId
+          ? {
+              ...o,
+              billing_status: 'billed',
+              billed_at: nowIso,
+              billed_by: actor,
+              tax_invoice_no: cleanInv ?? o.tax_invoice_no ?? null,
+              updated_at: nowIso,
+              activity_logs: appendLog(o.activity_logs, logEntry)
+            }
+          : o
+      )
+    );
+  };
+
+  const markProjectBilled = (projectId: string, taxInvoiceNo?: string) => {
+    const nowIso = new Date().toISOString();
+    const actor = currentUser?.name || 'ฝ่ายบัญชี';
+    const cleanInv = (taxInvoiceNo || '').trim() || null;
+    const logEntry = makeLog(
+      'วางบิล / ออกใบกำกับภาษีโปรเจกต์แล้ว',
+      actor,
+      currentUser?.role,
+      cleanInv ? `เลขที่ใบกำกับ/วางบิล: ${cleanInv}` : 'อัปเดตสถานะโปรเจกต์เป็นวางบิลเรียบร้อย'
+    );
+    setProjects(prev =>
+      prev.map(p =>
+        p.id === projectId
+          ? {
+              ...p,
+              billing_status: 'billed',
+              billed_at: nowIso,
+              billed_by: actor,
+              tax_invoice_no: cleanInv ?? p.tax_invoice_no ?? null,
+              updated_at: nowIso,
+              activity_logs: appendLog(p.activity_logs, logEntry)
+            }
+          : p
+      )
+    );
   };
 
   // Product Catalog CRUD
@@ -513,7 +726,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
 
     const newOrder: Order = {
-      id: 'ord-' + Date.now(),
+      id: newUuid(),
       sales_ref: orderData.sales_ref,
       salesperson: orderData.salesperson || currentUser?.name,
       customer_name: orderData.customer_name,
@@ -540,22 +753,40 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     if (isSupabaseLive && supabaseClient) {
-      await supabaseClient.from('orders').insert([newOrder]);
+      const { _planned_model: _pm, _planned_quantity: _pq, ...dbOrder } = newOrder;
+      void _pm;
+      void _pq;
+      await supabaseClient.from('orders').insert([dbOrder]);
     } else {
       setOrders(prev => [newOrder, ...prev]);
     }
   };
 
-  const updateOrderPOStatus = async (orderId: string, status: 'waiting_po' | 'pending_purchasing' | 'po_received_in_stock') => {
+  const updateOrderPOStatus = async (
+    orderId: string,
+    status: 'waiting_po' | 'pending_purchasing' | 'po_received_in_stock',
+    supplier?: string,
+    poNo?: string
+  ) => {
     const actor = currentUserRef.current;
     const now = new Date().toISOString();
     const actionLabel = status === 'waiting_po' ? 'สั่งซื้อ PO' : status === 'po_received_in_stock' ? 'รับของเข้าสต๊อก' : 'อัปเดตสถานะจัดซื้อ';
-    const entry = makeLog(actionLabel, actor?.name || 'ระบบ', actor?.role);
+    const noteParts = [supplier ? `Supplier: ${supplier}` : '', poNo ? `PO: ${poNo}` : ''].filter(Boolean).join(' | ');
+    const entry = makeLog(actionLabel, actor?.name || 'ระบบ', actor?.role, noteParts || undefined);
+    const target = orders.find(o => o.id === orderId);
+    const nextItemsList = (supplier || poNo) && target?.items_list
+      ? target.items_list.map(it => ({
+        ...it,
+        supplier: supplier || it.supplier,
+        po_no: poNo || it.po_no
+      }))
+      : undefined;
+
     if (isSupabaseLive && supabaseClient) {
-      const target = orders.find(o => o.id === orderId);
       await supabaseClient.from('orders').update({
         order_status: status,
         activity_logs: appendLog(target?.activity_logs, entry),
+        ...(nextItemsList ? { items_list: nextItemsList } : {}),
         ...(status === 'waiting_po' ? { po_created_at: now } : {}),
         ...(status === 'po_received_in_stock' ? { po_received_at: now } : {})
       }).eq('id', orderId);
@@ -564,13 +795,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         ...o,
         order_status: status,
         activity_logs: appendLog(o.activity_logs, entry),
+        ...(supplier || poNo ? {
+          items_list: o.items_list?.map(it => ({
+            ...it,
+            supplier: supplier || it.supplier,
+            po_no: poNo || it.po_no
+          }))
+        } : {}),
         ...(status === 'waiting_po' ? { po_created_at: now } : {}),
         ...(status === 'po_received_in_stock' ? { po_received_at: now } : {})
       } : o));
     }
   };
 
-  const receivePOIntoStock = async (orderId: string, supplier?: string, poNo?: string) => {
+  const receivePOIntoStock = async (
+    orderId: string,
+    supplier?: string,
+    poNo?: string,
+    missingItems?: { model_name: string; qty: number; category?: ProductCategory; unit_cost?: number }[]
+  ) => {
     const receivedAt = new Date().toISOString();
     const actor = currentUserRef.current;
     const entry = makeLog(
@@ -579,6 +822,38 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       actor?.role,
       [supplier ? `Supplier: ${supplier}` : '', poNo ? `PO: ${poNo}` : ''].filter(Boolean).join(' | ') || undefined
     );
+
+    const newRawItems: Item[] = [];
+    if (missingItems && missingItems.length > 0) {
+      missingItems.forEach((m, mIdx) => {
+        for (let i = 0; i < Math.max(0, m.qty); i++) {
+          newRawItems.push({
+            id: `itm-po-${Date.now()}-${mIdx}-${i}-${Math.random().toString(36).slice(2, 6)}`,
+            order_id: null,
+            model_name: m.model_name,
+            serial_number: null,
+            status: 'raw_stock',
+            prep_type: 'stock_po',
+            category: m.category || 'general',
+            unit_cost: m.unit_cost || 0,
+            supplier: supplier || 'Supplier',
+            po_no: poNo || 'PO',
+            received_at: receivedAt,
+            prep_note: 'รับของตาม PO เข้าห้องสต๊อก (นับถอยหลังเทส 7 วัน DOA)',
+            assigned_prep_tech: null,
+            prep_accepted_at: null,
+            assigned_techs: [],
+            prepped_at: null,
+            void_date: null,
+            notes: `รับของจาก PO ${poNo || '-'} (${supplier || '-'}) เข้าห้องสต๊อก`,
+            created_at: receivedAt,
+            activity_logs: [entry],
+            received_into_storage_at: receivedAt
+          });
+        }
+      });
+    }
+
     if (isSupabaseLive && supabaseClient) {
       const target = orders.find(o => o.id === orderId);
       await supabaseClient.from('orders').update({
@@ -587,6 +862,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         po_received_at: receivedAt,
         activity_logs: appendLog(target?.activity_logs, entry)
       }).eq('id', orderId);
+      if (newRawItems.length > 0) {
+        await supabaseClient.from('items').insert(newRawItems.map(it => ({
+          model_name: it.model_name,
+          status: it.status,
+          prep_type: it.prep_type,
+          category: it.category,
+          unit_cost: it.unit_cost,
+          supplier: it.supplier,
+          po_no: it.po_no,
+          received_at: it.received_at,
+          prep_note: it.prep_note,
+          notes: it.notes,
+          activity_logs: it.activity_logs,
+          received_into_storage_at: it.received_into_storage_at
+        })));
+      }
     } else {
       setOrders(prev => prev.map(o => o.id === orderId ? {
         ...o,
@@ -600,6 +891,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           po_no: poNo || it.po_no
         }))
       } : o));
+      if (newRawItems.length > 0) {
+        setItems(prev => [...newRawItems, ...prev]);
+      }
     }
   };
 
@@ -642,12 +936,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const cutStock = async (
     orderId: string,
     billNo: string,
-    itemsToCut: { model_name: string; quantity: number; supplier?: string; po_no?: string; prep_note?: string; unit_cost?: number; stockItemId?: string }[]
+    itemsToCut: { model_name: string; quantity: number; item_type?: 'hardware' | 'service'; supplier?: string; po_no?: string; prep_note?: string; unit_cost?: number; stockItemId?: string }[]
   ) => {
     const targetOrder = orders.find(o => o.id === orderId);
     const newItems: Item[] = [];
-    // รายการที่ดึงจากสต๊อก in_stock ที่มีอยู่แล้ว (ไม่สร้างใหม่ แต่แปลงสถานะ)
+    // รายการที่ดึง/ตัดจากสต๊อก (in_stock / raw_stock) ที่มีอยู่จริงในคลัง (ไม่สร้างใหม่ แต่แปลงสถานะ -> pending_prep)
     const consumedStockIds: string[] = [];
+    const consumedPlanByStockId: Record<string, typeof itemsToCut[number]> = {};
+    const alreadyClaimedIds = new Set<string>();
     const actor = currentUserRef.current;
     const cutAt = new Date().toISOString();
     const cutLog = makeLog(
@@ -658,21 +954,53 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
 
     itemsToCut.forEach((plan, planIdx) => {
-      for (let i = 0; i < plan.quantity; i++) {
-        // ถ้าเป็นชิ้นแรกของแผน และมี stockItemId (ดึงจากคลัง) → ใช้ item เดิม
-        if (i === 0 && plan.stockItemId) {
-          consumedStockIds.push(plan.stockItemId);
+      const qtyNeeded = Math.max(1, plan.quantity || 1);
+      const normalizedModel = (plan.model_name || '').trim().toLowerCase();
+      const matchedOrderItem = (targetOrder?.items_list || []).find(
+        oi => (oi.model_name || '').trim().toLowerCase() === normalizedModel
+      );
+      const isService = plan.item_type === 'service' || matchedOrderItem?.item_type === 'service';
+
+      // หาสต๊อกจริงในคลังที่ตรงรุ่น (ให้ความสำคัญ in_stock ก่อน raw_stock)
+      const availablePool = isService
+        ? []
+        : items
+          .filter(
+            it => (it.status === 'in_stock' || it.status === 'raw_stock')
+              && !alreadyClaimedIds.has(it.id)
+              && (it.model_name || '').trim().toLowerCase() === normalizedModel
+          )
+          .sort((a, b) => {
+            if (a.status === b.status) return 0;
+            return a.status === 'in_stock' ? -1 : 1;
+          });
+
+      // ถ้าผู้ใช้ระบุ stockItemId มาเจาะจง ให้นำมาใช้เป็นลำดับแรก
+      if (!isService && plan.stockItemId && !alreadyClaimedIds.has(plan.stockItemId)) {
+        const explicitIdx = availablePool.findIndex(it => it.id === plan.stockItemId);
+        if (explicitIdx > 0) {
+          const [explicitItem] = availablePool.splice(explicitIdx, 1);
+          availablePool.unshift(explicitItem);
+        }
+      }
+
+      for (let i = 0; i < qtyNeeded; i++) {
+        const stockMatch = availablePool.shift();
+        if (stockMatch) {
+          alreadyClaimedIds.add(stockMatch.id);
+          consumedStockIds.push(stockMatch.id);
+          consumedPlanByStockId[stockMatch.id] = plan;
           continue;
         }
 
-        const matchedOrderItem = (targetOrder?.items_list || []).find(oi => oi.model_name === plan.model_name);
         newItems.push({
-          id: 'itm-' + Date.now() + '-' + planIdx + '-' + i,
+          id: newUuid(),
           order_id: orderId,
           model_name: plan.model_name,
           serial_number: null,
           status: 'pending_prep',
           prep_type: 'outbound_dispatch',
+          unit_cost: plan.unit_cost ?? matchedOrderItem?.unit_cost ?? 0,
           supplier: plan.supplier || 'สต๊อกร้าน',
           po_no: plan.po_no || billNo,
           prep_note: plan.prep_note || '',
@@ -703,27 +1031,35 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (newItems.length > 0) {
         await supabaseClient.from('items').insert(newItems);
       }
-      // แปลง item in_stock ที่มีอยู่ → pending_prep ผูกกับออเดอร์ (ตัดสต๊อกจริง)
+      // แปลง item (in_stock / raw_stock) ที่มีอยู่ → pending_prep ผูกกับออเดอร์ (ตัดสต๊อกจริงอัตโนมัติ)
       for (const stockId of consumedStockIds) {
-        const plan = itemsToCut.find(p => p.stockItemId === stockId);
-        const matchedOrderItem = (targetOrder?.items_list || []).find(oi => oi.model_name === plan?.model_name);
+        const plan = consumedPlanByStockId[stockId];
+        const target = items.find(i => i.id === stockId);
+        const isFromReadyStock = target?.status === 'in_stock';
+        const matchedOrderItem = (targetOrder?.items_list || []).find(
+          oi => (oi.model_name || '').trim().toLowerCase() === (plan?.model_name || '').trim().toLowerCase()
+        );
         await supabaseClient.from('items').update({
           order_id: orderId,
           status: 'pending_prep',
           prep_type: 'outbound_dispatch',
-          supplier: plan?.supplier || 'สต๊อกร้าน',
-          po_no: plan?.po_no || billNo,
+          supplier: plan?.supplier || target?.supplier || 'สต๊อกร้าน',
+          po_no: plan?.po_no || target?.po_no || billNo,
           prep_note: plan?.prep_note || '',
           delivery_mode: targetOrder?.delivery_mode || 'install',
           assigned_prep_tech: null,
           prep_accepted_at: null,
-          prepped_at: null,
+          logo_applied: isFromReadyStock ? true : Boolean(target?.logo_applied),
+          logo_scanned_at: target?.logo_scanned_at || (isFromReadyStock ? cutAt : null),
+          prepped_at: isFromReadyStock ? target?.prepped_at : null,
           void_date: null,
           warranty_years: matchedOrderItem?.warranty_years ?? 0,
           warranty_months: matchedOrderItem?.warranty_months ?? 0,
           warranty_void_date: null,
           warranty_expire_date: null,
-          notes: `ดึงจากสต๊อกคลังตามบิล ${billNo} | PO: ${plan?.po_no || '-'}`
+          notes: isFromReadyStock
+            ? `ตัดสต๊อกพร้อมขายตามบิล ${billNo} (ติดโลโก้ & S/N แล้ว - รอติดวอย/ส่งมอบ)`
+            : `ตัดสต๊อกจากคลังตามบิล ${billNo} | PO: ${plan?.po_no || '-'}`
         }).eq('id', stockId);
       }
     } else {
@@ -738,26 +1074,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const consumedSet = new Set(consumedStockIds);
         const updated = prev.map(it => {
           if (!consumedSet.has(it.id)) return it;
-          const plan = itemsToCut.find(p => p.stockItemId === it.id);
-          const matchedOrderItem = (targetOrder?.items_list || []).find(oi => oi.model_name === it.model_name);
+          const plan = consumedPlanByStockId[it.id];
+          const isFromReadyStock = it.status === 'in_stock';
+          const matchedOrderItem = (targetOrder?.items_list || []).find(
+            oi => (oi.model_name || '').trim().toLowerCase() === (it.model_name || '').trim().toLowerCase()
+          );
           return {
             ...it,
             order_id: orderId,
             status: 'pending_prep' as const,
             prep_type: 'outbound_dispatch' as const,
-            supplier: plan?.supplier || 'สต๊อกร้าน',
-            po_no: plan?.po_no || billNo,
+            supplier: plan?.supplier || it.supplier || 'สต๊อกร้าน',
+            po_no: plan?.po_no || it.po_no || billNo,
             prep_note: plan?.prep_note || '',
             delivery_mode: targetOrder?.delivery_mode || 'install',
             assigned_prep_tech: null,
             prep_accepted_at: null,
-            prepped_at: null,
+            logo_applied: isFromReadyStock ? true : Boolean(it.logo_applied),
+            logo_scanned_at: it.logo_scanned_at || (isFromReadyStock ? cutAt : null),
+            prepped_at: isFromReadyStock ? it.prepped_at : null,
             void_date: null,
             warranty_years: matchedOrderItem?.warranty_years ?? 0,
             warranty_months: matchedOrderItem?.warranty_months ?? 0,
             warranty_void_date: null,
             warranty_expire_date: null,
-            notes: `ดึงจากสต๊อกคลังตามบิล ${billNo} | PO: ${plan?.po_no || '-'}`,
+            notes: isFromReadyStock
+              ? `ตัดสต๊อกพร้อมขายตามบิล ${billNo} (ติดโลโก้ & S/N แล้ว - รอติดวอย/ส่งมอบ)`
+              : `ตัดสต๊อกจากคลังตามบิล ${billNo} | PO: ${plan?.po_no || it.po_no || '-'}`,
             activity_logs: appendLog(it.activity_logs, makeLog('ตัดสต๊อกส่งช่างเตรียม', actor?.name || 'ระบบ', actor?.role, `บิล: ${billNo}`))
           };
         });
@@ -782,7 +1125,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
     const newPO: StockPO = {
       ...poData,
-      id: 'spo-' + Date.now(),
+      id: 'spo-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
       status: 'ordered',
       received_at: null,
       created_at: now,
@@ -824,7 +1167,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       `PO: ${po.po_number} | ${po.product_name} x${po.qty}`
     );
     const newItems: Item[] = Array.from({ length: Math.max(1, po.qty) }).map((_, i) => ({
-      id: 'itm-spo-' + Date.now() + '-' + i,
+      id: 'itm-spo-' + Date.now() + '-' + i + '-' + Math.random().toString(36).slice(2, 5),
       order_id: null,
       model_name: po.product_name,
       serial_number: null,
@@ -839,6 +1182,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       prep_note: 'เก็บในห้องสต๊อก - ยังไม่เตรียม (นับถอยหลังเทส 7 วัน DOA)',
       assigned_prep_tech: null,
       prep_accepted_at: null,
+      logo_applied: false,
       assigned_techs: [],
       prepped_at: null,
       void_date: null,
@@ -892,6 +1236,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         prep_note: 'จัดซื้อส่งช่างเทส & ติดโลโก้ล่วงหน้า (ก่อนครบ 7 วัน DOA)',
         assigned_prep_tech: null,
         prep_accepted_at: null,
+        logo_applied: false,
         activity_logs: appendLog(target?.activity_logs, entry)
       }).eq('id', itemId);
     } else {
@@ -902,6 +1247,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         prep_note: 'จัดซื้อส่งช่างเทส & ติดโลโก้ล่วงหน้า (ก่อนครบ 7 วัน DOA)',
         assigned_prep_tech: null,
         prep_accepted_at: null,
+        logo_applied: false,
         activity_logs: appendLog(i.activity_logs, entry)
       } : i));
     }
@@ -929,39 +1275,285 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const movePrepStockToReady = (itemId: string, serialNumber: string, notes?: string): boolean => {
     const sn = serialNumber.trim();
     if (!sn) return false;
-    const existing = items.find(i => i.id !== itemId && i.serial_number && i.serial_number.toLowerCase() === sn.toLowerCase());
-    if (existing) return false;
+    if (isSerialDuplicate(items, sn, itemId)) return false;
 
     const preppedAt = new Date().toISOString();
     const actor = currentUserRef.current;
+    const target = items.find(i => i.id === itemId);
     const entry = makeLog('ติดโลโก้ & สแกน S/N', actor?.name || 'ระบบ', actor?.role, `S/N: ${sn} | เก็บเข้าคลังพร้อมขาย`);
+    const finalNotes = notes || 'ตรวจเช็ก/ติดโลโก้/ยิง S/N ผ่าน เก็บเข้าสต๊อกพร้อมขาย (ยังไม่ติดวอย)';
     if (isSupabaseLive && supabaseClient) {
-      const target = items.find(i => i.id === itemId);
-      supabaseClient.from('items').update({
+      void supabaseClient.from('items').update({
         serial_number: sn,
         status: 'in_stock',
+        order_id: null,
+        logo_applied: true,
         prepped_at: preppedAt,
         logo_scanned_at: preppedAt,
         moved_to_ready_at: preppedAt,
-        notes: notes || 'ตรวจเช็ก/ติดโลโก้/ยิง S/N ผ่าน เก็บเข้าสต๊อกพร้อมขาย (ยังไม่ติดวอย)',
+        notes: finalNotes,
         activity_logs: appendLog(target?.activity_logs, entry)
+      }).eq('id', itemId);
+    }
+    setItems(prev => prev.map(i => i.id === itemId ? {
+      ...i,
+      serial_number: sn,
+      status: 'in_stock' as const,
+      order_id: null,
+      logo_applied: true,
+      prepped_at: preppedAt,
+      logo_scanned_at: preppedAt,
+      moved_to_ready_at: preppedAt,
+      notes: finalNotes,
+      activity_logs: appendLog(i.activity_logs, entry)
+    } : i));
+    return true;
+  };
+
+  // 3.0 Stage A -> Stage B (สำหรับสินค้าที่ผูกออเดอร์หรือโปรเจกต์แล้ว และยังไม่ได้ติดโลโก้)
+  // เทส + สแกน S/N + ติดโลโก้เสร็จ -> คง status 'pending_prep' แต่ตั้ง logo_applied: true เพื่อส่งต่อเข้า Stage B (ติดวอย)
+  const prepFinishLogoToStageB = (itemId: string, serialNumber: string, prepNote?: string): boolean => {
+    const target = items.find(i => i.id === itemId);
+    const sn = (serialNumber || target?.serial_number || '').trim();
+    if (!sn) return false;
+    if (isSerialDuplicate(items, sn, itemId)) return false;
+
+    const now = new Date().toISOString();
+    const actor = currentUserRef.current;
+    const entry = makeLog(
+      'ติดโลโก้ & สแกน S/N (ส่งต่อ Stage B)',
+      actor?.name || 'ระบบ',
+      actor?.role,
+      `S/N: ${sn} | ส่งต่อ Stage B เพื่อติดวอยประกัน`
+    );
+
+    if (isSupabaseLive && supabaseClient) {
+      void supabaseClient.from('items').update({
+        serial_number: sn,
+        logo_applied: true,
+        prepped_at: target?.prepped_at || now,
+        logo_scanned_at: now,
+        notes: prepNote || 'เทส + ติดโลโก้ + สแกน S/N แล้ว -> ส่งต่อ Stage B ติดวอยประกัน',
+        activity_logs: appendLog(target?.activity_logs, entry)
+      }).eq('id', itemId);
+    }
+    setItems(prev => prev.map(i => i.id === itemId ? {
+      ...i,
+      serial_number: sn,
+      logo_applied: true,
+      prepped_at: i.prepped_at || now,
+      logo_scanned_at: now,
+      notes: prepNote || 'เทส + ติดโลโก้ + สแกน S/N แล้ว -> ส่งต่อ Stage B ติดวอยประกัน',
+      activity_logs: appendLog(i.activity_logs, entry)
+    } : i));
+    return true;
+  };
+
+  // 3.1 ช่างเตรียมพบปัญหา DOA ระหว่างเทสสินค้า Stock PO -> แจ้งกลับฝ่ายจัดซื้อ PO (doa_reported)
+  const reportItemDOA = async (
+    itemId: string,
+    payload: { serialNumber?: string; reason: string; notes?: string; photoUrls?: string[] }
+  ) => {
+    const target = items.find(i => i.id === itemId);
+    if (!target) return;
+
+    const now = new Date().toISOString();
+    const actor = currentUserRef.current;
+    const techName = actor?.name || target.assigned_prep_tech || 'ช่างเตรียมสินค้า';
+    const reasonText = (payload.reason || '').trim() || 'พบปัญหา DOA';
+    const cleanSn = (payload.serialNumber ?? target.serial_number ?? '').trim() || null;
+    const cleanNotes = (payload.notes || '').trim() || null;
+    const cleanPhotos = payload.photoUrls && payload.photoUrls.length > 0 ? payload.photoUrls.slice(0, 3) : null;
+
+    const actionText = `พบของเสีย DOA (${reasonText}) แจ้งกลับฝ่ายจัดซื้อ PO โดย ${techName}`;
+    const detailParts = [
+      cleanSn ? `S/N: ${cleanSn}` : null,
+      target.po_no ? `PO: ${target.po_no}` : null,
+      cleanPhotos ? `แนบรูป ${cleanPhotos.length} รูป` : null,
+      cleanNotes
+    ].filter(Boolean);
+    const entry = makeLog(actionText, techName, actor?.role, detailParts.join(' | ') || undefined);
+
+    if (isSupabaseLive && supabaseClient) {
+      await supabaseClient.from('items').update({
+        status: 'doa_reported',
+        serial_number: cleanSn,
+        doa_reason: reasonText,
+        doa_notes: cleanNotes,
+        doa_reported_at: now,
+        doa_reported_by: techName,
+        photo_urls: cleanPhotos,
+        activity_logs: appendLog(target.activity_logs, entry)
       }).eq('id', itemId);
     } else {
       setItems(prev => prev.map(i => i.id === itemId ? {
         ...i,
-        serial_number: sn,
-        status: 'in_stock' as const,
-        prepped_at: preppedAt,
-        logo_scanned_at: preppedAt,
-        moved_to_ready_at: preppedAt,
-        notes: notes || 'ตรวจเช็ก/ติดโลโก้/ยิง S/N ผ่าน เก็บเข้าสต๊อกพร้อมขาย (ยังไม่ติดวอย)',
+        status: 'doa_reported' as const,
+        serial_number: cleanSn,
+        doa_reason: reasonText,
+        doa_notes: cleanNotes,
+        doa_reported_at: now,
+        doa_reported_by: techName,
+        photo_urls: cleanPhotos,
         activity_logs: appendLog(i.activity_logs, entry)
       } : i));
     }
-    return true;
   };
 
-  // 4. จัดสรรสต๊อกให้ออเดอร์ลูกค้า (Allocation)
+  // 3.2 จัดซื้อบันทึกแจ้งเคลม / ส่งคืน Supplier แล้ว (doa_sent_supplier)
+  const markDoaSentToSupplier = async (
+    itemId: string,
+    payload: { rmaNo: string; sentDate: string; notes?: string }
+  ) => {
+    const target = items.find(i => i.id === itemId);
+    if (!target) return;
+
+    const actor = currentUserRef.current;
+    const actorName = actor?.name || 'ฝ่ายจัดซื้อ';
+    const rmaNo = payload.rmaNo.trim();
+    const sentDate = payload.sentDate || new Date().toISOString().split('T')[0];
+    const cleanNotes = (payload.notes || '').trim() || target.doa_notes || null;
+
+    const entry = makeLog(
+      'บันทึกแจ้งเคลม Supplier แล้ว (doa_sent_supplier)',
+      actorName,
+      actor?.role,
+      `RMA/Tracking: ${rmaNo || '-'} | วันที่ส่ง: ${sentDate}${payload.notes?.trim() ? ` | ${payload.notes.trim()}` : ''}`
+    );
+
+    if (isSupabaseLive && supabaseClient) {
+      await supabaseClient.from('items').update({
+        status: 'doa_sent_supplier',
+        doa_rma_no: rmaNo || null,
+        doa_sent_date: sentDate,
+        doa_notes: cleanNotes,
+        activity_logs: appendLog(target.activity_logs, entry)
+      }).eq('id', itemId);
+    } else {
+      setItems(prev => prev.map(i => i.id === itemId ? {
+        ...i,
+        status: 'doa_sent_supplier' as const,
+        doa_rma_no: rmaNo || null,
+        doa_sent_date: sentDate,
+        doa_notes: cleanNotes,
+        activity_logs: appendLog(i.activity_logs, entry)
+      } : i));
+    }
+  };
+
+  // 3.3 จัดซื้อยืนยันรับตัวใหม่จาก Supplier แล้ว (doa_replaced) -> ส่งตัวใหม่กลับเข้า raw_stock (หรือคิวช่าง Prep)
+  const receiveDoaReplacement = async (
+    itemId: string,
+    payload?: { sendDirectlyToPrep?: boolean; notes?: string }
+  ) => {
+    const target = items.find(i => i.id === itemId);
+    if (!target) return;
+
+    const now = new Date().toISOString();
+    const actor = currentUserRef.current;
+    const actorName = actor?.name || 'ฝ่ายจัดซื้อ';
+    const sendToPrep = Boolean(payload?.sendDirectlyToPrep);
+    const newItemId = newUuid();
+
+    const oldEntry = makeLog(
+      'รับตัวใหม่จาก Supplier แล้ว (doa_replaced)',
+      actorName,
+      actor?.role,
+      `ส่งตัวใหม่เข้า${sendToPrep ? 'คิวช่าง Prep' : 'ห้องสต๊อก (raw_stock)'} เพื่อเทสและติดโลโก้ใหม่`
+    );
+    const newEntry = makeLog(
+      sendToPrep ? 'รับตัวใหม่จากเคลม DOA → ส่งช่างเทส' : 'รับตัวใหม่จากเคลม DOA เข้าห้องสต๊อก / เริ่มนับ DOA 7 วัน',
+      actorName,
+      actor?.role,
+      `PO: ${target.po_no || '-'} | แทนเครื่องเสีย S/N: ${target.serial_number || '-'}`
+    );
+
+    const replacementItem: Item = {
+      id: newItemId,
+      order_id: null,
+      model_name: target.model_name,
+      serial_number: null,
+      status: sendToPrep ? 'pending_prep' : 'raw_stock',
+      prep_type: 'stock_po',
+      category: target.category,
+      stock_po_id: target.stock_po_id ?? null,
+      unit_cost: target.unit_cost,
+      supplier: target.supplier,
+      po_no: target.po_no,
+      received_at: now,
+      received_into_storage_at: now,
+      prep_note: (payload?.notes || '').trim() || `เครื่องเปลี่ยนใหม่จากเคลม DOA (${target.po_no || 'Stock PO'}) — เทส & ติดโลโก้ใหม่`,
+      assigned_prep_tech: null,
+      prep_accepted_at: null,
+      logo_applied: false,
+      assigned_techs: [],
+      prepped_at: null,
+      void_date: null,
+      notes: `รับเครื่องเปลี่ยนใหม่จาก Supplier (แทน S/N: ${target.serial_number || '-'} | RMA: ${target.doa_rma_no || '-'})`,
+      created_at: now,
+      activity_logs: [newEntry]
+    };
+
+    if (isSupabaseLive && supabaseClient) {
+      await supabaseClient.from('items').update({
+        status: 'doa_replaced',
+        doa_replaced_at: now,
+        doa_replacement_item_id: newItemId,
+        activity_logs: appendLog(target.activity_logs, oldEntry)
+      }).eq('id', itemId);
+
+      const { data: insertedRow, error: insertError } = await supabaseClient.from('items').insert([{
+        id: newItemId,
+        order_id: null,
+        model_name: replacementItem.model_name,
+        serial_number: null,
+        status: replacementItem.status,
+        prep_type: replacementItem.prep_type,
+        category: replacementItem.category,
+        stock_po_id: replacementItem.stock_po_id,
+        unit_cost: replacementItem.unit_cost,
+        supplier: replacementItem.supplier,
+        po_no: replacementItem.po_no,
+        received_at: replacementItem.received_at,
+        received_into_storage_at: replacementItem.received_into_storage_at,
+        prep_note: replacementItem.prep_note,
+        assigned_prep_tech: null,
+        prep_accepted_at: null,
+        logo_applied: false,
+        assigned_techs: [],
+        prepped_at: null,
+        void_date: null,
+        notes: replacementItem.notes,
+        activity_logs: replacementItem.activity_logs
+      }]).select().single();
+
+      if (insertError) {
+        console.error('receiveDoaReplacement insert error:', insertError.message);
+      } else if (insertedRow) {
+        setItems(prev => [
+          insertedRow as Item,
+          ...prev.map(i => i.id === itemId ? {
+            ...i,
+            status: 'doa_replaced' as const,
+            doa_replaced_at: now,
+            doa_replacement_item_id: (insertedRow as Item).id,
+            activity_logs: appendLog(i.activity_logs, oldEntry)
+          } : i)
+        ]);
+      }
+    } else {
+      setItems(prev => [
+        replacementItem,
+        ...prev.map(i => i.id === itemId ? {
+          ...i,
+          status: 'doa_replaced' as const,
+          doa_replaced_at: now,
+          doa_replacement_item_id: newItemId,
+          activity_logs: appendLog(i.activity_logs, oldEntry)
+        } : i)
+      ]);
+    }
+  };
   //    - raw_stock (ยังไม่เตรียม) => pending_prep (ส่งเข้า PrepView ให้ช่างเทส/ติดโลโก้/ยิง S/N)
   //    - in_stock / prepped_in_stock (เตรียมแล้ว) => prepped_in_stock (รอแปะวอย & ปล่อยของ)
   const allocateStockToOrder = async (orderId: string, billNo: string, stockItemIds: string[]) => {
@@ -1064,49 +1656,57 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  // จังหวะที่ 1: ช่างเตรียมเสร็จ / เก็บเข้าสต๊อกรอส่ง (ยังไม่ติดวอย)
+  // จังหวะที่ 1/Stage B: เก็บเข้าสต๊อกรอวันส่งมอบ (ยังไม่ติดวอยประกัน) -> prepped_in_stock
   const prepFinishToStock = (itemId: string, serialNumber: string, prepNote?: string): boolean => {
-    const existing = items.find(i => i.id !== itemId && i.serial_number && i.serial_number.toLowerCase() === serialNumber.toLowerCase());
-    if (existing) {
+    const target = items.find(i => i.id === itemId);
+    const sn = (serialNumber || target?.serial_number || '').trim();
+    if (!sn) return false;
+    if (isSerialDuplicate(items, sn, itemId)) {
       return false;
     }
 
     const preppedAt = new Date().toISOString();
     const actor = currentUserRef.current;
-    const entry = makeLog('ติดโลโก้ & สแกน S/N', actor?.name || 'ระบบ', actor?.role, `S/N: ${serialNumber} | เก็บรอส่งมอบ`);
+    const alreadyLogoApplied = Boolean(target?.logo_applied || target?.logo_scanned_at);
+    const entry = makeLog(
+      alreadyLogoApplied ? 'เก็บรอวันส่งมอบ' : 'ติดโลโก้ & สแกน S/N',
+      actor?.name || 'ระบบ',
+      actor?.role,
+      `S/N: ${sn} | เก็บรอวันส่งมอบ (ยังไม่ติดวอย)`
+    );
+    const finalNotes = prepNote || 'เก็บรอวันส่งมอบตามออเดอร์ (ยังไม่ติดวอยประกัน)';
     if (isSupabaseLive && supabaseClient) {
-      const target = items.find(i => i.id === itemId);
-      supabaseClient.from('items').update({
-        serial_number: serialNumber,
+      void supabaseClient.from('items').update({
+        serial_number: sn,
         status: 'prepped_in_stock',
-        prepped_at: preppedAt,
-        logo_scanned_at: preppedAt,
+        logo_applied: true,
+        prepped_at: target?.prepped_at || preppedAt,
+        logo_scanned_at: target?.logo_scanned_at || preppedAt,
         moved_to_ready_at: preppedAt,
-        notes: prepNote || 'ประกอบ/ลงโปรแกรม/ยิง S/N เสร็จ เก็บเข้าสต๊อกรอแปะวอยปล่อยของ',
+        notes: finalNotes,
         activity_logs: appendLog(target?.activity_logs, entry)
       }).eq('id', itemId);
-    } else {
-      setItems(prev => prev.map(i => i.id === itemId ? {
-        ...i,
-        serial_number: serialNumber,
-        status: 'prepped_in_stock',
-        prepped_at: preppedAt,
-        logo_scanned_at: preppedAt,
-        moved_to_ready_at: preppedAt,
-        notes: prepNote || 'ประกอบ/ลงโปรแกรม/ยิง S/N เสร็จ เก็บเข้าสต๊อกรอแปะวอยปล่อยของ',
-        activity_logs: appendLog(i.activity_logs, entry)
-      } : i));
     }
+    setItems(prev => prev.map(i => i.id === itemId ? {
+      ...i,
+      serial_number: sn,
+      status: 'prepped_in_stock',
+      logo_applied: true,
+      prepped_at: i.prepped_at || preppedAt,
+      logo_scanned_at: i.logo_scanned_at || preppedAt,
+      moved_to_ready_at: preppedAt,
+      notes: finalNotes,
+      activity_logs: appendLog(i.activity_logs, entry)
+    } : i));
     return true;
   };
 
-  // จังหวะที่ 1 (ทางเลือกสำหรับของสต๊อก): ติดโลโก้ + ยิง S/N เสร็จ -> เก็บเข้าคลังพร้อมขาย (in_stock, ยังไม่ติดวอย)
+  // Stage A (สำหรับของเข้าสต๊อก): ติดโลโก้ + ยิง S/N เสร็จ -> เก็บเข้าคลังพร้อมขาย (in_stock, ยังไม่ติดวอย)
   // ปลดผูกออเดอร์ออก (order_id = null) เพื่อให้เครื่องไปโผล่ในสต๊อกพร้อมขายให้ฝ่ายขาย/จัดซื้อดึงไปขายภายหลัง
   const prepFinishToReadyStock = (itemId: string, serialNumber: string, prepNote?: string): boolean => {
     const sn = serialNumber.trim();
     if (!sn) return false;
-    const existing = items.find(i => i.id !== itemId && i.serial_number && i.serial_number.toLowerCase() === sn.toLowerCase());
-    if (existing) return false;
+    if (isSerialDuplicate(items, sn, itemId)) return false;
 
     const preppedAt = new Date().toISOString();
     const defaultNote = 'ติดโลโก้ & ยิง S/N เสร็จ เก็บเข้าคลังพร้อมขาย (ยังไม่ติดวอย)';
@@ -1114,73 +1714,75 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const entry = makeLog('เก็บเข้าคลังพร้อมขาย / เก็บรอส่งมอบ', actor?.name || 'ระบบ', actor?.role, `S/N: ${sn} | ติดโลโก้ & สแกน S/N เสร็จ`);
     if (isSupabaseLive && supabaseClient) {
       const target = items.find(i => i.id === itemId);
-      supabaseClient.from('items').update({
+      void supabaseClient.from('items').update({
         serial_number: sn,
         status: 'in_stock',
         order_id: null,
+        logo_applied: true,
         prepped_at: preppedAt,
         logo_scanned_at: preppedAt,
         moved_to_ready_at: preppedAt,
         notes: prepNote || defaultNote,
         activity_logs: appendLog(target?.activity_logs, entry)
       }).eq('id', itemId);
-    } else {
-      setItems(prev => prev.map(i => i.id === itemId ? {
-        ...i,
-        serial_number: sn,
-        status: 'in_stock' as const,
-        order_id: null,
-        prepped_at: preppedAt,
-        logo_scanned_at: preppedAt,
-        moved_to_ready_at: preppedAt,
-        notes: prepNote || defaultNote,
-        activity_logs: appendLog(i.activity_logs, entry)
-      } : i));
     }
+    setItems(prev => prev.map(i => i.id === itemId ? {
+      ...i,
+      serial_number: sn,
+      status: 'in_stock' as const,
+      order_id: null,
+      logo_applied: true,
+      prepped_at: preppedAt,
+      logo_scanned_at: preppedAt,
+      moved_to_ready_at: preppedAt,
+      notes: prepNote || defaultNote,
+      activity_logs: appendLog(i.activity_logs, entry)
+    } : i));
     return true;
   };
 
-  // ช่างเตรียมเสร็จ + ติดโลโก้ + แปะวอยทันที -> ส่งตรงไปหน้าร้าน/จัดส่ง (ready_for_dispatch)
+  // Stage B: ติดวอยประกัน & พร้อมส่งออกเลย -> ส่งตรงไปหน้าร้าน/จัดส่ง (ready_for_dispatch)
   const prepFinishAndDispatch = (itemId: string, serialNumber: string, voidDate: string, prepNote?: string): boolean => {
-    const sn = serialNumber.trim();
+    const target = items.find(i => i.id === itemId);
+    const sn = (serialNumber || target?.serial_number || '').trim();
     if (!sn) return false;
-    const existing = items.find(i => i.id !== itemId && i.serial_number && i.serial_number.toLowerCase() === sn.toLowerCase());
-    if (existing) return false;
+    if (isSerialDuplicate(items, sn, itemId)) return false;
 
     const preppedAt = new Date().toISOString();
     const actor = currentUserRef.current;
-    const target = items.find(i => i.id === itemId);
     // เริ่มนับประกันตั้งแต่วันแปะวอย (timestamp จริง) + คำนวณวันหมดประกัน
     const warrantyExpire = computeWarrantyExpire(preppedAt, target?.warranty_years, target?.warranty_months);
     const entry = makeLog('แปะวอยประกัน', actor?.name || 'ระบบ', actor?.role, `S/N: ${sn} | วอยประกัน: ${voidDate}`);
+    const finalNotes = prepNote || 'ติดวอยประกัน & พร้อมส่งออกเลย (ส่งตรงหน้าร้านจัดสายรถ)';
     if (isSupabaseLive && supabaseClient) {
-      supabaseClient.from('items').update({
+      void supabaseClient.from('items').update({
         serial_number: sn,
         status: 'ready_for_dispatch',
+        logo_applied: true,
         void_date: voidDate,
-        prepped_at: preppedAt,
-        logo_scanned_at: preppedAt,
+        prepped_at: target?.prepped_at || preppedAt,
+        logo_scanned_at: target?.logo_scanned_at || preppedAt,
         warranty_applied_at: preppedAt,
         warranty_void_date: preppedAt,
         warranty_expire_date: warrantyExpire,
-        notes: prepNote || 'ติดโลโก้ & แปะวอยพร้อมส่งออกเลย (ส่งตรงหน้าร้าน/จัดส่ง)',
+        notes: finalNotes,
         activity_logs: appendLog(target?.activity_logs, entry)
       }).eq('id', itemId);
-    } else {
-      setItems(prev => prev.map(i => i.id === itemId ? {
-        ...i,
-        serial_number: sn,
-        status: 'ready_for_dispatch' as const,
-        void_date: voidDate,
-        prepped_at: preppedAt,
-        logo_scanned_at: preppedAt,
-        warranty_applied_at: preppedAt,
-        warranty_void_date: preppedAt,
-        warranty_expire_date: warrantyExpire,
-        notes: prepNote || 'ติดโลโก้ & แปะวอยพร้อมส่งออกเลย (ส่งตรงหน้าร้าน/จัดส่ง)',
-        activity_logs: appendLog(i.activity_logs, entry)
-      } : i));
     }
+    setItems(prev => prev.map(i => i.id === itemId ? {
+      ...i,
+      serial_number: sn,
+      status: 'ready_for_dispatch' as const,
+      logo_applied: true,
+      void_date: voidDate,
+      prepped_at: i.prepped_at || preppedAt,
+      logo_scanned_at: i.logo_scanned_at || preppedAt,
+      warranty_applied_at: preppedAt,
+      warranty_void_date: preppedAt,
+      warranty_expire_date: warrantyExpire,
+      notes: finalNotes,
+      activity_logs: appendLog(i.activity_logs, entry)
+    } : i));
     return true;
   };
 
@@ -1216,20 +1818,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // 1. เตรียมของเข้าสต๊อก (Inbound Stock)
   const prepInboundStock = (modelName: string, serialNumber: string, notes?: string): boolean => {
-    const existing = items.find(i => i.serial_number && i.serial_number.toLowerCase() === serialNumber.toLowerCase());
-    if (existing) {
+    const sn = serialNumber.trim();
+    if (!sn) return false;
+    if (isSerialDuplicate(items, sn)) {
       return false;
     }
 
     const actor = currentUserRef.current;
     const now = new Date().toISOString();
     const newItem: Item = {
-      id: 'itm-' + Date.now(),
+      id: newUuid(),
       order_id: null,
       model_name: modelName,
-      serial_number: serialNumber,
+      serial_number: sn,
       status: 'in_stock',
       prep_type: 'inbound_stock',
+      logo_applied: true,
       assigned_techs: [],
       prepped_at: now,
       void_date: null,
@@ -1237,21 +1841,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       created_at: now,
       logo_scanned_at: now,
       moved_to_ready_at: now,
-      activity_logs: [makeLog('ติดโลโก้ & สแกน S/N', actor?.name || 'ระบบ', actor?.role, `S/N: ${serialNumber} | เก็บเข้าคลังพร้อมขาย`)]
+      activity_logs: [makeLog('ติดโลโก้ & สแกน S/N', actor?.name || 'ระบบ', actor?.role, `S/N: ${sn} | เก็บเข้าคลังพร้อมขาย`)]
     };
 
     if (isSupabaseLive && supabaseClient) {
-      supabaseClient.from('items').insert([newItem]);
-    } else {
-      setItems(prev => [newItem, ...prev]);
+      void supabaseClient.from('items').insert([newItem]);
     }
+    setItems(prev => [newItem, ...prev]);
     return true;
   };
 
   // 2. เตรียมของออกไปส่ง (Outbound Dispatch + ช่างเตรียมเป็นคนติดวอยประกันที่นี่)
   const prepOutboundDispatch = (itemId: string, serialNumber: string, voidDate: string): boolean => {
-    const existing = items.find(i => i.id !== itemId && i.serial_number && i.serial_number.toLowerCase() === serialNumber.toLowerCase());
-    if (existing) {
+    const sn = serialNumber.trim();
+    if (!sn) return false;
+    if (isSerialDuplicate(items, sn, itemId)) {
       return false;
     }
 
@@ -1260,10 +1864,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const target = items.find(i => i.id === itemId);
     // เริ่มนับประกันตั้งแต่วันแปะวอย (timestamp จริง) + คำนวณวันหมดประกัน
     const warrantyExpire = computeWarrantyExpire(preppedAt, target?.warranty_years, target?.warranty_months);
-    const entry = makeLog('แปะวอยประกัน', actor?.name || 'ระบบ', actor?.role, `S/N: ${serialNumber} | วอยประกัน: ${voidDate}`);
+    const entry = makeLog('แปะวอยประกัน', actor?.name || 'ระบบ', actor?.role, `S/N: ${sn} | วอยประกัน: ${voidDate}`);
     if (isSupabaseLive && supabaseClient) {
-      supabaseClient.from('items').update({
-        serial_number: serialNumber,
+      void supabaseClient.from('items').update({
+        serial_number: sn,
         status: 'ready_for_dispatch',
         void_date: voidDate,
         prepped_at: preppedAt,
@@ -1272,19 +1876,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         warranty_expire_date: warrantyExpire,
         activity_logs: appendLog(target?.activity_logs, entry)
       }).eq('id', itemId);
-    } else {
-      setItems(prev => prev.map(i => i.id === itemId ? {
-        ...i,
-        serial_number: serialNumber,
-        status: 'ready_for_dispatch',
-        void_date: voidDate,
-        prepped_at: preppedAt,
-        warranty_applied_at: preppedAt,
-        warranty_void_date: preppedAt,
-        warranty_expire_date: warrantyExpire,
-        activity_logs: appendLog(i.activity_logs, entry)
-      } : i));
     }
+    setItems(prev => prev.map(i => i.id === itemId ? {
+      ...i,
+      serial_number: sn,
+      status: 'ready_for_dispatch',
+      void_date: voidDate,
+      prepped_at: preppedAt,
+      warranty_applied_at: preppedAt,
+      warranty_void_date: preppedAt,
+      warranty_expire_date: warrantyExpire,
+      activity_logs: appendLog(i.activity_logs, entry)
+    } : i));
     return true;
   };
 
@@ -1317,28 +1920,105 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  // ช่าง Onsite กดรับงานก่อนเริ่มทำ (บันทึกชื่อช่างผู้รับงาน + เวลา)
+  // ช่าง Onsite กดรับงานก่อนเริ่มทำ (บันทึกชื่อช่างผู้รับงาน + เวลา แยกจากช่างเตรียม)
   const acceptOnsiteJob = async (itemId: string, techName: string) => {
     const acceptedAt = new Date().toISOString();
     const actor = currentUserRef.current;
-    const entry = makeLog('เริ่มปฏิบัติงาน / รับเครื่องซ่อม', actor?.name || techName || 'ระบบ', actor?.role, `ช่างผู้รับงาน: ${techName}`);
+    const entry = makeLog('ช่าง Onsite กดรับงาน', actor?.name || techName || 'ระบบ', actor?.role, `ช่างผู้รับงาน: ${techName}`);
     if (isSupabaseLive && supabaseClient) {
       const target = items.find(i => i.id === itemId);
       await supabaseClient.from('items').update({
-        assigned_prep_tech: techName,
-        prep_accepted_at: acceptedAt,
-        prep_accepted_log_at: acceptedAt,
+        onsite_accepted_by: techName,
+        onsite_accepted_at: acceptedAt,
         activity_logs: appendLog(target?.activity_logs, entry)
       }).eq('id', itemId);
-    } else {
-      setItems(prev => prev.map(i => i.id === itemId ? {
-        ...i,
-        assigned_prep_tech: techName,
-        prep_accepted_at: acceptedAt,
-        prep_accepted_log_at: acceptedAt,
-        activity_logs: appendLog(i.activity_logs, entry)
-      } : i));
     }
+    setItems(prev => prev.map(i => i.id === itemId ? {
+      ...i,
+      onsite_accepted_by: techName,
+      onsite_accepted_at: acceptedAt,
+      activity_logs: appendLog(i.activity_logs, entry)
+    } : i));
+  };
+
+  // หน้าร้านยืนยันลูกค้ารับสินค้าเองหน้าร้าน -> แปะวอย (ถ้ายังไม่มี) + ปิดงานเป็น delivered + ปิดบิลถ้าครบทุกชิ้น
+  const confirmCustomerPickup = async (itemId: string, voidDate: string) => {
+    const targetItem = items.find(i => i.id === itemId);
+    if (!targetItem) return;
+    const orderId = targetItem.order_id;
+    const actor = currentUserRef.current;
+    const now = new Date().toISOString();
+    const needsVoid = !targetItem.warranty_void_date;
+    const warrantyExpire = needsVoid
+      ? computeWarrantyExpire(now, targetItem.warranty_years, targetItem.warranty_months)
+      : targetItem.warranty_expire_date;
+    const entry = makeLog(
+      'ลูกค้ารับสินค้าเองหน้าร้าน (ปิดงาน)',
+      actor?.name || 'หน้าร้าน',
+      actor?.role,
+      `วอยประกัน: ${targetItem.void_date || voidDate}`
+    );
+
+    const updatedItems = items.map(i =>
+      i.id === itemId
+        ? {
+            ...i,
+            status: 'delivered' as const,
+            void_date: i.void_date || voidDate,
+            warranty_applied_at: i.warranty_applied_at || now,
+            warranty_void_date: i.warranty_void_date || now,
+            warranty_expire_date: warrantyExpire ?? i.warranty_expire_date ?? null,
+            dispatched_at: i.dispatched_at || now,
+            delivered_at: now,
+            activity_logs: appendLog(i.activity_logs, entry),
+          }
+        : i
+    );
+
+    const relatedOrderItems = updatedItems.filter(i => i.order_id === orderId);
+    const allDelivered = relatedOrderItems.length > 0 && relatedOrderItems.every(i => i.status === 'delivered');
+    const orderEntry = makeLog('ลูกค้ารับสินค้าครบแล้ว (ปิดบิล)', actor?.name || 'หน้าร้าน', actor?.role, 'รับสินค้าเองหน้าร้านครบทุกชิ้น');
+
+    if (isSupabaseLive && supabaseClient) {
+      await supabaseClient.from('items').update({
+        status: 'delivered',
+        void_date: targetItem.void_date || voidDate,
+        warranty_applied_at: targetItem.warranty_applied_at || now,
+        warranty_void_date: targetItem.warranty_void_date || now,
+        warranty_expire_date: warrantyExpire ?? targetItem.warranty_expire_date ?? null,
+        dispatched_at: targetItem.dispatched_at || now,
+        delivered_at: now,
+        activity_logs: appendLog(targetItem.activity_logs, entry),
+      }).eq('id', itemId);
+
+      if (orderId && allDelivered) {
+        const targetOrder = orders.find(o => o.id === orderId);
+        await supabaseClient.from('orders').update({
+          order_status: 'fulfilled',
+          fulfilled_at: now,
+          activity_logs: appendLog(targetOrder?.activity_logs, orderEntry),
+        }).eq('id', orderId);
+      }
+    }
+    setItems(updatedItems);
+    if (orderId && allDelivered) {
+      setOrders(prev => prev.map(o => o.id === orderId ? {
+        ...o,
+        order_status: 'fulfilled',
+        fulfilled_at: now,
+        activity_logs: appendLog(o.activity_logs, orderEntry),
+      } : o));
+    }
+  };
+
+  // อัปเดตสายรถของออเดอร์ (กรณีหน้าร้านปรับสายรถตอนจ่ายงาน)
+  const updateOrderRoute = async (orderId: string, routeCode: RouteCode) => {
+    const targetOrder = orders.find(o => o.id === orderId);
+    if (!targetOrder || targetOrder.route_code === routeCode) return;
+    if (isSupabaseLive && supabaseClient) {
+      await supabaseClient.from('orders').update({ route_code: routeCode }).eq('id', orderId);
+    }
+    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, route_code: routeCode } : o));
   };
 
   const assignRepairTicketOnsite = async (ticketId: string, techs: string[], jobCategory?: JobCategory) => {
@@ -1369,18 +2049,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // 3. ช่าง Onsite ส่งมอบสินค้าถึงมือลูกค้า
-  const confirmOnsiteDelivery = async (itemId: string, deliveryNotes?: string) => {
+  const confirmOnsiteDelivery = async (itemId: string, deliveryNotes?: string, photoUrls?: string[]) => {
     const targetItem = items.find(i => i.id === itemId);
     const orderId = targetItem?.order_id;
     const actor = currentUserRef.current;
     const now = new Date().toISOString();
-    const itemEntry = makeLog('ส่งมอบติดตั้งเสร็จสิ้น', actor?.name || 'ระบบ', actor?.role, deliveryNotes || undefined);
+    const cleanPhotos = photoUrls && photoUrls.length > 0
+      ? photoUrls.slice(0, 3)
+      : (targetItem?.photo_urls || null);
+    const logDetail = [
+      deliveryNotes || null,
+      cleanPhotos && cleanPhotos.length > 0 ? `แนบรูปหลักฐาน ${cleanPhotos.length} รูป` : null
+    ].filter(Boolean).join(' | ') || undefined;
+    const itemEntry = makeLog('ส่งมอบติดตั้งเสร็จสิ้น', actor?.name || 'ระบบ', actor?.role, logDetail);
 
     const updatedItems = items.map(i => i.id === itemId ? {
       ...i,
       status: 'delivered' as const,
       delivered_at: now,
       notes: deliveryNotes ? `${i.notes || ''} | ${deliveryNotes}` : i.notes,
+      photo_urls: cleanPhotos,
       activity_logs: appendLog(i.activity_logs, itemEntry)
     } : i);
 
@@ -1392,6 +2080,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       await supabaseClient.from('items').update({
         status: 'delivered',
         delivered_at: now,
+        photo_urls: cleanPhotos,
         activity_logs: appendLog(targetItem?.activity_logs, itemEntry)
       }).eq('id', itemId);
 
@@ -1426,8 +2115,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const actor = currentUserRef.current;
     const now = new Date().toISOString();
     const techName = actor?.name || 'ช่าง Onsite';
-    const thaiYear = new Date().getFullYear() + 543;
-    const generatedTicketNo = `REP-${thaiYear}-${Math.floor(100 + Math.random() * 900)}`;
+    const generatedTicketNo = generateUniqueTicketNo(repairTickets);
     const routeCode = payload.district ? getRouteByDistrict(payload.district) : ('route_5' as RouteCode);
     const finalSn = payload.walkin_sn?.trim() || `SN-ONSITE-${Math.floor(1000 + Math.random() * 9000)}`;
     const accessories = payload.accessories || [];
@@ -1449,7 +2137,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
 
     const newTicket: RepairTicket = {
-      id: 'rep-' + Date.now(),
+      id: newUuid(),
       item_id: null,
       ticket_no: generatedTicketNo,
       walkin_sn: finalSn,
@@ -1487,7 +2175,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       service_type: 'in_house_repair',
       included_accessories:
         [...accessories, accessoriesOther].filter(Boolean).join(', ') || null,
-      repair_status: 'pending_check'
+      repair_status: 'pending_check',
+      photo_urls: payload.photo_urls && payload.photo_urls.length > 0 ? payload.photo_urls.slice(0, 3) : null
     };
 
     // 1) สร้างใบรับซ่อมใหม่ (REP-...) เข้าคิวช่างหน้าร้าน
@@ -1549,9 +2238,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const createRepairTicket = async (ticketData: Omit<RepairTicket, 'id' | 'ticket_no' | 'created_at' | 'received_at' | 'status'>) => {
     const routeCode = ticketData.district ? getRouteByDistrict(ticketData.district) : ('route_5' as RouteCode);
-    const thaiYear = new Date().getFullYear() + 543;
-    const randomNum = Math.floor(100 + Math.random() * 900);
-    const generatedTicketNo = `REP-${thaiYear}-${randomNum}`;
+    const generatedTicketNo = generateUniqueTicketNo(repairTickets);
 
     const actor = currentUserRef.current;
     const now = new Date().toISOString();
@@ -1572,7 +2259,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
     const newTicket: RepairTicket = {
       ...ticketData,
-      id: 'rep-' + Date.now(),
+      id: newUuid(),
       ticket_no: generatedTicketNo,
       route_code: routeCode,
       status: 'open',
@@ -1617,9 +2304,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     accessories_other?: string;
   }): Promise<RepairTicket> => {
     const routeCode = payload.district ? getRouteByDistrict(payload.district) : ('route_5' as RouteCode);
-    const thaiYear = new Date().getFullYear() + 543;
-    const randomNum = Math.floor(100 + Math.random() * 900);
-    const generatedTicketNo = `REP-${thaiYear}-${randomNum}`;
+    const generatedTicketNo = generateUniqueTicketNo(repairTickets);
 
     const actor = currentUserRef.current;
     const now = new Date().toISOString();
@@ -1642,7 +2327,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
 
     const newTicket: RepairTicket = {
-      id: 'rep-' + Date.now(),
+      id: newUuid(),
       item_id: null,
       ticket_no: generatedTicketNo,
       walkin_sn: payload.walkin_sn || '',
@@ -1867,23 +2552,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const completeRepairReturnOnsite = async (ticketId: string, note?: string) => {
+  const completeRepairReturnOnsite = async (ticketId: string, note?: string, photoUrls?: string[]) => {
     const actor = currentUserRef.current;
     const now = new Date().toISOString();
     const techName = actor?.name || 'ช่าง Onsite';
+    const target = repairTickets.find(t => t.id === ticketId);
+    const cleanPhotos = photoUrls && photoUrls.length > 0
+      ? photoUrls.slice(0, 3)
+      : (target?.photo_urls || null);
+    const logNoteParts = [
+      note || 'ช่าง Onsite ส่งคืนเครื่องซ่อมให้ลูกค้าเรียบร้อย',
+      cleanPhotos && cleanPhotos.length > 0 ? `แนบรูปหลักฐาน ${cleanPhotos.length} รูป` : null
+    ].filter(Boolean);
     const entry = makeLog(
       `ส่งมอบเครื่องซ่อมคืนลูกค้าเสร็จสิ้น โดย ${techName}`,
       techName,
       actor?.role,
-      note || 'ช่าง Onsite ส่งคืนเครื่องซ่อมให้ลูกค้าเรียบร้อย'
+      logNoteParts.join(' | ')
     );
     if (isSupabaseLive && supabaseClient) {
-      const target = repairTickets.find(t => t.id === ticketId);
       await supabaseClient.from('repair_tickets').update({
         status: 'returned_closed',
         repair_status: 'completed',
         returned_by: techName,
         delivered_at: now,
+        photo_urls: cleanPhotos,
         activity_logs: appendLog(target?.activity_logs, entry)
       }).eq('id', ticketId);
     } else {
@@ -1893,6 +2586,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         repair_status: 'completed',
         returned_by: techName,
         delivered_at: now,
+        photo_urls: cleanPhotos,
         activity_logs: appendLog(t.activity_logs, entry)
       } : t));
     }
@@ -2227,16 +2921,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.removeItem('boss_users');
     localStorage.removeItem('boss_products');
     localStorage.removeItem('boss_stock_pos');
+    localStorage.removeItem('boss_projects');
     setOrders(INITIAL_ORDERS);
     setItems(INITIAL_ITEMS);
     setRepairTickets(INITIAL_REPAIR_TICKETS);
     setUsers(INITIAL_USERS);
     setProducts(INITIAL_PRODUCTS);
     setStockPOs(INITIAL_STOCK_POS);
+    setProjects(INITIAL_PROJECTS);
   };
 
   /**
-   * ล้างข้อมูล Demo เชิงธุรกรรมทั้งหมด (บิลขาย, PO, คิวงานเตรียม/Onsite, งานซ่อม, ประวัติ Log)
+   * ล้างข้อมูล Demo เชิงธุรกรรมทั้งหมด (บิลขาย, PO, คิวงานเตรียม/Onsite, งานซ่อม, โปรเจกต์ PRJ-..., ประวัติ Log)
    * โดยคง Product Catalog (`products`) และสต๊อกคลังสินค้า (`in_stock`, `raw_stock`) ไว้
    * พร้อมปลดล็อกการจองออเดอร์/แท็กงานเดิมให้พร้อมขายทันที
    */
@@ -2251,6 +2947,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       .map((item) => ({
         ...item,
         order_id: null,
+        project_id: null,
+        project_batch_no: null,
+        project_item_id: null,
         stock_po_id: null,
         assigned_prep_tech: null,
         prep_accepted_at: null,
@@ -2265,12 +2964,650 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.setItem('boss_orders', JSON.stringify([]));
     localStorage.setItem('boss_stock_pos', JSON.stringify([]));
     localStorage.setItem('boss_repair_tickets', JSON.stringify([]));
+    localStorage.setItem('boss_projects', JSON.stringify([]));
     localStorage.setItem('boss_items', JSON.stringify(cleanedStockItems));
 
     setOrders([]);
     setStockPOs([]);
     setRepairTickets([]);
+    setProjects([]);
     setItems(cleanedStockItems);
+  };
+
+  // ==========================================================================
+  // Project & Site Installation Module (PRJ-2026-XXX)
+  // ==========================================================================
+  const createProject = (payload: {
+    id?: string;
+    site_name: string;
+    customer_name: string;
+    phone: string;
+    location: string;
+    district?: string;
+    created_by: string;
+    start_date: string;
+    due_date: string;
+    assigned_techs: string[];
+    items: {
+      product_id?: string;
+      model_name: string;
+      item_type: ProjectItemType;
+      unit?: Product['unit'];
+      qty_required: number;
+      unit_cost: number;
+      unit_price: number;
+      warranty_years?: number;
+    }[];
+  }): Project => {
+    const now = new Date().toISOString();
+    const actor = currentUserRef.current;
+    const currentYear = new Date().getFullYear();
+    const existingMax = projects.reduce((max, p) => {
+      const m = p.id.match(/^PRJ-\d{4}-(\d+)$/);
+      return m ? Math.max(max, parseInt(m[1], 10)) : max;
+    }, 0);
+    const projectId =
+      payload.id?.trim() ||
+      `PRJ-${currentYear}-${String(Math.max(projects.length, existingMax) + 1).padStart(3, '0')}`;
+    const routeCode = payload.district ? getRouteByDistrict(payload.district) : ('route_5' as RouteCode);
+    const createdBy = payload.created_by || actor?.name || 'ฝ่ายขาย';
+
+    const prjItems: ProjectItem[] = payload.items.map((it, idx) => ({
+      id: `pitem-${Date.now()}-${idx}`,
+      product_id: it.product_id,
+      model_name: it.model_name,
+      item_type: it.item_type,
+      unit: it.unit || (it.item_type === 'consumable' ? 'รายการ' : 'เครื่อง'),
+      qty_required: Math.max(1, it.qty_required || 1),
+      qty_allocated: 0,
+      qty_prepared: 0,
+      unit_cost: Math.max(0, it.unit_cost || 0),
+      unit_price: Math.max(0, it.unit_price || 0),
+      warranty_years: it.warranty_years ?? (it.item_type === 'equipment' ? 1 : 0),
+      is_addon: false,
+      serial_numbers: []
+    }));
+
+    const initLog = makeLog(
+      'เปิดโปรเจกต์รับเหมา / ติดตั้งใหม่',
+      createdBy,
+      actor?.role || 'sales',
+      `${projectId} | ${payload.site_name} | ลูกค้า: ${payload.customer_name} (${prjItems.length} รายการ)`
+    );
+
+    const newProject: Project = {
+      id: projectId,
+      site_name: payload.site_name.trim(),
+      customer_name: payload.customer_name.trim(),
+      phone: payload.phone.trim(),
+      location: payload.location.trim(),
+      district: payload.district || 'เมืองสุราษฎร์ธานี',
+      route_code: routeCode,
+      created_by: createdBy,
+      start_date: payload.start_date,
+      due_date: payload.due_date,
+      status: 'planning',
+      assigned_techs: payload.assigned_techs || [],
+      items: prjItems,
+      batches: [],
+      material_requests: [],
+      daily_logs: [],
+      created_at: now,
+      updated_at: now,
+      activity_logs: [initLog]
+    };
+
+    setProjects(prev => [newProject, ...prev]);
+    return newProject;
+  };
+
+  const addProjectAddonItems = (
+    projectId: string,
+    payload: {
+      added_by: string;
+      items: {
+        product_id?: string;
+        model_name: string;
+        item_type: ProjectItemType;
+        unit?: Product['unit'];
+        qty_required: number;
+        unit_cost: number;
+        unit_price: number;
+        warranty_years?: number;
+      }[];
+      note?: string;
+    }
+  ) => {
+    const now = new Date().toISOString();
+    const actor = currentUserRef.current;
+    const addedBy = payload.added_by.trim() || actor?.name || 'ฝ่ายขาย';
+    const addonItems: ProjectItem[] = payload.items.map((it, idx) => ({
+      id: `pitem-addon-${Date.now()}-${idx}`,
+      product_id: it.product_id,
+      model_name: it.model_name,
+      item_type: it.item_type,
+      unit: it.unit || (it.item_type === 'consumable' ? 'รายการ' : 'เครื่อง'),
+      qty_required: Math.max(1, it.qty_required || 1),
+      qty_allocated: 0,
+      qty_prepared: 0,
+      unit_cost: Math.max(0, it.unit_cost || 0),
+      unit_price: Math.max(0, it.unit_price || 0),
+      warranty_years: it.warranty_years ?? (it.item_type === 'equipment' ? 1 : 0),
+      is_addon: true,
+      added_by: addedBy,
+      added_at: now,
+      serial_numbers: []
+    }));
+
+    const totalAddonValue = addonItems.reduce((s, it) => s + it.unit_price * it.qty_required, 0);
+    const summaryText = addonItems.map(it => `${it.model_name} x${it.qty_required}`).join(', ');
+    const entry = makeLog(
+      'แอดรายการเพิ่มเข้าโปรเจกต์ (Add-on)',
+      addedBy,
+      actor?.role || 'sales',
+      `แอดเพิ่มโดย ${addedBy}: ${summaryText} (฿${totalAddonValue.toLocaleString('th-TH')})${payload.note ? ` | ${payload.note}` : ''}`
+    );
+
+    setProjects(prev =>
+      prev.map(p =>
+        p.id === projectId
+          ? {
+              ...p,
+              items: [...p.items, ...addonItems],
+              updated_at: now,
+              activity_logs: appendLog(p.activity_logs, entry)
+            }
+          : p
+      )
+    );
+  };
+
+  const releaseProjectBatch = (
+    projectId: string,
+    payload: {
+      items: { project_item_id: string; qty: number }[];
+      note?: string;
+    }
+  ): { batchNo: number; equipmentCount: number; consumableCount: number } | null => {
+    const targetProject = projects.find(p => p.id === projectId);
+    if (!targetProject) return null;
+
+    const validReleases = payload.items.filter(r => r.qty > 0);
+    if (validReleases.length === 0) return null;
+
+    const now = new Date().toISOString();
+    const actor = currentUserRef.current;
+    const actorName = actor?.name || 'ฝ่ายจัดซื้อ & สต๊อก';
+    const nextBatchNo = (targetProject.batches?.length || 0) + 1;
+
+    const claimedStockIds = new Set<string>();
+    const consumedStockMap: Record<string, { projectItem: ProjectItem }> = {};
+    const consumedConsumableIds = new Set<string>();
+    const newEquipmentItems: Item[] = [];
+    const batchLineRecords: Project['batches'][number]['items'] = [];
+
+    let equipmentCount = 0;
+    let consumableCount = 0;
+
+    validReleases.forEach((rel, relIdx) => {
+      const prjItem = targetProject.items.find(it => it.id === rel.project_item_id);
+      if (!prjItem) return;
+      const remainingQty = Math.max(0, (prjItem.qty_required || 0) - (prjItem.qty_allocated || 0));
+      if (remainingQty <= 0) return;
+      const qtyToRelease = Math.min(remainingQty, Math.max(1, rel.qty));
+      const normModel = (prjItem.model_name || '').trim().toLowerCase();
+
+      const availablePool = items
+        .filter(
+          it =>
+            (it.status === 'in_stock' || it.status === 'raw_stock') &&
+            !claimedStockIds.has(it.id) &&
+            (it.model_name || '').trim().toLowerCase() === normModel
+        )
+        .sort((a, b) => (a.status === 'in_stock' ? -1 : b.status === 'in_stock' ? 1 : 0));
+
+      if (prjItem.item_type === 'equipment') {
+        equipmentCount += qtyToRelease;
+        const createdItemIds: string[] = [];
+        for (let i = 0; i < qtyToRelease; i++) {
+          const stockMatch = availablePool.shift();
+          if (stockMatch) {
+            claimedStockIds.add(stockMatch.id);
+            consumedStockMap[stockMatch.id] = { projectItem: prjItem };
+            createdItemIds.push(stockMatch.id);
+          } else {
+            const newId = `itm-prj-${Date.now()}-${relIdx}-${i}-${Math.random().toString(36).slice(2, 5)}`;
+            createdItemIds.push(newId);
+            newEquipmentItems.push({
+              id: newId,
+              order_id: null,
+              project_id: projectId,
+              project_batch_no: nextBatchNo,
+              project_item_id: prjItem.id,
+              model_name: prjItem.model_name,
+              serial_number: null,
+              status: 'pending_prep',
+              prep_type: 'outbound_dispatch',
+              category: 'cctv_network',
+              unit_cost: prjItem.unit_cost,
+              supplier: 'สต๊อกร้าน (Main Store)',
+              po_no: `${projectId} • งวดที่ ${nextBatchNo}`,
+              prep_note: `[โปรเจกต์] ${projectId} • งวดเบิกที่ ${nextBatchNo}${payload.note ? ` — ${payload.note}` : ''}`,
+              delivery_mode: 'project',
+              assigned_prep_tech: null,
+              prep_accepted_at: null,
+              job_category: 'installation',
+              assigned_techs: targetProject.assigned_techs || [],
+              assigned_onsite_tech: targetProject.assigned_techs?.[0] || null,
+              prepped_at: null,
+              void_date: null,
+              warranty_years: prjItem.warranty_years ?? 1,
+              logo_applied: false,
+              notes: `เบิกอุปกรณ์หลักเข้าโปรเจกต์ ${projectId} (${targetProject.site_name}) งวดที่ ${nextBatchNo}`,
+              created_at: now,
+              activity_logs: [
+                makeLog(
+                  `ปล่อยของงวดเบิกโปรเจกต์ (Batch #${nextBatchNo})`,
+                  actorName,
+                  actor?.role,
+                  `โปรเจกต์ ${projectId} • งวดเบิกที่ ${nextBatchNo} ส่งให้ช่างเตรียม`
+                )
+              ]
+            });
+          }
+        }
+        batchLineRecords.push({
+          project_item_id: prjItem.id,
+          model_name: prjItem.model_name,
+          item_type: 'equipment',
+          qty: qtyToRelease,
+          item_ids: createdItemIds
+        });
+      } else {
+        // Consumable / Labor: bypass Prep Tech directly to Onsite Tech
+        consumableCount += qtyToRelease;
+        for (let i = 0; i < qtyToRelease; i++) {
+          const stockMatch = availablePool.shift();
+          if (stockMatch) {
+            claimedStockIds.add(stockMatch.id);
+            consumedConsumableIds.add(stockMatch.id);
+          }
+        }
+        batchLineRecords.push({
+          project_item_id: prjItem.id,
+          model_name: prjItem.model_name,
+          item_type: 'consumable',
+          qty: qtyToRelease
+        });
+      }
+    });
+
+    setItems(prev => {
+      const updated = prev
+        .filter(it => !consumedConsumableIds.has(it.id))
+        .map(it => {
+          const match = consumedStockMap[it.id];
+          if (!match) return it;
+          const isFromReady = it.status === 'in_stock';
+          return {
+            ...it,
+            order_id: null,
+            project_id: projectId,
+            project_batch_no: nextBatchNo,
+            project_item_id: match.projectItem.id,
+            status: 'pending_prep' as const,
+            prep_type: 'outbound_dispatch' as const,
+            po_no: `${projectId} • งวดที่ ${nextBatchNo}`,
+            prep_note: `[โปรเจกต์] ${projectId} • งวดเบิกที่ ${nextBatchNo}${payload.note ? ` — ${payload.note}` : ''}`,
+            delivery_mode: 'project' as const,
+            job_category: 'installation' as const,
+            assigned_techs: targetProject.assigned_techs || [],
+            assigned_onsite_tech: targetProject.assigned_techs?.[0] || null,
+            assigned_prep_tech: null,
+            prep_accepted_at: null,
+            logo_applied: isFromReady ? true : Boolean(it.logo_applied),
+            warranty_years: match.projectItem.warranty_years ?? 1,
+            notes: `ตัดสต๊อกเข้าโปรเจกต์ ${projectId} (${targetProject.site_name}) งวดเบิกที่ ${nextBatchNo}`,
+            activity_logs: appendLog(
+              it.activity_logs,
+              makeLog(
+                `ปล่อยของงวดเบิกโปรเจกต์ (Batch #${nextBatchNo})`,
+                actorName,
+                actor?.role,
+                `โปรเจกต์ ${projectId} • งวดเบิกที่ ${nextBatchNo} ส่งให้ช่างเตรียม`
+              )
+            )
+          };
+        });
+      return [...newEquipmentItems, ...updated];
+    });
+
+    const batchLog = makeLog(
+      `ปล่อยของออกเป็นงวดเบิก (Batch #${nextBatchNo})`,
+      actorName,
+      actor?.role,
+      `อุปกรณ์หลักส่งช่าง Prep ${equipmentCount} ชิ้น | วัสดุสิ้นเปลือง/ค่าแรงส่งตรง Onsite ${consumableCount} รายการ${payload.note ? ` | ${payload.note}` : ''}`
+    );
+
+    setProjects(prev =>
+      prev.map(p => {
+        if (p.id !== projectId) return p;
+        const nextItems = p.items.map(it => {
+          const rel = validReleases.find(r => r.project_item_id === it.id);
+          if (!rel) return it;
+          const nextAlloc = it.qty_allocated + rel.qty;
+          const nextPrep = it.item_type === 'consumable' ? it.qty_prepared + rel.qty : it.qty_prepared;
+          return {
+            ...it,
+            qty_allocated: nextAlloc,
+            qty_prepared: nextPrep
+          };
+        });
+        return {
+          ...p,
+          status: p.status === 'planning' ? 'in_progress' : p.status,
+          items: nextItems,
+          batches: [
+            ...(p.batches || []),
+            {
+              id: `batch-${Date.now()}`,
+              batch_no: nextBatchNo,
+              released_at: now,
+              released_by: actorName,
+              note: payload.note,
+              items: batchLineRecords
+            }
+          ],
+          updated_at: now,
+          activity_logs: appendLog(p.activity_logs, batchLog)
+        };
+      })
+    );
+
+    return { batchNo: nextBatchNo, equipmentCount, consumableCount };
+  };
+
+  const prepFinishProjectEquipment = (
+    itemId: string,
+    serialNumber: string,
+    voidDate: string,
+    prepNote?: string
+  ): boolean => {
+    const target = items.find(i => i.id === itemId);
+    if (!target || !target.project_id) return false;
+    const sn = (serialNumber || target.serial_number || '').trim();
+    if (!sn) return false;
+    const duplicate = items.find(
+      i => i.id !== itemId && i.serial_number && i.serial_number.toLowerCase() === sn.toLowerCase()
+    );
+    if (duplicate) return false;
+
+    const now = new Date().toISOString();
+    const actor = currentUserRef.current;
+    const techName = actor?.name || target.assigned_prep_tech || 'ช่างเตรียมสินค้า';
+    const parentProject = projects.find(p => p.id === target.project_id);
+    const assignedTechs =
+      parentProject && parentProject.assigned_techs.length > 0
+        ? parentProject.assigned_techs
+        : target.assigned_techs;
+    const warrantyExpire = computeWarrantyExpire(now, target.warranty_years, target.warranty_months);
+
+    const itemLog = makeLog(
+      'ติดวอยประกัน & พร้อมส่งเข้าไซต์งาน',
+      techName,
+      actor?.role || 'prep',
+      `S/N: ${sn} | วอยประกัน: ${voidDate} | โปรเจกต์ ${target.project_id} • งวดที่ ${target.project_batch_no || 1}`
+    );
+
+    setItems(prev =>
+      prev.map(i =>
+        i.id === itemId
+          ? {
+              ...i,
+              serial_number: sn,
+              status: 'assigned_onsite' as const,
+              logo_applied: true,
+              void_date: voidDate,
+              prepped_at: now,
+              warranty_applied_at: now,
+              warranty_void_date: now,
+              warranty_expire_date: warrantyExpire,
+              assigned_techs: assignedTechs || [],
+              assigned_onsite_tech: assignedTechs?.[0] || null,
+              assigned_at: now,
+              dispatched_at: now,
+              notes: prepNote || `ติดวอยประกัน & ส่งเข้าไซต์งาน ${target.project_id} งวดที่ ${target.project_batch_no || 1}`,
+              activity_logs: appendLog(i.activity_logs, itemLog)
+            }
+          : i
+      )
+    );
+
+    setProjects(prev =>
+      prev.map(p => {
+        if (p.id !== target.project_id) return p;
+        const nextItems = p.items.map(pi => {
+          const isMatched =
+            (target.project_item_id && pi.id === target.project_item_id) ||
+            (!target.project_item_id && pi.model_name === target.model_name && pi.item_type === 'equipment');
+          if (!isMatched) return pi;
+          const existingSns = pi.serial_numbers || [];
+          const nextSns = existingSns.includes(sn) ? existingSns : [...existingSns, sn];
+          return {
+            ...pi,
+            qty_prepared: Math.min(pi.qty_required, pi.qty_prepared + 1),
+            serial_numbers: nextSns
+          };
+        });
+        return {
+          ...p,
+          status: p.status === 'planning' ? 'in_progress' : p.status,
+          items: nextItems,
+          updated_at: now,
+          activity_logs: appendLog(p.activity_logs, itemLog)
+        };
+      })
+    );
+
+    return true;
+  };
+
+  const addProjectDailyLog = (
+    projectId: string,
+    payload: {
+      date?: string;
+      tech_name: string;
+      progress_percent: number;
+      note: string;
+      photo_urls: string[];
+    }
+  ) => {
+    const now = new Date().toISOString();
+    const actor = currentUserRef.current;
+    const techName = payload.tech_name || actor?.name || 'ช่าง Onsite';
+    const progress = Math.max(0, Math.min(100, payload.progress_percent));
+    const logDate = payload.date || now.split('T')[0];
+
+    const activityEntry = makeLog(
+      `อัปเดตความคืบหน้าหน้างาน (${progress}%)`,
+      techName,
+      actor?.role || 'onsite',
+      `${payload.note}${payload.photo_urls.length > 0 ? ` | แนบรูปหน้างาน ${payload.photo_urls.length} รูป` : ''}`
+    );
+
+    setProjects(prev =>
+      prev.map(p => {
+        if (p.id !== projectId) return p;
+        const nextStatus =
+          p.status === 'completed'
+            ? 'completed'
+            : progress >= 100
+              ? 'handover_pending'
+              : 'in_progress';
+        return {
+          ...p,
+          status: nextStatus,
+          daily_logs: [
+            ...(p.daily_logs || []),
+            {
+              id: `dlog-${Date.now()}`,
+              date: logDate,
+              tech_name: techName,
+              progress_percent: progress,
+              note: payload.note.trim(),
+              photo_urls: payload.photo_urls
+            }
+          ],
+          updated_at: now,
+          activity_logs: appendLog(p.activity_logs, activityEntry)
+        };
+      })
+    );
+  };
+
+  const createProjectMaterialRequest = (
+    projectId: string,
+    payload: {
+      item_name: string;
+      product_id?: string;
+      qty: number;
+      reason: string;
+      requested_by: string;
+    }
+  ) => {
+    const now = new Date().toISOString();
+    const actor = currentUserRef.current;
+    const requester = payload.requested_by || actor?.name || 'ช่าง Onsite';
+    const entry = makeLog(
+      'ช่างหน้างานขอเบิกของเพิ่ม (Field Material Request)',
+      requester,
+      actor?.role || 'onsite',
+      `ขอเบิก: ${payload.item_name} x${payload.qty} — ${payload.reason}`
+    );
+
+    setProjects(prev =>
+      prev.map(p =>
+        p.id === projectId
+          ? {
+              ...p,
+              material_requests: [
+                ...(p.material_requests || []),
+                {
+                  id: `mreq-${Date.now()}`,
+                  item_name: payload.item_name.trim(),
+                  product_id: payload.product_id,
+                  qty: Math.max(1, payload.qty),
+                  reason: payload.reason.trim(),
+                  requested_by: requester,
+                  requested_at: now,
+                  status: 'pending'
+                }
+              ],
+              updated_at: now,
+              activity_logs: appendLog(p.activity_logs, entry)
+            }
+          : p
+      )
+    );
+  };
+
+  const updateProjectMaterialRequestStatus = (
+    projectId: string,
+    requestId: string,
+    status: ProjectMaterialRequestStatus
+  ) => {
+    const now = new Date().toISOString();
+    const actor = currentUserRef.current;
+    const actorName = actor?.name || 'ฝ่ายจัดซื้อ';
+    const targetProject = projects.find(p => p.id === projectId);
+    const req = targetProject?.material_requests.find(r => r.id === requestId);
+    const statusLabel =
+      status === 'approved_ordered'
+        ? 'อนุมัติ / สั่งซื้อของเพิ่มให้หน้างานแล้ว'
+        : status === 'fulfilled'
+          ? 'จัดส่งของเบิกเพิ่มเข้าไซต์งานแล้ว'
+          : 'รอดำเนินการ';
+
+    const entry = makeLog(
+      `อัปเดตคำขอเบิกหน้างาน: ${statusLabel}`,
+      actorName,
+      actor?.role,
+      req ? `${req.item_name} x${req.qty} (ขอโดย ${req.requested_by})` : undefined
+    );
+
+    setProjects(prev =>
+      prev.map(p =>
+        p.id === projectId
+          ? {
+              ...p,
+              material_requests: p.material_requests.map(r =>
+                r.id === requestId ? { ...r, status } : r
+              ),
+              updated_at: now,
+              activity_logs: appendLog(p.activity_logs, entry)
+            }
+          : p
+      )
+    );
+  };
+
+  const completeProjectHandover = (
+    projectId: string,
+    payload: {
+      note?: string;
+      photo_urls?: string[];
+    }
+  ) => {
+    const now = new Date().toISOString();
+    const actor = currentUserRef.current;
+    const techName = actor?.name || 'ช่าง Onsite';
+    const entry = makeLog(
+      'ส่งมอบปิดโปรเจกต์เสร็จสมบูรณ์ (Final Handover)',
+      techName,
+      actor?.role || 'onsite',
+      `${payload.note || 'ลูกค้าตรวจรับงานติดตั้งเรียบร้อย 100%'}${payload.photo_urls && payload.photo_urls.length > 0 ? ` | รูปส่งมอบ ${payload.photo_urls.length} รูป` : ''}`
+    );
+
+    setProjects(prev =>
+      prev.map(p =>
+        p.id === projectId
+          ? {
+              ...p,
+              status: 'completed',
+              completed_at: now,
+              handover_note: payload.note?.trim() || 'ส่งมอบปิดโปรเจกต์เรียบร้อย',
+              handover_photo_urls: payload.photo_urls || [],
+              daily_logs: [
+                ...(p.daily_logs || []),
+                {
+                  id: `dlog-handover-${Date.now()}`,
+                  date: now.split('T')[0],
+                  tech_name: techName,
+                  progress_percent: 100,
+                  note: `[ส่งมอบปิดโปรเจกต์] ${payload.note?.trim() || 'ติดตั้งและส่งมอบงานครบถ้วน 100%'}`,
+                  photo_urls: payload.photo_urls || []
+                }
+              ],
+              updated_at: now,
+              activity_logs: appendLog(p.activity_logs, entry)
+            }
+          : p
+      )
+    );
+
+    setItems(prev =>
+      prev.map(it =>
+        it.project_id === projectId && it.status !== 'pending_prep' && it.status !== 'raw_stock'
+          ? {
+              ...it,
+              status: 'delivered' as const,
+              delivered_at: it.delivered_at || now,
+              photo_urls: payload.photo_urls && payload.photo_urls.length > 0 ? payload.photo_urls : it.photo_urls,
+              activity_logs: appendLog(it.activity_logs, entry)
+            }
+          : it
+      )
+    );
   };
 
   return (
@@ -2280,12 +3617,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       logout,
       users,
       addUser,
+      updateUser,
       deleteUser,
+      markOrderBilled,
+      markProjectBilled,
       orders,
       items,
       repairTickets,
       products,
       stockPOs,
+      projects,
+      createProject,
+      addProjectAddonItems,
+      releaseProjectBatch,
+      prepFinishProjectEquipment,
+      addProjectDailyLog,
+      createProjectMaterialRequest,
+      updateProjectMaterialRequestStatus,
+      completeProjectHandover,
       addProduct,
       updateProduct,
       deleteProduct,
@@ -2303,10 +3652,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       acceptPrepTask,
       prepFinishToStock,
       prepFinishToReadyStock,
+      prepFinishLogoToStageB,
       prepFinishAndDispatch,
       applyVoidAndDispatch,
       prepInboundStock,
       prepOutboundDispatch,
+      reportItemDOA,
+      markDoaSentToSupplier,
+      receiveDoaReplacement,
       assignOnsite,
       assignRepairTicketOnsite,
       acceptOnsiteJob,
@@ -2318,6 +3671,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       closeRepairTicket,
       queueRepairTicketForDispatch,
       updateOrderDeliveryDate,
+      updateOrderRoute,
+      confirmCustomerPickup,
       updateRepairTicketDueDate,
       selfPickupRepairTicket,
       dispatchRepairReturnOnsite,

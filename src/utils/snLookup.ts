@@ -2,6 +2,7 @@ import {
   ActivityLog,
   Item,
   Order,
+  Project,
   REPAIR_LIFECYCLE_META,
   RepairTicket,
   StockPO,
@@ -44,7 +45,7 @@ export interface LiveRepairSummary {
 
 export interface SnSearchMatch {
   id: string;
-  matchKind: 'item' | 'order' | 'repair';
+  matchKind: 'item' | 'order' | 'repair' | 'project';
   primarySn: string;
   replacementSn: string | null;
   matchedViaReplacementSn: boolean;
@@ -57,6 +58,7 @@ export interface SnSearchMatch {
   ticketNo: string | null;
   item: Item | null;
   order: Order | null;
+  project?: Project | null;
   linkedRepairs: RepairTicket[];
   liveStatus: LiveResolvedStatus;
   deliveryStatus: LiveResolvedStatus | null;
@@ -395,6 +397,45 @@ export function resolveDeliveryStatus(
           latestAction: itemLog?.action || 'ซ่อมเสร็จรอส่งคืน',
           detail: null,
         };
+      case 'doa_reported':
+        return {
+          code: item.status,
+          label: 'แจ้งเคลม DOA กลับจัดซื้อ',
+          tone: 'rose',
+          isCompleted: false,
+          completedAt: null,
+          completedBy: null,
+          latestTimestamp: item.doa_reported_at || ts,
+          latestActor: item.doa_reported_by || actor,
+          latestAction: itemLog?.action || 'พบของเสีย DOA แจ้งกลับฝ่ายจัดซื้อ',
+          detail: item.doa_reason || null,
+        };
+      case 'doa_sent_supplier':
+        return {
+          code: item.status,
+          label: 'ส่งเคลม Supplier แล้ว',
+          tone: 'amber',
+          isCompleted: false,
+          completedAt: null,
+          completedBy: null,
+          latestTimestamp: item.doa_sent_date || ts,
+          latestActor: actor,
+          latestAction: itemLog?.action || 'ส่งเคลม Supplier แล้ว',
+          detail: item.doa_rma_no ? `RMA: ${item.doa_rma_no}` : null,
+        };
+      case 'doa_replaced':
+        return {
+          code: item.status,
+          label: 'รับตัวใหม่จาก Supplier แล้ว',
+          tone: 'emerald',
+          isCompleted: true,
+          completedAt: item.doa_replaced_at || ts,
+          completedBy: actor,
+          latestTimestamp: item.doa_replaced_at || ts,
+          latestActor: actor,
+          latestAction: itemLog?.action || 'รับตัวใหม่จาก Supplier แล้ว',
+          detail: null,
+        };
     }
   }
 
@@ -463,7 +504,8 @@ export function searchSnRecords(
   rawQuery: string,
   items: Item[],
   orders: Order[],
-  repairTickets: RepairTicket[]
+  repairTickets: RepairTicket[],
+  projects: Project[] = []
 ): SnSearchMatch[] {
   const q = rawQuery.trim().toLowerCase();
   if (!q) return [];
@@ -471,13 +513,17 @@ export function searchSnRecords(
   const matches: SnSearchMatch[] = [];
   const coveredOrderIds = new Set<string>();
   const coveredRepairIds = new Set<string>();
+  const coveredProjectIds = new Set<string>();
 
-  // 1) Match Items by serial_number, or by their parent Order's bill_no / sales_ref, or linked repair ticket/replacement_sn
+  // 1) Match Items by serial_number, or by their parent Order's bill_no / sales_ref, or Project id/site_name, or linked repair ticket/replacement_sn
   items.forEach((item) => {
     const sn = (item.serial_number || '').trim().toLowerCase();
     const order = item.order_id ? orders.find((o) => o.id === item.order_id) || null : null;
+    const project = item.project_id ? projects.find((p) => p.id === item.project_id) || null : null;
     const bill = (order?.bill_no || '').trim().toLowerCase();
     const so = (order?.sales_ref || '').trim().toLowerCase();
+    const prjId = (project?.id || item.project_id || '').trim().toLowerCase();
+    const prjSite = (project?.site_name || '').trim().toLowerCase();
     const linkedRepairs = findLinkedRepairsForItem(item, repairTickets);
 
     const matchedReplacement = linkedRepairs.some(
@@ -493,44 +539,126 @@ export function searchSnRecords(
       (sn && sn.includes(q)) ||
       (bill && bill.includes(q)) ||
       (so && so.includes(q)) ||
+      (prjId && prjId.includes(q)) ||
+      (prjSite && prjSite.includes(q)) ||
       matchedReplacement ||
       matchedRepairTicket;
 
     if (!isMatch) return;
 
     if (order) coveredOrderIds.add(order.id);
+    if (project) coveredProjectIds.add(project.id);
     linkedRepairs.forEach((t) => coveredRepairIds.add(t.id));
 
     const replacementSn =
       linkedRepairs.find((t) => t.replacement_sn)?.replacement_sn || null;
 
     const warranty = item.serial_number
-      ? lookupWarrantyBySerial(item.serial_number, items, orders)
-      : lookupWarrantyBySerial(replacementSn, items, orders);
+      ? lookupWarrantyBySerial(item.serial_number, items, orders, projects)
+      : lookupWarrantyBySerial(replacementSn, items, orders, projects);
+
+    const resolvedStatus = project && project.status === 'completed'
+      ? {
+          code: 'completed',
+          label: 'ส่งมอบปิดโปรเจกต์แล้ว',
+          tone: 'emerald' as LiveStatusTone,
+          isCompleted: true,
+          completedAt: project.completed_at || project.updated_at || item.delivered_at || null,
+          completedBy: project.assigned_techs?.[0] || item.assigned_onsite_tech || null,
+          latestTimestamp: project.completed_at || project.updated_at || item.updated_at || item.created_at,
+          latestActor: project.assigned_techs?.[0] || item.assigned_onsite_tech || null,
+          latestAction: 'ส่งมอบปิดโปรเจกต์เสร็จสิ้น',
+          detail: `${project.id} • ${project.site_name}`,
+        }
+      : resolveDeliveryStatus(item, order);
 
     matches.push({
       id: `item-${item.id}`,
       matchKind: 'item',
-      primarySn: item.serial_number || replacementSn || order?.bill_no || order?.sales_ref || item.id,
+      primarySn: item.serial_number || replacementSn || project?.id || order?.bill_no || order?.sales_ref || item.id,
       replacementSn,
       matchedViaReplacementSn: matchedReplacement && !(sn && sn.includes(q)),
-      modelName: item.model_name,
+      modelName: project ? `${item.model_name} (${project.site_name})` : item.model_name,
       customerName:
         order?.customer_name ||
+        (project ? `${project.customer_name} • ${project.site_name}` : null) ||
         linkedRepairs[0]?.customer_name ||
         (item.status === 'in_stock' || item.status === 'raw_stock' ? 'สต๊อกร้าน BossComputech' : '-'),
-      customerPhone: order?.customer_phone || linkedRepairs[0]?.customer_phone || null,
-      refNo: order?.bill_no || order?.sales_ref || linkedRepairs[0]?.ticket_no || null,
-      billNo: order?.bill_no || null,
-      salesRef: order?.sales_ref || null,
+      customerPhone: order?.customer_phone || project?.phone || linkedRepairs[0]?.customer_phone || null,
+      refNo: project?.id || order?.bill_no || order?.sales_ref || linkedRepairs[0]?.ticket_no || null,
+      billNo: order?.bill_no || project?.id || null,
+      salesRef: order?.sales_ref || project?.id || null,
       ticketNo: linkedRepairs[0]?.ticket_no || null,
       item,
       order,
+      project,
       linkedRepairs,
-      liveStatus: resolveDeliveryStatus(item, order),
-      deliveryStatus: resolveDeliveryStatus(item, order),
+      liveStatus: resolvedStatus,
+      deliveryStatus: resolvedStatus,
       repairSummary: resolveRepairStatus(linkedRepairs),
       warranty,
+    });
+  });
+
+  // 1.5) Match Projects directly by PRJ-..., site_name, customer_name, or serial_numbers in project.items
+  projects.forEach((project) => {
+    const prjId = (project.id || '').trim().toLowerCase();
+    const prjSite = (project.site_name || '').trim().toLowerCase();
+    const prjCust = (project.customer_name || '').trim().toLowerCase();
+    const allPrjSns = (project.items || []).flatMap((pi) => pi.serial_numbers || []);
+    const matchedSn = allPrjSns.find((s) => s.toLowerCase().includes(q));
+    if (
+      coveredProjectIds.has(project.id) &&
+      (!matchedSn || items.some((it) => (it.serial_number || '').toLowerCase() === matchedSn.toLowerCase()))
+    ) {
+      return;
+    }
+    if (!prjId.includes(q) && !prjSite.includes(q) && !prjCust.includes(q) && !matchedSn) return;
+
+    const latestDaily = project.daily_logs?.[project.daily_logs.length - 1];
+    const prjLog = getLatestLog(project.activity_logs);
+    const isCompleted = project.status === 'completed';
+    const liveStatus: LiveResolvedStatus = {
+      code: project.status,
+      label:
+        project.status === 'completed'
+          ? 'ส่งมอบปิดโปรเจกต์แล้ว'
+          : project.status === 'handover_pending'
+            ? 'รอส่งมอบปิดโปรเจกต์'
+            : project.status === 'in_progress'
+              ? `กำลังติดตั้งหน้างาน (${latestDaily?.progress_percent ?? 0}%)`
+              : 'วางแผนโปรเจกต์ / รอเบิกของ',
+      tone: isCompleted ? 'emerald' : project.status === 'in_progress' ? 'purple' : 'amber',
+      isCompleted,
+      completedAt: isCompleted ? (project.completed_at || project.updated_at || project.created_at) : null,
+      completedBy: isCompleted ? (project.assigned_techs?.join(', ') || project.created_by) : null,
+      latestTimestamp: prjLog?.timestamp || project.updated_at || project.created_at,
+      latestActor: prjLog?.actor || project.created_by,
+      latestAction: prjLog?.action || project.site_name,
+      detail: `${project.id} • ${project.site_name}`,
+    };
+
+    matches.push({
+      id: `project-${project.id}`,
+      matchKind: 'project',
+      primarySn: matchedSn || project.id,
+      replacementSn: null,
+      matchedViaReplacementSn: false,
+      modelName: `${project.site_name} (${project.items.length} รายการ)`,
+      customerName: project.customer_name,
+      customerPhone: project.phone || null,
+      refNo: project.id,
+      billNo: project.id,
+      salesRef: project.id,
+      ticketNo: null,
+      item: null,
+      order: null,
+      project,
+      linkedRepairs: [],
+      liveStatus,
+      deliveryStatus: liveStatus,
+      repairSummary: null,
+      warranty: lookupWarrantyBySerial(matchedSn || null, items, orders, projects),
     });
   });
 
@@ -565,7 +693,7 @@ export function searchSnRecords(
       liveStatus: resolveDeliveryStatus(null, order),
       deliveryStatus: resolveDeliveryStatus(null, order),
       repairSummary: null,
-      warranty: lookupWarrantyBySerial(null, items, orders),
+      warranty: lookupWarrantyBySerial(null, items, orders, projects),
     });
   });
 
@@ -605,7 +733,7 @@ export function searchSnRecords(
       liveStatus: repSummary.status,
       deliveryStatus: null,
       repairSummary: repSummary,
-      warranty: lookupWarrantyBySerial(warrantySn, items, orders),
+      warranty: lookupWarrantyBySerial(warrantySn, items, orders, projects),
     });
   });
 
@@ -623,9 +751,26 @@ export function searchSnRecords(
 export function buildCombinedTimeline(
   item: Item | null,
   order: Order | null,
-  linkedRepairs: RepairTicket[]
+  linkedRepairs: RepairTicket[],
+  project?: Project | null
 ): TimelineEntryWithSource[] {
   const raw: TimelineEntryWithSource[] = [];
+
+  if (project) {
+    (project.activity_logs || []).forEach((log) =>
+      raw.push({ ...log, source: `โปรเจกต์ ${project.id}` })
+    );
+    (project.daily_logs || []).forEach((dlog) =>
+      raw.push({
+        timestamp: `${dlog.date}T17:00:00.000Z`,
+        action: `บันทึกหน้างานรายวัน (คืบหน้า ${dlog.progress_percent}%)`,
+        actor: dlog.tech_name,
+        role: 'onsite',
+        note: dlog.note,
+        source: `ไซต์งาน ${project.id}`,
+      })
+    );
+  }
 
   if (order) {
     (order.activity_logs || []).forEach((log) =>
@@ -719,8 +864,42 @@ export function buildCombinedTimeline(
 export function computeFinancialSummary(
   item: Item | null,
   order: Order | null,
-  linkedRepairs: RepairTicket[]
+  linkedRepairs: RepairTicket[],
+  project?: Project | null
 ): FinancialSummary {
+  if (project && !order) {
+    const prjItems = project.items || [];
+    const matchedPrjItem = item
+      ? prjItems.find((pi) => pi.id === item.project_item_id || pi.model_name === item.model_name) || prjItems[0]
+      : prjItems[0];
+    const unitCost = matchedPrjItem?.unit_cost ?? item?.unit_cost ?? 0;
+    const unitPrice = matchedPrjItem?.unit_price ?? 0;
+    const unitGp = unitPrice - unitCost;
+
+    const orderRevenue = prjItems.reduce((sum, pi) => sum + (pi.unit_price || 0) * (pi.qty_required || 0), 0);
+    const orderItemCost = prjItems.reduce((sum, pi) => sum + (pi.unit_cost || 0) * (pi.qty_required || 0), 0);
+    const orderTotalCost = orderItemCost;
+    const orderGp = orderRevenue - orderTotalCost;
+    const orderGpPct = orderRevenue > 0 ? (orderGp / orderRevenue) * 100 : 0;
+    const repairCostTotal = linkedRepairs.reduce((sum, t) => sum + (t.repair_cost || 0), 0);
+
+    return {
+      hasOrder: true,
+      hasUnitCost: unitCost > 0 || orderTotalCost > 0,
+      unitCost,
+      unitPrice,
+      unitGp,
+      orderRevenue,
+      orderItemCost,
+      extraCost: 0,
+      orderTotalCost,
+      orderGp,
+      orderGpPct,
+      repairCostTotal,
+      quantity: matchedPrjItem?.qty_required || 1,
+    };
+  }
+
   const orderItems = order?.items_list || [];
   const matchedOrderItem = item
     ? orderItems.find((oi) => oi.model_name === item.model_name) || orderItems[0]
@@ -1067,12 +1246,14 @@ export function lookupPurchaseBySn(
     };
   }
 
-  // 2) Exact match on RMA replacement_sn or previous repair ticket walkin_sn
-  const matchedTicket = repairTickets.find(
-    (t) =>
-      (t.replacement_sn || '').trim().toLowerCase() === norm ||
-      (t.walkin_sn || '').trim().toLowerCase() === norm
-  );
+  // 2) Exact match on RMA replacement_sn or previous repair ticket walkin_sn (latest ticket first)
+  const matchedTicket = [...repairTickets]
+    .sort((a, b) => new Date(b.received_at || b.created_at || 0).getTime() - new Date(a.received_at || a.created_at || 0).getTime())
+    .find(
+      (t) =>
+        (t.replacement_sn || '').trim().toLowerCase() === norm ||
+        (t.walkin_sn || '').trim().toLowerCase() === norm
+    );
 
   if (matchedTicket) {
     const isRepl = (matchedTicket.replacement_sn || '').trim().toLowerCase() === norm;

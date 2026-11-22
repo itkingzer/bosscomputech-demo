@@ -1,20 +1,23 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from '../context/AppContext';
+import { ToastBanner } from './ui/ToastBanner';
 import {
   FilePlus2, Send, ListOrdered, CheckCircle, Plus,
   Sparkles, Layers, Trash2, Calendar, CreditCard,
   FileText, Truck, Search, Filter, ShoppingBag, X, Check,
   UserCheck, Pencil, Lock, TrendingUp, AlertTriangle, ShieldCheck,
-  Receipt, Package
+  Receipt, Package, Printer
 } from 'lucide-react';
 import {
   ROUTE_DEFINITIONS, getRouteByDistrict, RouteCode, BillType, PaymentTerm, DeliveryMode, OrderItem,
   Product, ProductCategory, ProductUnit, PRODUCT_CATEGORY_LABELS, PRODUCT_UNIT_OPTIONS,
-  WARRANTY_PRESET_YEARS, formatWarrantyDuration, formatDateDMY, formatThaiDateTime, Order
+  WARRANTY_PRESET_YEARS, formatWarrantyDuration, formatDateDMY, formatThaiDateTime, Order,
+  Project, ProjectItemType
 } from '../types';
 import { ListControls, useListControls } from './ListControls';
 import { ActivityTimeline, LatestUpdateBadge } from './ActivityTimeline';
+import { OrderFormPrintModal } from './OrderFormPrintModal';
 
 const DISTRICT_OPTIONS = [
   // สาย 1 (โซนเหนือ)
@@ -86,7 +89,10 @@ const DELIVERY_MODE_META: Record<DeliveryMode, { label: string; cls: string }> =
 };
 
 export const SalesView: React.FC = () => {
-  const { orders, createOrder, currentUser, products, addProduct, updateProduct, deleteProduct, items } = useApp();
+  const {
+    orders, createOrder, currentUser, users, products, addProduct, updateProduct, deleteProduct, items,
+    projects, createProject, addProjectAddonItems
+  } = useApp();
 
   // ชื่อพนักงานขายที่ล็อกอินอยู่ (auto-tag ลงทุกออเดอร์ ไม่ต้องเลือกเอง)
   const salespersonName = currentUser?.name || 'ไม่ระบุตัวตน';
@@ -113,10 +119,80 @@ export const SalesView: React.FC = () => {
   // Multi-item Order List on White Sheet
   const [orderItems, setOrderItems] = useState<OrderItem[]>([]);
 
-  // Modal State: Create Order Modal + Catalog Modal + Order Detail Modal
+  // Modal State: Create Order Modal + Catalog Modal + Order Detail Modal + Project Modals
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isCatalogModalOpen, setIsCatalogModalOpen] = useState(false);
+  const [catalogTarget, setCatalogTarget] = useState<'order' | 'project_equipment' | 'project_consumable' | 'addon'>('order');
   const [detailOrder, setDetailOrder] = useState<Order | null>(null);
+  const [printTarget, setPrintTarget] = useState<{ order?: Order | null; project?: Project | null } | null>(null);
+
+  // ---- Project & Site Installation (PRJ-...) State ----
+  const [isCreateProjectOpen, setIsCreateProjectOpen] = useState(false);
+  const [detailProjectId, setDetailProjectId] = useState<string | null>(null);
+  const [addonProjectId, setAddonProjectId] = useState<string | null>(null);
+
+  // Create Project Form State
+  const [prjCode, setPrjCode] = useState(() => `PRJ-${new Date().getFullYear()}-${String(Math.floor(100 + Math.random() * 900))}`);
+  const [prjSiteName, setPrjSiteName] = useState('');
+  const [prjCustomerName, setPrjCustomerName] = useState('');
+  const [prjPhone, setPrjPhone] = useState('');
+  const [prjDistrict, setPrjDistrict] = useState('เมืองสุราษฎร์ธานี');
+  const [prjLocation, setPrjLocation] = useState('');
+  const [prjStartDate, setPrjStartDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [prjDueDate, setPrjDueDate] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 7);
+    return d.toISOString().split('T')[0];
+  });
+  const [prjAssignedTechs, setPrjAssignedTechs] = useState<string[]>(['ช่างซี']);
+  const [prjItems, setPrjItems] = useState<{
+    product_id?: string;
+    model_name: string;
+    item_type: ProjectItemType;
+    unit: ProductUnit;
+    qty_required: number;
+    unit_cost: number;
+    unit_price: number;
+    warranty_years: number;
+  }[]>([]);
+  const [prjDraftItemType, setPrjDraftItemType] = useState<ProjectItemType>('equipment');
+  const [prjDraftProductId, setPrjDraftProductId] = useState('');
+  const [prjDraftModel, setPrjDraftModel] = useState('');
+  const [prjDraftQty, setPrjDraftQty] = useState(1);
+  const [prjDraftCost, setPrjDraftCost] = useState(0);
+  const [prjDraftPrice, setPrjDraftPrice] = useState(0);
+  const [prjDraftWarranty, setPrjDraftWarranty] = useState(1);
+
+  // Add-On Modal Form State (Multi-Sales Add-On Attribution — supports multiple items at once)
+  const [addonAddedBy, setAddonAddedBy] = useState('');
+  const [addonItems, setAddonItems] = useState<{
+    product_id?: string;
+    model_name: string;
+    item_type: ProjectItemType;
+    unit: ProductUnit;
+    qty_required: number;
+    unit_cost: number;
+    unit_price: number;
+    warranty_years: number;
+  }[]>([]);
+  const [addonNote, setAddonNote] = useState('');
+
+  const detailProject = useMemo(
+    () => (detailProjectId ? projects.find(p => p.id === detailProjectId) || null : null),
+    [projects, detailProjectId]
+  );
+  const addonProject = useMemo(
+    () => (addonProjectId ? projects.find(p => p.id === addonProjectId) || null : null),
+    [projects, addonProjectId]
+  );
+  const salesUsersList = useMemo(
+    () => users.filter(u => (u.role === 'sales' || u.role === 'admin') && u.is_active !== false),
+    [users]
+  );
+  const onsiteUsersList = useMemo(
+    () => users.filter(u => u.role === 'onsite' && u.is_active !== false),
+    [users]
+  );
   const [searchQuery, setSearchQuery] = useState('');
   const [showCustomerSuggestions, setShowCustomerSuggestions] = useState(false);
   const [autoFilledCustomer, setAutoFilledCustomer] = useState<string | null>(null);
@@ -216,7 +292,7 @@ export const SalesView: React.FC = () => {
   const routeMeta = ROUTE_DEFINITIONS[currentRouteCode];
 
   // Lock background scroll while any modal is open
-  const anyModalOpen = isCreateModalOpen || isCatalogModalOpen || !!detailOrder;
+  const anyModalOpen = isCreateModalOpen || isCatalogModalOpen || !!detailOrder || isCreateProjectOpen || !!detailProject || !!addonProject;
   useEffect(() => {
     if (!anyModalOpen) return;
 
@@ -247,19 +323,26 @@ export const SalesView: React.FC = () => {
     setDistrict('เมืองสุราษฎร์ธานี');
     setProvinceCustom('');
     setDeliveryLoc('');
+    setDeliveryDate('');
+    setBillType('tax_invoice');
+    setPaymentTerm('cash');
+    setDeliveryMode('install');
     setSiteNotes('');
     setExtraJobCost(0);
     setOrderItems([]);
+    setAutoFilledCustomer(null);
+    setShowCustomerSuggestions(false);
     setIsCreateModalOpen(true);
   };
 
   const handleCloseCreateModal = () => setIsCreateModalOpen(false);
 
   // Open Catalog Modal
-  const handleOpenCatalogModal = () => {
+  const handleOpenCatalogModal = (target: 'order' | 'project_equipment' | 'project_consumable' | 'addon' = 'order') => {
+    setCatalogTarget(target);
     setModalSelectedMap({});
     setSearchQuery('');
-    setCategoryFilter('all');
+    setCategoryFilter(target === 'project_consumable' ? 'service' : 'all');
     setSortBy('stock_desc');
     setIsAddingNewToCatalog(false);
     setEditingProductId(null);
@@ -349,11 +432,66 @@ export const SalesView: React.FC = () => {
     }
   };
 
-  // Confirm selected items from Modal back to Order Form
+  // Confirm selected items from Modal back to Order / Project / Add-On Form
   const handleConfirmModalSelection = () => {
     const selectedIds = Object.keys(modalSelectedMap);
     if (selectedIds.length === 0) {
       alert('กรุณาติ๊กเลือกสินค้าหรือบริการอย่างน้อย 1 รายการ');
+      return;
+    }
+
+    if (catalogTarget === 'project_equipment' || catalogTarget === 'project_consumable') {
+      const targetType: ProjectItemType = catalogTarget === 'project_equipment' ? 'equipment' : 'consumable';
+      const newPrjItems = selectedIds
+        .map(id => {
+          const catItem = products.find(c => c.id === id);
+          if (!catItem) return null;
+          return {
+            product_id: catItem.id,
+            model_name: catItem.name,
+            item_type: targetType,
+            unit: catItem.unit,
+            qty_required: modalSelectedMap[id] || 1,
+            unit_cost: catItem.cost_price,
+            unit_price: catItem.sell_price,
+            warranty_years: targetType === 'equipment' ? 1 : 0
+          };
+        })
+        .filter((x): x is NonNullable<typeof x> => x !== null);
+
+      setPrjItems(prev => [...prev, ...newPrjItems]);
+      setIsCatalogModalOpen(false);
+      setToast(`เพิ่ม ${newPrjItems.length} รายการเข้าโปรเจกต์เรียบร้อยแล้ว`);
+      setTimeout(() => setToast(''), 3500);
+      return;
+    }
+
+    if (catalogTarget === 'addon') {
+      const pickedAddons = selectedIds
+        .map(id => {
+          const catItem = products.find(c => c.id === id);
+          if (!catItem) return null;
+          const inferredType: ProjectItemType =
+            catItem.item_type === 'service' || /สายสัญญาณ|ท่อ|ค่าบริการ|ค่าแรง/.test(catItem.name)
+              ? 'consumable'
+              : 'equipment';
+          return {
+            product_id: catItem.id,
+            model_name: catItem.name,
+            item_type: inferredType,
+            unit: catItem.unit,
+            qty_required: modalSelectedMap[id] || 1,
+            unit_cost: catItem.cost_price,
+            unit_price: catItem.sell_price,
+            warranty_years: inferredType === 'equipment' ? 1 : 0
+          };
+        })
+        .filter((x): x is NonNullable<typeof x> => x !== null);
+
+      setAddonItems(prev => [...prev, ...pickedAddons]);
+      setIsCatalogModalOpen(false);
+      setToast(`เพิ่ม ${pickedAddons.length} รายการเข้าชุด Add-on แล้ว`);
+      setTimeout(() => setToast(''), 3000);
       return;
     }
 
@@ -520,22 +658,25 @@ export const SalesView: React.FC = () => {
     }
   }, [filteredCatalogBase, stockByName, sortBy]);
 
+  // Filter orders by search (customer / ref) BEFORE pagination
+  const filteredOrders = useMemo(() => {
+    const q = orderSearch.trim().toLowerCase();
+    if (!q) return orders;
+    return orders.filter(o =>
+      (o.customer_name || '').toLowerCase().includes(q) ||
+      (o.sales_ref || '').toLowerCase().includes(q) ||
+      (o.bill_no || '').toLowerCase().includes(q)
+    );
+  }, [orders, orderSearch]);
+
   // Sort + pagination สำหรับการ์ดติดตามออเดอร์
-  const ordersList = useListControls(orders, {
+  const ordersList = useListControls(filteredOrders, {
     getDate: (o) => o.created_at,
     getValue: (o) => (o.items_list || []).reduce((s, it) => s + (it.unit_price || 0) * it.quantity, 0),
     initialSort: 'newest',
   });
 
-  // Filter orders by search (customer / ref)
-  const searchedOrders = useMemo(() => {
-    const q = orderSearch.trim().toLowerCase();
-    if (!q) return ordersList.pageItems;
-    return ordersList.pageItems.filter(o =>
-      (o.customer_name || '').toLowerCase().includes(q) ||
-      (o.sales_ref || '').toLowerCase().includes(q)
-    );
-  }, [ordersList.pageItems, orderSearch]);
+  const searchedOrders = ordersList.pageItems;
 
   const selectedCount = Object.keys(modalSelectedMap).length;
   const modalTotalAmount = Object.keys(modalSelectedMap).reduce((sum, id) => {
@@ -543,6 +684,7 @@ export const SalesView: React.FC = () => {
     const qty = modalSelectedMap[id] || 1;
     return sum + (item ? item.sell_price * qty : 0);
   }, 0);
+  void modalTotalAmount;
 
   // Live Order Financials (INTERNAL ONLY)
   const financials = useMemo(() => {
@@ -556,21 +698,191 @@ export const SalesView: React.FC = () => {
     return { revenue, itemCost, totalCost, gp, marginPct, belowCost, lowMargin };
   }, [orderItems, extraJobCost]);
 
-  // KPI Summary
+  // KPI Summary (รวมทั้งบิลขาย SO และงานโปรเจกต์ PRJ)
   const kpi = useMemo(() => {
-    const totalRevenue = orders.reduce((s, o) => s + orderTotal(o), 0);
-    const totalGp = orders.reduce((s, o) => s + orderGp(o), 0);
-    return { count: orders.length, totalRevenue, totalGp };
-  }, [orders]);
+    const orderRev = orders.reduce((s, o) => s + orderTotal(o), 0);
+    const orderGross = orders.reduce((s, o) => s + orderGp(o), 0);
+    const prjRev = projects.reduce(
+      (s, p) => s + (p.items || []).reduce((acc, it) => acc + (it.unit_price || 0) * (it.qty_required || 0), 0),
+      0
+    );
+    const prjCost = projects.reduce(
+      (s, p) => s + (p.items || []).reduce((acc, it) => acc + (it.unit_cost || 0) * (it.qty_required || 0), 0),
+      0
+    );
+    return {
+      count: orders.length,
+      projectCount: projects.length,
+      totalRevenue: orderRev + prjRev,
+      totalGp: orderGross + (prjRev - prjCost)
+    };
+  }, [orders, projects]);
+
+  const handleOpenCreateProjectModal = () => {
+    const currentYear = new Date().getFullYear();
+    const existingMax = projects.reduce((max, p) => {
+      const m = p.id.match(/^PRJ-\d{4}-(\d+)$/);
+      return m ? Math.max(max, parseInt(m[1], 10)) : max;
+    }, 0);
+    const nextNum = String(Math.max(projects.length, existingMax) + 1).padStart(3, '0');
+    setPrjCode(`PRJ-${currentYear}-${nextNum}`);
+    setPrjSiteName('');
+    setPrjCustomerName('');
+    setPrjPhone('');
+    setPrjDistrict('เมืองสุราษฎร์ธานี');
+    setPrjLocation('');
+    const todayIso = new Date().toISOString().split('T')[0];
+    const nextWeek = new Date();
+    nextWeek.setDate(nextWeek.getDate() + 7);
+    setPrjStartDate(todayIso);
+    setPrjDueDate(nextWeek.toISOString().split('T')[0]);
+    setPrjAssignedTechs(onsiteUsersList.length > 0 ? [onsiteUsersList[0].name] : []);
+    setPrjItems([]);
+    setPrjDraftItemType('equipment');
+    setPrjDraftProductId('');
+    setPrjDraftModel('');
+    setPrjDraftQty(1);
+    setPrjDraftCost(0);
+    setPrjDraftPrice(0);
+    setPrjDraftWarranty(1);
+    setIsCreateProjectOpen(true);
+  };
+
+  const handleSelectProjectCatalogProduct = (prodId: string, isAddonForm = false) => {
+    const found = products.find(p => p.id === prodId);
+    if (!found) return;
+    const inferredType: ProjectItemType =
+      found.item_type === 'service' || /สายสัญญาณ|ท่อ|ค่าบริการ|ค่าแรง/.test(found.name)
+        ? 'consumable'
+        : 'equipment';
+    if (isAddonForm) {
+      setAddonItems(prev => [
+        ...prev,
+        {
+          product_id: found.id,
+          model_name: found.name,
+          item_type: inferredType,
+          unit: found.unit,
+          qty_required: 1,
+          unit_cost: found.cost_price,
+          unit_price: found.sell_price,
+          warranty_years: inferredType === 'equipment' ? 1 : 0,
+        },
+      ]);
+    } else {
+      setPrjDraftProductId(found.id);
+      setPrjDraftModel(found.name);
+      setPrjDraftItemType(inferredType);
+      setPrjDraftCost(found.cost_price);
+      setPrjDraftPrice(found.sell_price);
+      setPrjDraftWarranty(inferredType === 'equipment' ? 1 : 0);
+    }
+  };
+
+  const handleAddDraftItemToProject = () => {
+    if (!prjDraftModel.trim()) {
+      alert('กรุณาเลือกหรือระบุชื่อรายการอุปกรณ์/วัสดุ');
+      return;
+    }
+    const catProd = products.find(p => p.id === prjDraftProductId);
+    setPrjItems(prev => [
+      ...prev,
+      {
+        product_id: prjDraftProductId || undefined,
+        model_name: prjDraftModel.trim(),
+        item_type: prjDraftItemType,
+        unit: catProd?.unit || (prjDraftItemType === 'consumable' ? 'รายการ' : 'เครื่อง'),
+        qty_required: Math.max(1, prjDraftQty),
+        unit_cost: Math.max(0, prjDraftCost),
+        unit_price: Math.max(0, prjDraftPrice),
+        warranty_years: prjDraftItemType === 'equipment' ? Math.max(0, prjDraftWarranty) : 0
+      }
+    ]);
+    setPrjDraftProductId('');
+    setPrjDraftModel('');
+    setPrjDraftQty(1);
+    setPrjDraftCost(0);
+    setPrjDraftPrice(0);
+  };
+
+  const handleSubmitCreateProject = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!prjSiteName.trim() || !prjCustomerName.trim() || prjItems.length === 0) {
+      alert('กรุณากรอกชื่อโครงการ ชื่อลูกค้า และเพิ่มรายการในโปรเจกต์อย่างน้อย 1 รายการ');
+      return;
+    }
+    const created = createProject({
+      id: prjCode,
+      site_name: prjSiteName,
+      customer_name: prjCustomerName,
+      phone: prjPhone,
+      location: prjLocation || `อ.${prjDistrict}`,
+      district: prjDistrict,
+      created_by: salespersonName,
+      start_date: prjStartDate,
+      due_date: prjDueDate,
+      assigned_techs: prjAssignedTechs,
+      items: prjItems
+    });
+    setIsCreateProjectOpen(false);
+    setToast(`เปิดโปรเจกต์ ${created.id} (${created.site_name}) เรียบร้อยแล้ว ส่งต่อจัดซื้อ & ทีมหน้างาน`);
+    setTimeout(() => setToast(''), 4500);
+  };
+
+  const handleOpenAddonModal = (prj: Project, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setAddonProjectId(prj.id);
+    setAddonAddedBy(currentUser?.name || salesUsersList[0]?.name || 'เซลล์บี');
+    setAddonItems([]);
+    setAddonNote('');
+  };
+
+  const handleSubmitAddon = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!addonProject || !addonAddedBy.trim() || addonItems.length === 0) {
+      alert('กรุณาระบุชื่อเซลล์ผู้แอดเพิ่ม และเลือกรายการสินค้า/วัสดุอย่างน้อย 1 รายการ');
+      return;
+    }
+    addProjectAddonItems(addonProject.id, {
+      added_by: addonAddedBy.trim(),
+      note: addonNote.trim() || undefined,
+      items: addonItems
+    });
+    const totalQty = addonItems.reduce((s, it) => s + it.qty_required, 0);
+    setToast(`แอดเพิ่ม ${addonItems.length} รายการ (รวม ${totalQty} ชิ้น) เข้าโปรเจกต์ ${addonProject.id} (โดย ${addonAddedBy}) เรียบร้อย`);
+    setAddonProjectId(null);
+    setTimeout(() => setToast(''), 4500);
+  };
+
+  const getProjectFinancials = (prj: Project) => {
+    const baseItems = (prj.items || []).filter(i => !i.is_addon);
+    const addonItems = (prj.items || []).filter(i => i.is_addon);
+    const baseRev = baseItems.reduce((s, i) => s + (i.unit_price || 0) * (i.qty_required || 0), 0);
+    const baseCost = baseItems.reduce((s, i) => s + (i.unit_cost || 0) * (i.qty_required || 0), 0);
+    const addonRev = addonItems.reduce((s, i) => s + (i.unit_price || 0) * (i.qty_required || 0), 0);
+    const addonCost = addonItems.reduce((s, i) => s + (i.unit_cost || 0) * (i.qty_required || 0), 0);
+    const totalRev = baseRev + addonRev;
+    const totalCost = baseCost + addonCost;
+    const totalGp = totalRev - totalCost;
+    return { baseItems, addonItems, baseRev, baseCost, addonRev, addonCost, totalRev, totalCost, totalGp };
+  };
+
+  const getProjectStatusBadge = (status: Project['status']) => {
+    switch (status) {
+      case 'planning':
+        return <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30 whitespace-nowrap">วางแผน / รอเบิกงวดแรก</span>;
+      case 'in_progress':
+        return <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-purple-500/15 text-purple-700 dark:text-purple-300 border border-purple-500/30 whitespace-nowrap">กำลังติดตั้งหน้างาน</span>;
+      case 'handover_pending':
+        return <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-cyan-500/15 text-cyan-700 dark:text-cyan-300 border border-cyan-500/30 whitespace-nowrap">รอส่งมอบปิดโปรเจกต์</span>;
+      case 'completed':
+        return <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 whitespace-nowrap">ส่งมอบปิดโปรเจกต์แล้ว</span>;
+    }
+  };
 
   return (
     <div className="space-y-6">
-      {toast && (
-        <div className="fixed bottom-6 right-6 z-[10001] p-4 rounded-2xl liquid-glass border border-[#FF6B00] text-white text-xs flex items-center gap-2 shadow-2xl animate-fade-in">
-          <CheckCircle className="w-4 h-4 text-[#FF6B00]" />
-          <span>{toast}</span>
-        </div>
-      )}
+      <ToastBanner message={toast} onClose={() => setToast('')} />
 
       {/* ================= TOP ACTION BAR + KPI ================= */}
       <div className="liquid-glass rounded-3xl p-5 sm:p-6 shadow-2xl border border-white/[0.08]">
@@ -585,7 +897,7 @@ export const SalesView: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 flex-wrap">
             <button
               type="button"
               onClick={handleOpenCreateModal}
@@ -596,7 +908,15 @@ export const SalesView: React.FC = () => {
             </button>
             <button
               type="button"
-              onClick={handleOpenCatalogModal}
+              onClick={handleOpenCreateProjectModal}
+              className="px-4 py-2.5 min-h-[44px] rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-extrabold text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-purple-500/25 border border-white/20 active:scale-[0.97]"
+            >
+              <Sparkles className="w-4 h-4" />
+              <span>เปิดงานรับเหมา / ติดตั้ง (Project Site)</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleOpenCatalogModal('order')}
               className="px-4 py-2.5 min-h-[44px] rounded-xl bg-white/[0.04] hover:bg-white/[0.08] text-slate-200 border border-white/[0.1] font-bold text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-2 active:scale-[0.97]"
             >
               <ShoppingBag className="w-4 h-4 text-[#FF6B00]" />
@@ -606,13 +926,20 @@ export const SalesView: React.FC = () => {
         </div>
 
         {/* KPI Pills */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-4">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4">
           <div className="px-3.5 py-2.5 rounded-xl bg-white/[0.03] border border-white/[0.08] flex items-center justify-between gap-2">
             <span className="text-[11px] text-slate-400 flex items-center gap-1.5">
               <ListOrdered className="w-3.5 h-3.5 text-blue-400" />
-              จำนวนบิลทั้งหมด
+              บิลขาย (SO)
             </span>
             <span className="text-base font-extrabold font-mono text-white tabular-nums">{fmt(kpi.count)}</span>
+          </div>
+          <div className="px-3.5 py-2.5 rounded-xl bg-purple-500/10 border border-purple-500/25 flex items-center justify-between gap-2">
+            <span className="text-[11px] text-slate-400 flex items-center gap-1.5">
+              <Layers className="w-3.5 h-3.5 text-purple-400" />
+              โปรเจกต์ (PRJ)
+            </span>
+            <span className="text-base font-extrabold font-mono text-purple-300 tabular-nums">{fmt(kpi.projectCount)}</span>
           </div>
           <div className="px-3.5 py-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-between gap-2">
             <span className="text-[11px] text-slate-400 flex items-center gap-1.5">
@@ -629,6 +956,134 @@ export const SalesView: React.FC = () => {
             <span className={`text-base font-extrabold font-mono tabular-nums ${kpi.totalGp >= 0 ? 'text-[#FF6B00]' : 'text-rose-400'}`}>฿{fmt(kpi.totalGp)}</span>
           </div>
         </div>
+      </div>
+
+      {/* ================= PROJECT & SITE INSTALLATION CARDS (PRJ-...) ================= */}
+      <div className="liquid-glass rounded-3xl p-5 sm:p-6 shadow-2xl border border-purple-500/30">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+          <div>
+            <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-purple-500 dark:text-purple-400" />
+              <span>งานรับเหมา / ติดตั้งระบบหน้างาน (Project Sites • PRJ-...)</span>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-purple-500/15 text-purple-700 dark:text-purple-300 border border-purple-500/30">
+                {projects.length} โปรเจกต์
+              </span>
+            </h3>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+              เซลล์ทุกคนสามารถกด <strong className="text-purple-700 dark:text-purple-300">"+ แอดรายการเพิ่มเข้าโปรเจกต์ (Add-on)"</strong> เพื่อขายพ่วงเข้าไซต์งานได้ตลอดเวลา
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleOpenCreateProjectModal}
+            className="px-3.5 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-md shadow-purple-500/20 active:scale-95"
+          >
+            <Plus className="w-4 h-4" />
+            <span>เปิดโปรเจกต์ใหม่ (PRJ)</span>
+          </button>
+        </div>
+
+        {projects.length === 0 ? (
+          <div className="text-center py-10 text-slate-500 border border-dashed border-slate-300 dark:border-white/[0.1] rounded-2xl text-xs">
+            ยังไม่มีงานโปรเจกต์รับเหมา / ติดตั้ง
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+            {projects.map((prj) => {
+              const fin = getProjectFinancials(prj);
+              const latestProgress = prj.daily_logs && prj.daily_logs.length > 0
+                ? prj.daily_logs[prj.daily_logs.length - 1].progress_percent
+                : 0;
+              const pendingFieldReqs = (prj.material_requests || []).filter(r => r.status === 'pending');
+              const addonSalesSet = Array.from(new Set(fin.addonItems.map(a => a.added_by).filter(Boolean)));
+
+              return (
+                <div
+                  key={prj.id}
+                  onClick={() => setDetailProjectId(prj.id)}
+                  className="p-4 rounded-2xl bg-white/80 dark:bg-white/[0.03] hover:bg-slate-50 dark:hover:bg-white/[0.06] border border-purple-200 dark:border-purple-500/25 hover:border-purple-400 dark:hover:border-purple-400/50 transition cursor-pointer flex flex-col justify-between gap-3"
+                >
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono font-extrabold text-sm text-purple-700 dark:text-purple-300">
+                          {prj.id}
+                        </span>
+                        <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-300 dark:bg-emerald-500/15 dark:text-emerald-300 dark:border-emerald-500/30">
+                          เปิดโดย {prj.created_by}
+                        </span>
+                      </div>
+                      {getProjectStatusBadge(prj.status)}
+                    </div>
+
+                    <div>
+                      <h4 className="text-sm font-extrabold text-slate-900 dark:text-white leading-snug">
+                        {prj.site_name}
+                      </h4>
+                      <p className="text-xs text-slate-600 dark:text-slate-300 mt-0.5">
+                        ลูกค้า: <strong className="text-slate-900 dark:text-white">{prj.customer_name}</strong> • {prj.location}
+                      </p>
+                    </div>
+
+                    {/* Add-on attribution badges + field material request alert */}
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 text-slate-800 border border-slate-300 dark:bg-white/[0.06] dark:text-slate-200 dark:border-white/[0.1]">
+                        งวดเบิก {prj.batches?.length || 0} งวด • คืบหน้า {latestProgress}%
+                      </span>
+                      {addonSalesSet.map((saleName) => (
+                        <span
+                          key={saleName}
+                          className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300 dark:bg-amber-500/20 dark:text-amber-300 dark:border-amber-500/35"
+                        >
+                          แอดเพิ่มโดย {saleName}
+                        </span>
+                      ))}
+                      {pendingFieldReqs.length > 0 && (
+                        <span className="px-2 py-0.5 rounded-md text-[10px] font-extrabold bg-rose-100 text-rose-900 border border-rose-300 dark:bg-rose-500/20 dark:text-rose-200 dark:border-rose-500/40 animate-pulse">
+                          ช่างขอเบิกเพิ่มหน้างาน {pendingFieldReqs.length} รายการ
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Base vs Add-on Subtotals */}
+                    <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-200 dark:border-white/[0.08] text-xs">
+                      <div className="p-2 rounded-xl bg-slate-100/80 dark:bg-white/[0.03] border border-slate-200 dark:border-white/[0.06]">
+                        <div className="text-[10px] text-slate-500 dark:text-slate-400">ยอดตั้งต้น</div>
+                        <div className="font-mono font-bold text-slate-900 dark:text-white">฿{fmt(fin.baseRev)}</div>
+                      </div>
+                      <div className="p-2 rounded-xl bg-purple-50 dark:bg-purple-500/10 border border-purple-200 dark:border-purple-500/25">
+                        <div className="text-[10px] text-purple-700 dark:text-purple-300">ยอดแอดเพิ่ม ({fin.addonItems.length})</div>
+                        <div className="font-mono font-bold text-purple-800 dark:text-purple-200">+฿{fmt(fin.addonRev)}</div>
+                      </div>
+                      <div className="p-2 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/25">
+                        <div className="text-[10px] text-emerald-700 dark:text-emerald-300">รวมสุทธิ (GP ฿{fmt(fin.totalGp)})</div>
+                        <div className="font-mono font-extrabold text-emerald-800 dark:text-emerald-300">฿{fmt(fin.totalRev)}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-200 dark:border-white/[0.08]">
+                    <button
+                      type="button"
+                      onClick={(e) => handleOpenAddonModal(prj, e)}
+                      className="flex-1 py-2 px-3 rounded-xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-sm active:scale-95"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>+ แอดรายการเพิ่มเข้าโปรเจกต์ (Add-on)</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDetailProjectId(prj.id)}
+                      className="py-2 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-white/[0.06] dark:hover:bg-white/[0.12] text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-white/[0.1] font-bold text-xs transition cursor-pointer"
+                    >
+                      ดูรายละเอียด
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* ================= COMPACT ORDER CARDS ================= */}
@@ -992,7 +1447,7 @@ export const SalesView: React.FC = () => {
                   </label>
                   <button
                     type="button"
-                    onClick={handleOpenCatalogModal}
+                    onClick={() => handleOpenCatalogModal('order')}
                     className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#FF6B00]/15 hover:bg-[#FF6B00]/25 border border-[#FF6B00]/40 text-[#C2410C] dark:text-[#FF6B00] text-[11px] font-bold transition active:scale-[0.97] cursor-pointer"
                   >
                     <Layers className="w-3.5 h-3.5" />
@@ -1129,7 +1584,7 @@ export const SalesView: React.FC = () => {
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
                   <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700">
                     <p className="text-[10px] text-slate-500 dark:text-slate-400 mb-0.5">ยอดขายรวม (Revenue)</p>
-                    <p className="text-sm font-extrabold text-slate-900 dark:text-white font-mono tabular-nums">฿{modalTotalAmount.toLocaleString('th-TH', { maximumFractionDigits: 0 })}</p>
+                    <p className="text-sm font-extrabold text-slate-900 dark:text-white font-mono tabular-nums">฿{financials.revenue.toLocaleString('th-TH', { maximumFractionDigits: 0 })}</p>
                   </div>
                   <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700">
                     <p className="text-[10px] text-slate-500 dark:text-slate-400 mb-0.5">ต้นทุนรวม (Cost)</p>
@@ -1184,10 +1639,10 @@ export const SalesView: React.FC = () => {
       )}
 
       {/* ========================================================================= */}
-      {/* PRODUCT CATALOG MODAL (nested, z-[10000])                                  */}
+      {/* PRODUCT CATALOG MODAL (nested, z-[10001])                                  */}
       {/* ========================================================================= */}
       {isCatalogModalOpen && createPortal(
-        <div className="fixed inset-0 z-[10000] flex items-end sm:items-center justify-center sm:p-4 bg-black/60 backdrop-blur-sm animate-fade-in overscroll-contain">
+        <div className="fixed inset-0 z-[10001] flex items-end sm:items-center justify-center sm:p-4 bg-black/60 backdrop-blur-sm animate-fade-in overscroll-contain">
           <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-t-3xl sm:rounded-3xl w-full sm:w-[94vw] max-w-6xl max-h-[94dvh] sm:max-h-[90vh] flex flex-col overflow-hidden pb-[env(safe-area-inset-bottom)] animate-modal-pop">
             <div className="sm:hidden flex justify-center pt-2.5 pb-1 flex-shrink-0">
               <span className="h-1.5 w-10 rounded-full bg-slate-300 dark:bg-white/20" />
@@ -1294,6 +1749,15 @@ export const SalesView: React.FC = () => {
                   >
                     <option value="hardware" className="bg-white dark:bg-[#12141A]">อุปกรณ์ (Hardware)</option>
                     <option value="service" className="bg-white dark:bg-[#12141A]">ค่าบริการ (Service)</option>
+                  </select>
+                  <select
+                    value={productForm.unit}
+                    onChange={(e) => setProductForm(p => ({ ...p, unit: e.target.value as ProductUnit }))}
+                    className="rounded-lg px-2.5 py-1.5 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 focus:outline-none focus:border-blue-500"
+                  >
+                    {PRODUCT_UNIT_OPTIONS.map(u => (
+                      <option key={u} value={u} className="bg-white dark:bg-[#12141A]">หน่วย: {u}</option>
+                    ))}
                   </select>
                   <input
                     type="number"
@@ -1428,7 +1892,13 @@ export const SalesView: React.FC = () => {
                   className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#FF6B00] hover:bg-[#FF8A33] disabled:opacity-40 disabled:cursor-not-allowed text-black dark:text-white text-xs font-bold shadow-lg shadow-[#FF6B00]/30 transition active:scale-[0.97] cursor-pointer"
                 >
                   <Check className="w-4 h-4" />
-                  <span>เพิ่มเข้าบิล ({selectedCount})</span>
+                  <span>
+                    {catalogTarget === 'order'
+                      ? `เพิ่มเข้าบิล (${selectedCount})`
+                      : catalogTarget === 'addon'
+                        ? `เพิ่มเข้า Add-on (${selectedCount})`
+                        : `เพิ่มเข้าโปรเจกต์ (${selectedCount})`}
+                  </span>
                 </button>
               </div>
             </div>
@@ -1566,7 +2036,15 @@ export const SalesView: React.FC = () => {
             </div>
 
             {/* Footer */}
-            <div className="p-3 sm:p-4 bg-slate-50/90 dark:bg-slate-900/95 border-t border-slate-200 dark:border-slate-800 flex justify-end flex-shrink-0">
+            <div className="p-3 sm:p-4 bg-slate-50/90 dark:bg-slate-900/95 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 flex-shrink-0">
+              <button
+                type="button"
+                onClick={() => setPrintTarget({ order: detailOrder })}
+                className="px-4 py-2 rounded-xl bg-[#FF6B00] hover:bg-[#FF8A24] text-black text-xs font-extrabold transition active:scale-[0.97] cursor-pointer flex items-center gap-1.5 shadow-sm"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>พิมพ์ใบสั่งงาน (ORDER FORM 2026)</span>
+              </button>
               <button
                 type="button"
                 onClick={() => setDetailOrder(null)}
@@ -1579,6 +2057,728 @@ export const SalesView: React.FC = () => {
         </div>,
         document.body
       )}
+
+      {/* ========================================================================= */}
+      {/* CREATE PROJECT SITE MODAL (PRJ-2026-XXX, createPortal, z-[9999])          */}
+      {/* ========================================================================= */}
+      {isCreateProjectOpen && createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center sm:p-4 bg-black/60 backdrop-blur-sm animate-fade-in overscroll-contain">
+          <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-purple-300 dark:border-purple-500/40 shadow-2xl rounded-t-3xl sm:rounded-3xl w-full sm:w-[94vw] max-w-5xl max-h-[94dvh] sm:max-h-[90vh] flex flex-col overflow-hidden pb-[env(safe-area-inset-bottom)] animate-modal-pop">
+            <div className="p-4 sm:p-5 bg-slate-50/90 dark:bg-slate-900/95 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 flex-shrink-0">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="p-2.5 rounded-2xl bg-purple-500/15 text-purple-700 dark:text-purple-300 border border-purple-500/30">
+                  <Sparkles className="w-5 h-5" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-sm sm:text-base font-extrabold text-slate-900 dark:text-white leading-tight">
+                    เปิดงานรับเหมา / ติดตั้งระบบหน้างาน (Create Project Site)
+                  </h3>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 font-mono">
+                    รหัสโปรเจกต์: <strong className="text-purple-700 dark:text-purple-300">{prjCode}</strong> • เซลล์ผู้เปิด: <strong>{salespersonName}</strong>
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsCreateProjectOpen(false)}
+                className="p-2.5 rounded-xl text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-white/[0.04] hover:bg-slate-200 dark:hover:bg-white/[0.08] transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmitCreateProject} className="flex-1 overflow-y-auto overscroll-contain p-4 sm:p-6 space-y-5 text-xs">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">ชื่อโครงการ / ไซต์งานติดตั้ง *</label>
+                  <input
+                    type="text"
+                    required
+                    value={prjSiteName}
+                    onChange={(e) => setPrjSiteName(e.target.value)}
+                    placeholder="เช่น โครงการติดตั้งระบบ Network & CCTV อาคารสำนักงานใหม่"
+                    className="w-full rounded-xl px-3 py-2 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 focus:outline-none focus:border-purple-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">ชื่อลูกค้า / บริษัทผู้ว่าจ้าง *</label>
+                  <input
+                    type="text"
+                    required
+                    value={prjCustomerName}
+                    onChange={(e) => setPrjCustomerName(e.target.value)}
+                    placeholder="เช่น บจก. สุราษฎร์ โลจิสติกส์ พาร์ค"
+                    className="w-full rounded-xl px-3 py-2 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 focus:outline-none focus:border-purple-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">เบอร์โทรผู้ประสานงานหน้างาน *</label>
+                  <input
+                    type="text"
+                    required
+                    value={prjPhone}
+                    onChange={(e) => setPrjPhone(e.target.value)}
+                    placeholder="08x-xxx-xxxx"
+                    className="w-full rounded-xl px-3 py-2 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 focus:outline-none focus:border-purple-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">อำเภอ / โซนสายรถ *</label>
+                  <select
+                    value={prjDistrict}
+                    onChange={(e) => setPrjDistrict(e.target.value)}
+                    className="w-full rounded-xl px-3 py-2 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 focus:outline-none focus:border-purple-500"
+                  >
+                    {DISTRICT_OPTIONS.map(opt => (
+                      <option key={opt.district} value={opt.district} className="bg-white dark:bg-[#12141A]">
+                        {opt.district} - [{opt.zone}]
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">สถานที่ติดตั้ง / พิกัดไซต์งาน *</label>
+                  <input
+                    type="text"
+                    required
+                    value={prjLocation}
+                    onChange={(e) => setPrjLocation(e.target.value)}
+                    placeholder="ระบุอาคาร ชั้น หรือพิกัดหน้างาน"
+                    className="w-full rounded-xl px-3 py-2 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 focus:outline-none focus:border-purple-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">วันเริ่มเข้าหน้างาน (Start Date) *</label>
+                  <input
+                    type="date"
+                    required
+                    value={prjStartDate}
+                    onChange={(e) => setPrjStartDate(e.target.value)}
+                    className="w-full rounded-xl px-3 py-2 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 font-mono focus:outline-none focus:border-purple-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">กำหนดส่งมอบงาน (Due Date) *</label>
+                  <input
+                    type="date"
+                    required
+                    value={prjDueDate}
+                    onChange={(e) => setPrjDueDate(e.target.value)}
+                    className="w-full rounded-xl px-3 py-2 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 font-mono focus:outline-none focus:border-purple-500"
+                  />
+                </div>
+              </div>
+
+              {/* Assign Onsite Tech Team */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
+                  ทีมช่าง Onsite ประจำไซต์งานนี้ (เลือกได้หลายคน)
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {(onsiteUsersList.length > 0 ? onsiteUsersList.map(u => u.name) : ['ช่างเอ', 'ช่างบี', 'ช่างซี', 'ช่างดี']).map((techName) => {
+                    const selected = prjAssignedTechs.includes(techName);
+                    return (
+                      <button
+                        key={techName}
+                        type="button"
+                        onClick={() =>
+                          setPrjAssignedTechs(prev =>
+                            prev.includes(techName) ? prev.filter(t => t !== techName) : [...prev, techName]
+                          )
+                        }
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition cursor-pointer ${
+                          selected
+                            ? 'bg-purple-600 text-white border-purple-600 shadow-sm'
+                            : 'bg-slate-100 dark:bg-white/[0.04] text-slate-700 dark:text-slate-300 border-slate-300 dark:border-white/[0.1]'
+                        }`}
+                      >
+                        {selected ? '✓ ' : ''}{techName}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Separate Lists: อุปกรณ์หลัก vs วัสดุสิ้นเปลือง/ค่าแรง — เลือกผ่าน Product Catalog Modal */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="p-3.5 rounded-2xl bg-blue-50/60 dark:bg-blue-500/10 border border-blue-200 dark:border-blue-500/30 space-y-2.5">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-extrabold text-blue-900 dark:text-blue-200">
+                        1. อุปกรณ์หลัก (ต้องเตรียม / S/N / ติดวอย)
+                      </span>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-blue-600 text-white">
+                        {prjItems.filter(i => i.item_type === 'equipment').length}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenCatalogModal('project_equipment')}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-bold transition active:scale-[0.97] cursor-pointer shadow-sm"
+                    >
+                      <Layers className="w-3.5 h-3.5" />
+                      <span>+ เลือกจากแคตตาล็อก</span>
+                    </button>
+                  </div>
+                  {prjItems.filter(i => i.item_type === 'equipment').length === 0 ? (
+                    <div className="py-5 text-center border border-dashed border-blue-300/70 dark:border-blue-500/25 rounded-xl">
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                        ยังไม่มีอุปกรณ์หลัก — กด &quot;+ เลือกจากแคตตาล็อก&quot;
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {prjItems.map((it, idx) =>
+                        it.item_type === 'equipment' ? (
+                          <div key={idx} className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-blue-200 dark:border-blue-500/20 space-y-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="font-bold text-slate-900 dark:text-white truncate">{it.model_name}</div>
+                              <button
+                                type="button"
+                                onClick={() => setPrjItems(prev => prev.filter((_, i) => i !== idx))}
+                                className="p-1 rounded-lg text-rose-600 hover:bg-rose-100 dark:hover:bg-rose-500/20 cursor-pointer shrink-0"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                            <div className="grid grid-cols-3 gap-1.5">
+                              <div>
+                                <label className="block text-[9px] text-slate-500 mb-0.5">จำนวน</label>
+                                <input
+                                  type="number"
+                                  min={1}
+                                  value={it.qty_required}
+                                  onChange={(e) => {
+                                    const val = Math.max(1, parseInt(e.target.value) || 1);
+                                    setPrjItems(prev => prev.map((row, i) => i === idx ? { ...row, qty_required: val } : row));
+                                  }}
+                                  className="w-full rounded-lg px-2 py-1 text-[11px] bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 font-mono text-center"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[9px] text-slate-500 mb-0.5">ทุน/หน่วย</label>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  value={it.unit_cost}
+                                  onChange={(e) => {
+                                    const val = Math.max(0, parseFloat(e.target.value) || 0);
+                                    setPrjItems(prev => prev.map((row, i) => i === idx ? { ...row, unit_cost: val } : row));
+                                  }}
+                                  className="w-full rounded-lg px-2 py-1 text-[11px] bg-slate-50 dark:bg-slate-800 text-amber-700 dark:text-amber-300 border border-slate-300 dark:border-slate-700 font-mono"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[9px] text-slate-500 mb-0.5">ขาย/หน่วย</label>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  value={it.unit_price}
+                                  onChange={(e) => {
+                                    const val = Math.max(0, parseFloat(e.target.value) || 0);
+                                    setPrjItems(prev => prev.map((row, i) => i === idx ? { ...row, unit_price: val } : row));
+                                  }}
+                                  className="w-full rounded-lg px-2 py-1 text-[11px] bg-slate-50 dark:bg-slate-800 text-emerald-700 dark:text-emerald-300 border border-slate-300 dark:border-slate-700 font-mono"
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        ) : null
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <div className="p-3.5 rounded-2xl bg-amber-50/60 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 space-y-2.5">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-extrabold text-amber-900 dark:text-amber-200">
+                        2. วัสดุสิ้นเปลือง / ค่าแรง (ส่งตรง Onsite)
+                      </span>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-500 text-black">
+                        {prjItems.filter(i => i.item_type === 'consumable').length}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenCatalogModal('project_consumable')}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black text-[11px] font-bold transition active:scale-[0.97] cursor-pointer shadow-sm"
+                    >
+                      <Layers className="w-3.5 h-3.5" />
+                      <span>+ เลือกจากแคตตาล็อก</span>
+                    </button>
+                  </div>
+                  {prjItems.filter(i => i.item_type === 'consumable').length === 0 ? (
+                    <div className="py-5 text-center border border-dashed border-amber-300/70 dark:border-amber-500/25 rounded-xl">
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                        ยังไม่มีวัสดุ/ค่าแรง — กด &quot;+ เลือกจากแคตตาล็อก&quot;
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {prjItems.map((it, idx) =>
+                        it.item_type === 'consumable' ? (
+                          <div key={idx} className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-500/20 space-y-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="font-bold text-slate-900 dark:text-white truncate">{it.model_name}</div>
+                              <button
+                                type="button"
+                                onClick={() => setPrjItems(prev => prev.filter((_, i) => i !== idx))}
+                                className="p-1 rounded-lg text-rose-600 hover:bg-rose-100 dark:hover:bg-rose-500/20 cursor-pointer shrink-0"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                            <div className="grid grid-cols-3 gap-1.5">
+                              <div>
+                                <label className="block text-[9px] text-slate-500 mb-0.5">จำนวน</label>
+                                <input
+                                  type="number"
+                                  min={1}
+                                  value={it.qty_required}
+                                  onChange={(e) => {
+                                    const val = Math.max(1, parseInt(e.target.value) || 1);
+                                    setPrjItems(prev => prev.map((row, i) => i === idx ? { ...row, qty_required: val } : row));
+                                  }}
+                                  className="w-full rounded-lg px-2 py-1 text-[11px] bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 font-mono text-center"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[9px] text-slate-500 mb-0.5">ทุน/หน่วย</label>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  value={it.unit_cost}
+                                  onChange={(e) => {
+                                    const val = Math.max(0, parseFloat(e.target.value) || 0);
+                                    setPrjItems(prev => prev.map((row, i) => i === idx ? { ...row, unit_cost: val } : row));
+                                  }}
+                                  className="w-full rounded-lg px-2 py-1 text-[11px] bg-slate-50 dark:bg-slate-800 text-amber-700 dark:text-amber-300 border border-slate-300 dark:border-slate-700 font-mono"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[9px] text-slate-500 mb-0.5">ขาย/หน่วย</label>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  value={it.unit_price}
+                                  onChange={(e) => {
+                                    const val = Math.max(0, parseFloat(e.target.value) || 0);
+                                    setPrjItems(prev => prev.map((row, i) => i === idx ? { ...row, unit_price: val } : row));
+                                  }}
+                                  className="w-full rounded-lg px-2 py-1 text-[11px] bg-slate-50 dark:bg-slate-800 text-emerald-700 dark:text-emerald-300 border border-slate-300 dark:border-slate-700 font-mono"
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        ) : null
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsCreateProjectOpen(false)}
+                  className="px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-white/[0.04] text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700 font-bold text-xs cursor-pointer"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="submit"
+                  disabled={prjItems.length === 0}
+                  className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 disabled:opacity-40 text-white font-extrabold text-xs shadow-lg shadow-purple-500/30 cursor-pointer flex items-center gap-2"
+                >
+                  <Send className="w-4 h-4" />
+                  <span>ยืนยันเปิดโปรเจกต์ ({prjCode})</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* ========================================================================= */}
+      {/* PROJECT DETAIL & MULTI-SALES ADD-ON BREAKDOWN MODAL (z-[9999])            */}
+      {/* ========================================================================= */}
+      {detailProject && createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center sm:p-4 bg-black/60 backdrop-blur-sm animate-fade-in overscroll-contain">
+          <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-purple-300 dark:border-purple-500/40 shadow-2xl rounded-t-3xl sm:rounded-3xl w-full sm:w-[94vw] max-w-4xl max-h-[94dvh] sm:max-h-[90vh] flex flex-col overflow-hidden pb-[env(safe-area-inset-bottom)] animate-modal-pop">
+            <div className="p-4 sm:p-5 bg-slate-50/90 dark:bg-slate-900/95 border-b border-slate-200 dark:border-slate-800 flex items-start justify-between gap-2 flex-shrink-0">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-mono font-extrabold text-sm text-purple-700 dark:text-purple-300">{detailProject.id}</span>
+                  {getProjectStatusBadge(detailProject.status)}
+                  <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-300 dark:bg-emerald-500/15 dark:text-emerald-300 dark:border-emerald-500/30">
+                    เซลล์เจ้าของโครงการ: {detailProject.created_by}
+                  </span>
+                </div>
+                <h3 className="text-sm sm:text-base font-extrabold text-slate-900 dark:text-white mt-1 truncate">
+                  {detailProject.site_name}
+                </h3>
+                <p className="text-xs text-slate-600 dark:text-slate-400">
+                  ลูกค้า: {detailProject.customer_name} ({detailProject.phone}) • {detailProject.location}
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setPrintTarget({ project: detailProject })}
+                  className="px-3 py-2 rounded-xl bg-[#FF6B00] hover:bg-[#FF8A24] text-black text-xs font-extrabold cursor-pointer flex items-center gap-1.5 shadow-sm"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">พิมพ์ ORDER FORM 2026</span>
+                  <span className="sm:hidden">พิมพ์</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDetailProjectId(null)}
+                  className="p-2 rounded-xl text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-white/[0.04] cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {(() => {
+              const fin = getProjectFinancials(detailProject);
+              return (
+                <div className="flex-1 overflow-y-auto overscroll-contain p-4 sm:p-5 space-y-4 text-xs">
+                  {/* Top action: Anyone in Sales can add an Add-on */}
+                  <div className="p-3.5 rounded-2xl bg-purple-50 dark:bg-purple-500/10 border border-purple-200 dark:border-purple-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                      <div className="font-extrabold text-purple-900 dark:text-purple-200">
+                        ระบบแอดรายการเพิ่มข้ามเซลล์ (Multi-Sales Add-On Attribution)
+                      </div>
+                      <p className="text-[11px] text-purple-800/80 dark:text-purple-300/80">
+                        เซลล์ทุกคนสามารถแอดสินค้า/สายไฟ/ค่าแรงเพิ่มเข้าไซต์งานนี้ได้ ระบบจะระบุชื่อผู้แอดและแยกยอดตั้งต้น vs ยอดแอดเพิ่มอัตโนมัติ
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={(e) => handleOpenAddonModal(detailProject, e)}
+                      className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-md shrink-0"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>+ แอดรายการเพิ่มเข้าโปรเจกต์ (Add-on)</span>
+                    </button>
+                  </div>
+
+                  {/* Separate Subtotals: ยอดตั้งต้น vs ยอดแอดเพิ่ม */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700">
+                      <div className="text-[10px] text-slate-500 dark:text-slate-400">ยอดตั้งต้น ({fin.baseItems.length} รายการ)</div>
+                      <div className="text-base font-extrabold font-mono text-slate-900 dark:text-white mt-0.5">฿{fmt(fin.baseRev)}</div>
+                      <div className="text-[10px] text-slate-500 font-mono">ทุน ฿{fmt(fin.baseCost)} • โดย {detailProject.created_by}</div>
+                    </div>
+                    <div className="p-3 rounded-2xl bg-purple-50 dark:bg-purple-500/10 border border-purple-200 dark:border-purple-500/30">
+                      <div className="text-[10px] text-purple-700 dark:text-purple-300">ยอดแอดเพิ่ม ({fin.addonItems.length} รายการ)</div>
+                      <div className="text-base font-extrabold font-mono text-purple-800 dark:text-purple-200 mt-0.5">+฿{fmt(fin.addonRev)}</div>
+                      <div className="text-[10px] text-purple-600 dark:text-purple-300 font-mono">ทุน ฿{fmt(fin.addonCost)}</div>
+                    </div>
+                    <div className="p-3 rounded-2xl bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/30">
+                      <div className="text-[10px] text-emerald-700 dark:text-emerald-300">รวมทั้งโครงการ & GP สุทธิ</div>
+                      <div className="text-base font-extrabold font-mono text-emerald-800 dark:text-emerald-200 mt-0.5">฿{fmt(fin.totalRev)}</div>
+                      <div className="text-[10px] text-[#C2410C] dark:text-[#FF6B00] font-mono font-bold">GP สุทธิ ฿{fmt(fin.totalGp)}</div>
+                    </div>
+                  </div>
+
+                  {/* Field Material Requests from Onsite Techs */}
+                  {detailProject.material_requests && detailProject.material_requests.length > 0 && (
+                    <div className="p-3.5 rounded-2xl bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/30 space-y-2">
+                      <div className="font-extrabold text-rose-900 dark:text-rose-200 flex items-center gap-1.5">
+                        <AlertTriangle className="w-4 h-4 text-rose-600 dark:text-rose-400" />
+                        <span>รายการที่ช่างหน้างานขอเบิกเพิ่ม (Field Material Requests)</span>
+                      </div>
+                      {detailProject.material_requests.map((req) => (
+                        <div key={req.id} className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-rose-200 dark:border-rose-500/20 flex flex-wrap items-center justify-between gap-2">
+                          <div>
+                            <div className="font-bold text-slate-900 dark:text-white">
+                              {req.item_name} <span className="font-mono text-[#C2410C] dark:text-[#FF6B00]">x{req.qty}</span>
+                            </div>
+                            <div className="text-[11px] text-slate-600 dark:text-slate-400">
+                              เหตุผลหน้างาน: {req.reason} • ขอโดย <strong>{req.requested_by}</strong>
+                            </div>
+                          </div>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300 dark:bg-amber-500/20 dark:text-amber-300">
+                            {req.status === 'pending' ? 'รอเซลล์แอดเพิ่ม / จัดซื้อเบิก' : req.status === 'approved_ordered' ? 'อนุมัติสั่งซื้อแล้ว' : 'ส่งเข้าไซต์งานแล้ว'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Line Items List with Add-on Badges */}
+                  <div className="space-y-2">
+                    <div className="font-extrabold text-slate-900 dark:text-white">
+                      รายการอุปกรณ์หลัก & วัสดุสิ้นเปลือง ({detailProject.items.length} รายการ)
+                    </div>
+                    {detailProject.items.map((it) => {
+                      const lineTotal = (it.unit_price || 0) * (it.qty_required || 0);
+                      const lineGp = lineTotal - (it.unit_cost || 0) * (it.qty_required || 0);
+                      return (
+                        <div key={it.id} className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <div className="space-y-1 min-w-0">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                                it.item_type === 'equipment'
+                                  ? 'bg-blue-100 text-blue-900 border-blue-300 dark:bg-blue-500/20 dark:text-blue-300 dark:border-blue-500/30'
+                                  : 'bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-500/20 dark:text-amber-300 dark:border-amber-500/30'
+                              }`}>
+                                {it.item_type === 'equipment' ? 'อุปกรณ์หลัก (ต้องเตรียม/S/N)' : 'วัสดุสิ้นเปลือง/ค่าแรง'}
+                              </span>
+                              {it.is_addon ? (
+                                <span className="px-2 py-0.5 rounded-md text-[10px] font-extrabold bg-purple-100 text-purple-900 border border-purple-300 dark:bg-purple-500/20 dark:text-purple-200 dark:border-purple-500/40">
+                                  แอดเพิ่มโดย {it.added_by || 'ฝ่ายขาย'}
+                                </span>
+                              ) : (
+                                <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-slate-200 text-slate-800 dark:bg-white/10 dark:text-slate-300">
+                                  รายการตั้งต้น
+                                </span>
+                              )}
+                            </div>
+                            <div className="font-bold text-slate-900 dark:text-white">{it.model_name}</div>
+                            <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono">
+                              ต้องการ {it.qty_required} {it.unit || 'ชิ้น'} • เบิกแล้ว {it.qty_allocated}/{it.qty_required} • เตรียมเสร็จ {it.qty_prepared}/{it.qty_required}
+                              {it.serial_numbers && it.serial_numbers.length > 0 && ` • S/N: ${it.serial_numbers.join(', ')}`}
+                            </div>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <div className="font-mono font-extrabold text-sm text-slate-900 dark:text-white">฿{fmt(lineTotal)}</div>
+                            <div className="text-[10px] font-mono text-emerald-700 dark:text-emerald-400">GP ฿{fmt(lineGp)}</div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Activity Timeline */}
+                  {detailProject.activity_logs && detailProject.activity_logs.length > 0 && (
+                    <div className="pt-2 border-t border-slate-200 dark:border-white/[0.08]">
+                      <div className="font-bold text-slate-800 dark:text-slate-200 mb-2">
+                        ประวัติการดำเนินการโปรเจกต์ ({detailProject.activity_logs.length})
+                      </div>
+                      <ActivityTimeline logs={detailProject.activity_logs} />
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* ========================================================================= */}
+      {/* ADD-ON MODAL FOR ANY SALES USER (createPortal, z-[10000])                 */}
+      {/* ========================================================================= */}
+      {addonProject && createPortal(
+        <div className="fixed inset-0 z-[10000] flex items-end sm:items-center justify-center sm:p-4 bg-black/70 backdrop-blur-sm animate-fade-in overscroll-contain">
+          <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-[#FF6B00]/50 shadow-2xl rounded-t-3xl sm:rounded-3xl w-full sm:w-[92vw] max-w-lg max-h-[92dvh] flex flex-col overflow-hidden pb-[env(safe-area-inset-bottom)] animate-modal-pop">
+            <div className="p-4 sm:p-5 bg-slate-50/90 dark:bg-slate-900/95 border-b border-slate-200 dark:border-slate-800 flex items-start justify-between gap-2">
+              <div>
+                <h3 className="text-sm sm:text-base font-extrabold text-slate-900 dark:text-white">
+                  + แอดรายการเพิ่มเข้าโปรเจกต์ (Multi-Sales Add-On)
+                </h3>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 font-mono mt-0.5">
+                  {addonProject.id} • {addonProject.site_name} (เปิดโดย {addonProject.created_by})
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAddonProjectId(null)}
+                className="p-2 rounded-xl text-slate-500 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-white/[0.04] cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmitAddon} className="p-4 sm:p-5 space-y-4 overflow-y-auto text-xs">
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  ผู้แอดรายการเพิ่ม (added_by — เซลล์คนใดก็ได้) *
+                </label>
+                <div className="flex gap-2">
+                  <select
+                    value={addonAddedBy}
+                    onChange={(e) => setAddonAddedBy(e.target.value)}
+                    className="flex-1 rounded-xl px-3 py-2 bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 font-bold"
+                  >
+                    {salesUsersList.map(u => (
+                      <option key={u.id} value={u.name}>{u.name} ({u.badge || u.role})</option>
+                    ))}
+                  </select>
+                  <input
+                    type="text"
+                    value={addonAddedBy}
+                    onChange={(e) => setAddonAddedBy(e.target.value)}
+                    placeholder="หรือพิมพ์ชื่อเซลล์"
+                    className="flex-1 rounded-xl px-3 py-2 bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <label className="font-bold text-slate-700 dark:text-slate-300">
+                  รายการที่แอดเพิ่ม ({addonItems.length} รายการ) *
+                </label>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleOpenCatalogModal('addon')}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#FF6B00]/15 hover:bg-[#FF6B00]/25 border border-[#FF6B00]/40 text-[#C2410C] dark:text-[#FF6B00] text-[11px] font-bold transition active:scale-[0.97] cursor-pointer"
+                  >
+                    <Layers className="w-3.5 h-3.5" />
+                    <span>+ เลือกจากแคตตาล็อก (เลือกได้หลายรายการ)</span>
+                  </button>
+                </div>
+              </div>
+
+              {addonItems.length === 0 ? (
+                <div className="py-6 px-4 text-center border border-dashed border-slate-300 dark:border-slate-700 rounded-2xl bg-slate-50 dark:bg-white/[0.02]">
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    ยังไม่มีรายการที่เลือก — กด &quot;+ เลือกจากแคตตาล็อก&quot; เพื่อติ๊กเลือกได้หลายรายการพร้อมกัน
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2.5 max-h-64 overflow-y-auto pr-1">
+                  {addonItems.map((it, idx) => (
+                    <div key={`${it.model_name}-${idx}`} className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 space-y-2">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <div className="font-bold text-slate-900 dark:text-white truncate">{it.model_name}</div>
+                          <div className="flex items-center gap-1.5 mt-1">
+                            <button
+                              type="button"
+                              onClick={() => setAddonItems(prev => prev.map((row, i) => i === idx ? { ...row, item_type: 'equipment', warranty_years: 1 } : row))}
+                              className={`px-2 py-0.5 rounded text-[10px] font-bold border cursor-pointer ${
+                                it.item_type === 'equipment'
+                                  ? 'bg-blue-600 text-white border-blue-600'
+                                  : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border-slate-300 dark:border-slate-700'
+                              }`}
+                            >
+                              อุปกรณ์หลัก (S/N)
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setAddonItems(prev => prev.map((row, i) => i === idx ? { ...row, item_type: 'consumable', warranty_years: 0 } : row))}
+                              className={`px-2 py-0.5 rounded text-[10px] font-bold border cursor-pointer ${
+                                it.item_type === 'consumable'
+                                  ? 'bg-amber-500 text-black border-amber-500'
+                                  : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border-slate-300 dark:border-slate-700'
+                              }`}
+                            >
+                              วัสดุ / ค่าแรง
+                            </button>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setAddonItems(prev => prev.filter((_, i) => i !== idx))}
+                          className="p-1.5 rounded-lg text-rose-600 hover:bg-rose-100 dark:hover:bg-rose-500/20 cursor-pointer shrink-0"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-2">
+                        <div>
+                          <label className="block text-[9px] text-slate-500 mb-0.5">จำนวน</label>
+                          <input
+                            type="number"
+                            min={1}
+                            value={it.qty_required}
+                            onChange={(e) => {
+                              const val = Math.max(1, parseInt(e.target.value) || 1);
+                              setAddonItems(prev => prev.map((row, i) => i === idx ? { ...row, qty_required: val } : row));
+                            }}
+                            className="w-full rounded-lg px-2 py-1 text-[11px] bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 font-mono text-center"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[9px] text-slate-500 mb-0.5">ทุน/หน่วย</label>
+                          <input
+                            type="number"
+                            min={0}
+                            value={it.unit_cost}
+                            onChange={(e) => {
+                              const val = Math.max(0, parseFloat(e.target.value) || 0);
+                              setAddonItems(prev => prev.map((row, i) => i === idx ? { ...row, unit_cost: val } : row));
+                            }}
+                            className="w-full rounded-lg px-2 py-1 text-[11px] bg-white dark:bg-slate-900 text-amber-700 dark:text-amber-300 border border-slate-300 dark:border-slate-700 font-mono"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[9px] text-slate-500 mb-0.5">ขาย/หน่วย</label>
+                          <input
+                            type="number"
+                            min={0}
+                            value={it.unit_price}
+                            onChange={(e) => {
+                              const val = Math.max(0, parseFloat(e.target.value) || 0);
+                              setAddonItems(prev => prev.map((row, i) => i === idx ? { ...row, unit_price: val } : row));
+                            }}
+                            className="w-full rounded-lg px-2 py-1 text-[11px] bg-white dark:bg-slate-900 text-emerald-700 dark:text-emerald-300 border border-slate-300 dark:border-slate-700 font-mono"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">หมายเหตุการแอดเพิ่ม</label>
+                <input
+                  type="text"
+                  value={addonNote}
+                  onChange={(e) => setAddonNote(e.target.value)}
+                  placeholder="เช่น ลูกค้าสั่งเพิ่มจุดกระจายสัญญาณ Wi-Fi และเดินสาย LAN เพิ่ม"
+                  className="w-full rounded-xl px-3 py-2 bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700"
+                />
+              </div>
+
+              <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 flex items-center justify-between">
+                <span className="font-bold text-amber-900 dark:text-amber-200">
+                  ติดป้าย: &quot;แอดเพิ่มโดย {addonAddedBy || '-'}&quot; ({addonItems.length} รายการ)
+                </span>
+                <span className="font-mono font-extrabold text-sm text-emerald-700 dark:text-emerald-300">
+                  รวม +฿{fmt(addonItems.reduce((s, it) => s + it.unit_price * it.qty_required, 0))}
+                </span>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setAddonProjectId(null)}
+                  className="px-4 py-2 rounded-xl bg-slate-100 dark:bg-white/[0.04] text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700 font-bold cursor-pointer"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="submit"
+                  disabled={addonItems.length === 0}
+                  className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] disabled:opacity-40 text-black font-extrabold shadow-lg shadow-[#FF6B00]/25 cursor-pointer flex items-center gap-1.5"
+                >
+                  <Check className="w-4 h-4" />
+                  <span>บันทึกแอดเพิ่ม ({addonItems.length} รายการ)</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      <OrderFormPrintModal
+        isOpen={!!printTarget}
+        onClose={() => setPrintTarget(null)}
+        order={printTarget?.order}
+        project={printTarget?.project}
+      />
     </div>
   );
 };

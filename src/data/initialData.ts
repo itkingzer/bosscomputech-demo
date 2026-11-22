@@ -1,15 +1,11 @@
-import { UserAccount, Order, Item, RepairTicket, Product, StockPO } from '../types';
+import { UserAccount, Order, Item, RepairTicket, Product, StockPO, Project, computeWarrantyExpire } from '../types';
 
 // ==============================================================================
 // Helper: คำนวณวันหมดประกันจากวันแปะวอย (ISO) + ระยะเวลา (ปี/เดือน)
 // ใช้ให้ seed data มี warranty_expire_date ที่สอดคล้องกับ warranty_void_date จริง
 // ==============================================================================
-const computeExpire = (voidIso: string, years = 0, months = 0): string => {
-  const d = new Date(voidIso);
-  d.setFullYear(d.getFullYear() + years);
-  d.setMonth(d.getMonth() + months);
-  return d.toISOString();
-};
+const computeExpire = (voidIso: string, years = 0, months = 0): string =>
+  computeWarrantyExpire(voidIso, years, months) || voidIso;
 
 // ==============================================================================
 // Product Catalog (แคตตาล็อกสินค้า/บริการที่ใช้ซ้ำได้ พร้อมราคาทุน & ราคาขาย)
@@ -147,9 +143,36 @@ export const INITIAL_USERS: UserAccount[] = [
     username: 'repair',
     password: 'password123',
     name: 'ช่างชาติ (ช่างซ่อมในร้าน)',
+    nickname: 'ชาติ',
+    department: 'ฝ่ายช่างซ่อม',
+    is_active: true,
     role: 'repair',
     badge: 'In-House Repair Tech',
     phone: '086-666-7788'
+  },
+  {
+    id: 'u-finance',
+    username: 'finance',
+    password: 'password123',
+    name: 'คุณฝน (ฝ่ายบัญชี & วางบิล)',
+    nickname: 'ฝน',
+    department: 'ฝ่ายบัญชี',
+    is_active: true,
+    role: 'finance',
+    badge: 'Accounting & Billing',
+    phone: '087-777-8899'
+  },
+  {
+    id: 'u-hr',
+    username: 'hr',
+    password: 'password123',
+    name: 'คุณมิ้น (ฝ่ายบุคคล HR)',
+    nickname: 'มิ้น',
+    department: 'ฝ่ายบุคคล (HR)',
+    is_active: true,
+    role: 'hr',
+    badge: 'Human Resources',
+    phone: '088-888-9900'
   }
 ];
 
@@ -794,6 +817,97 @@ export const INITIAL_ITEMS: Item[] = [
     assigned_at: new Date(Date.now() - 86400000 * 6).toISOString(),
     dispatched_at: new Date(Date.now() - 86400000 * 6).toISOString(),
     delivered_at: new Date(Date.now() - 86400000 * 6).toISOString()
+  },
+  // ---------------------------------------------------------------------------
+  // Project PRJ-2026-001 Batch #1 Items:
+  // 1) Switch PoE ที่ช่างเตรียมติดวอยประกันและส่งเข้าไซต์งานแล้ว (ค้นหา S/N เจอประวัติโปรเจกต์ครบ)
+  // 2) ชุดกล้อง CCTV NVR ที่ตัดงวดเบิกที่ 1 รอช่างเตรียมเซ็ตอัพ & ติดวอยประกัน
+  // ---------------------------------------------------------------------------
+  {
+    id: 'itm-prj-01',
+    order_id: null,
+    project_id: 'PRJ-2026-001',
+    project_batch_no: 1,
+    project_item_id: 'pitem-1',
+    model_name: 'Huawei eKitEngine S220-24P4X Switch',
+    serial_number: 'HW-S220-PRJ01',
+    status: 'assigned_onsite',
+    prep_type: 'outbound_dispatch',
+    category: 'cctv_network',
+    unit_cost: 8900,
+    supplier: 'Synnex (Thailand)',
+    po_no: 'PRJ-2026-001 • งวดที่ 1',
+    prep_note: '[โปรเจกต์] PRJ-2026-001 • งวดเบิกที่ 1 — เซ็ต VLAN & เทส PoE 24 พอร์ต',
+    delivery_mode: 'project',
+    assigned_prep_tech: 'ช่างกอล์ฟ (ช่างเตรียมสินค้า)',
+    prep_accepted_at: new Date(Date.now() - 86400000).toISOString(),
+    job_category: 'installation',
+    assigned_techs: ['ช่างซี', 'ช่างดี'],
+    assigned_onsite_tech: 'ช่างซี',
+    prepped_at: new Date(Date.now() - 3600000 * 20).toISOString(),
+    void_date: new Date(Date.now() - 86400000).toISOString().split('T')[0],
+    warranty_years: 3,
+    warranty_void_date: new Date(Date.now() - 86400000).toISOString(),
+    warranty_expire_date: computeExpire(new Date(Date.now() - 86400000).toISOString(), 3, 0),
+    logo_applied: true,
+    notes: 'ติดวอยประกัน & ส่งเข้าไซต์งาน PRJ-2026-001 (งวดเบิกที่ 1)',
+    created_at: new Date(Date.now() - 86400000 * 2).toISOString(),
+    warranty_applied_at: new Date(Date.now() - 86400000).toISOString(),
+    assigned_at: new Date(Date.now() - 86400000).toISOString(),
+    dispatched_at: new Date(Date.now() - 86400000).toISOString(),
+    activity_logs: [
+      {
+        timestamp: new Date(Date.now() - 86400000 * 1.5).toISOString(),
+        action: 'ปล่อยของงวดเบิกโปรเจกต์ (Batch #1)',
+        actor: 'คุณสมศรี (จัดซื้อและสต๊อกสินค้า)',
+        role: 'accounting',
+        note: 'โปรเจกต์ PRJ-2026-001 • งวดเบิกที่ 1 ส่งให้ช่างเตรียม'
+      },
+      {
+        timestamp: new Date(Date.now() - 86400000).toISOString(),
+        action: 'ติดวอยประกัน & ส่งเข้าไซต์งานโปรเจกต์',
+        actor: 'ช่างกอล์ฟ (ช่างเตรียมสินค้า)',
+        role: 'prep',
+        note: 'S/N: HW-S220-PRJ01 | โปรเจกต์ PRJ-2026-001 • งวดเบิกที่ 1'
+      }
+    ]
+  },
+  {
+    id: 'itm-prj-02',
+    order_id: null,
+    project_id: 'PRJ-2026-001',
+    project_batch_no: 1,
+    project_item_id: 'pitem-2',
+    model_name: 'Hikvision 8CH NVR + 4MP CCTV Kit',
+    serial_number: 'HK-NVR-PRJ01',
+    status: 'pending_prep',
+    prep_type: 'outbound_dispatch',
+    category: 'cctv_network',
+    unit_cost: 14500,
+    supplier: 'Synnex (Thailand)',
+    po_no: 'PRJ-2026-001 • งวดที่ 1',
+    prep_note: '[โปรเจกต์] PRJ-2026-001 • งวดเบิกที่ 1 — ตั้งค่า IP กล้อง 8 ตัว + NVR ก่อนส่งเข้าไซต์งาน',
+    delivery_mode: 'project',
+    assigned_prep_tech: 'ช่างกอล์ฟ (ช่างเตรียมสินค้า)',
+    prep_accepted_at: new Date(Date.now() - 3600000 * 3).toISOString(),
+    job_category: 'installation',
+    assigned_techs: ['ช่างซี', 'ช่างดี'],
+    assigned_onsite_tech: 'ช่างซี',
+    prepped_at: null,
+    void_date: null,
+    warranty_years: 2,
+    logo_applied: true,
+    notes: 'รอช่างเตรียมเซ็ตอัพ & ติดวอยประกันส่งเข้าไซต์งาน PRJ-2026-001',
+    created_at: new Date(Date.now() - 3600000 * 5).toISOString(),
+    activity_logs: [
+      {
+        timestamp: new Date(Date.now() - 3600000 * 5).toISOString(),
+        action: 'ปล่อยของงวดเบิกโปรเจกต์ (Batch #1)',
+        actor: 'คุณสมศรี (จัดซื้อและสต๊อกสินค้า)',
+        role: 'accounting',
+        note: 'โปรเจกต์ PRJ-2026-001 • งวดเบิกที่ 1 ส่งให้ช่างเตรียม'
+      }
+    ]
   }
 ];
 
@@ -997,5 +1111,195 @@ export const INITIAL_REPAIR_TICKETS: RepairTicket[] = [
     service_type: 'in_house_repair',
     included_accessories: '',
     repair_status: 'pending_check'
+  }
+];
+
+// ==============================================================================
+// Projects (งานรับเหมา / ติดตั้งระบบหน้างานหลายวัน PRJ-2026-XXX)
+// Seeded with 1 realistic active site in_progress with Multi-Sales Add-On Attribution
+// ==============================================================================
+export const INITIAL_PROJECTS: Project[] = [
+  {
+    id: 'PRJ-2026-001',
+    site_name: 'โครงการติดตั้งระบบ Network & CCTV อาคารคลังสินค้าใหม่ C1-C2',
+    customer_name: 'บจก. สุราษฎร์ โลจิสติกส์ พาร์ค (สำนักงานใหญ่)',
+    phone: '077-960-888',
+    location: 'นิคมอุตสาหกรรมสุราษฎร์ธานี อาคาร C ถ.บายพาส อ.เมือง จ.สุราษฎร์ธานี',
+    district: 'เมืองสุราษฎร์ธานี',
+    route_code: 'route_5',
+    created_by: 'เซลล์เอ',
+    start_date: new Date(Date.now() - 86400000 * 2).toISOString().split('T')[0],
+    due_date: new Date(Date.now() + 86400000 * 5).toISOString().split('T')[0],
+    status: 'in_progress',
+    assigned_techs: ['ช่างซี', 'ช่างดี'],
+    items: [
+      {
+        id: 'pitem-1',
+        product_id: 'prod-1',
+        model_name: 'Huawei eKitEngine S220-24P4X Switch',
+        item_type: 'equipment',
+        unit: 'เครื่อง',
+        qty_required: 2,
+        qty_allocated: 1,
+        qty_prepared: 1,
+        unit_cost: 8900,
+        unit_price: 11500,
+        warranty_years: 3,
+        is_addon: false,
+        serial_numbers: ['HW-S220-PRJ01']
+      },
+      {
+        id: 'pitem-2',
+        product_id: 'prod-3',
+        model_name: 'Hikvision 8CH NVR + 4MP CCTV Kit',
+        item_type: 'equipment',
+        unit: 'ชุด',
+        qty_required: 2,
+        qty_allocated: 1,
+        qty_prepared: 0,
+        unit_cost: 14500,
+        unit_price: 18900,
+        warranty_years: 2,
+        is_addon: false,
+        serial_numbers: []
+      },
+      {
+        id: 'pitem-3',
+        product_id: 'prod-10',
+        model_name: 'ตู้ Rack 42U 600x1000mm พร้อม PDU & พัดลม',
+        item_type: 'equipment',
+        unit: 'ชุด',
+        qty_required: 1,
+        qty_allocated: 0,
+        qty_prepared: 0,
+        unit_cost: 14200,
+        unit_price: 18500,
+        warranty_years: 3,
+        is_addon: false,
+        serial_numbers: []
+      },
+      {
+        id: 'pitem-4',
+        product_id: 'prod-11',
+        model_name: 'สายสัญญาณ LAN Link Cat6 UTP 305m (กล่อง)',
+        item_type: 'consumable',
+        unit: 'ชุด',
+        qty_required: 4,
+        qty_allocated: 4,
+        qty_prepared: 4,
+        unit_cost: 2900,
+        unit_price: 3850,
+        warranty_years: 0,
+        is_addon: false
+      },
+      {
+        id: 'pitem-5',
+        product_id: 'prod-12',
+        model_name: 'ค่าบริการเดินสาย LAN ท่อร้อยสาย และจัดตู้ Rack Server (ต่อจุด)',
+        item_type: 'consumable',
+        unit: 'จุด',
+        qty_required: 24,
+        qty_allocated: 24,
+        qty_prepared: 24,
+        unit_cost: 250,
+        unit_price: 450,
+        warranty_years: 0,
+        is_addon: false
+      },
+      {
+        id: 'pitem-6',
+        product_id: 'prod-9',
+        model_name: 'Ubiquiti UniFi U6-Pro Wi-Fi 6 Access Point',
+        item_type: 'equipment',
+        unit: 'เครื่อง',
+        qty_required: 3,
+        qty_allocated: 0,
+        qty_prepared: 0,
+        unit_cost: 4950,
+        unit_price: 6200,
+        warranty_years: 2,
+        is_addon: true,
+        added_by: 'เซลล์บี',
+        added_at: new Date(Date.now() - 86400000).toISOString(),
+        serial_numbers: []
+      }
+    ],
+    batches: [
+      {
+        id: 'batch-prj-1',
+        batch_no: 1,
+        released_at: new Date(Date.now() - 86400000 * 1.5).toISOString(),
+        released_by: 'คุณสมศรี (จัดซื้อและสต๊อกสินค้า)',
+        note: 'ปล่อยสาย LAN + ค่าแรงเข้าหน้างานงวดแรก พร้อมอุปกรณ์หลักที่มีในคลัง',
+        items: [
+          { project_item_id: 'pitem-1', model_name: 'Huawei eKitEngine S220-24P4X Switch', item_type: 'equipment', qty: 1, item_ids: ['itm-prj-01'] },
+          { project_item_id: 'pitem-2', model_name: 'Hikvision 8CH NVR + 4MP CCTV Kit', item_type: 'equipment', qty: 1, item_ids: ['itm-prj-02'] },
+          { project_item_id: 'pitem-4', model_name: 'สายสัญญาณ LAN Link Cat6 UTP 305m (กล่อง)', item_type: 'consumable', qty: 4 },
+          { project_item_id: 'pitem-5', model_name: 'ค่าบริการเดินสาย LAN ท่อร้อยสาย และจัดตู้ Rack Server (ต่อจุด)', item_type: 'consumable', qty: 24 }
+        ]
+      }
+    ],
+    material_requests: [
+      {
+        id: 'mreq-001',
+        item_name: 'สายสัญญาณ LAN Link Cat6 UTP 305m (กล่อง)',
+        product_id: 'prod-11',
+        qty: 2,
+        reason: 'หน้างานโซนโกดัง C2 ระยะเดินสายไกลกว่าแบบแปลนเดิม 45 เมตร ต้องใช้สายเพิ่ม 2 กล่อง',
+        requested_by: 'ช่างซี',
+        requested_at: new Date(Date.now() - 3600000 * 4).toISOString(),
+        status: 'pending'
+      }
+    ],
+    daily_logs: [
+      {
+        id: 'dlog-1',
+        date: new Date(Date.now() - 86400000 * 2).toISOString().split('T')[0],
+        tech_name: 'ช่างซี',
+        progress_percent: 30,
+        note: 'เข้าหน้างานวันแรก เดินท่อร้อยสาย EMT โซนออฟฟิศชั้น 1-2 และดึงสาย LAN Cat6 ครบ 16 จุด',
+        photo_urls: []
+      },
+      {
+        id: 'dlog-2',
+        date: new Date(Date.now() - 86400000).toISOString().split('T')[0],
+        tech_name: 'ช่างซี',
+        progress_percent: 60,
+        note: 'ติดตั้ง Switch PoE ตัวที่ 1 (S/N: HW-S220-PRJ01) และยึดกล้อง CCTV รอบโกดัง C1 เสร็จ 8 จุด',
+        photo_urls: []
+      }
+    ],
+    created_at: new Date(Date.now() - 86400000 * 3).toISOString(),
+    updated_at: new Date(Date.now() - 3600000 * 4).toISOString(),
+    activity_logs: [
+      {
+        timestamp: new Date(Date.now() - 86400000 * 3).toISOString(),
+        action: 'เปิดโปรเจกต์รับเหมา / ติดตั้งใหม่',
+        actor: 'เซลล์เอ',
+        role: 'sales',
+        note: 'PRJ-2026-001 | โครงการติดตั้งระบบ Network & CCTV อาคารคลังสินค้าใหม่ C1-C2'
+      },
+      {
+        timestamp: new Date(Date.now() - 86400000 * 1.5).toISOString(),
+        action: 'ปล่อยของออกเป็นงวดเบิก (Batch #1)',
+        actor: 'คุณสมศรี (จัดซื้อและสต๊อกสินค้า)',
+        role: 'accounting',
+        note: 'ปล่อยอุปกรณ์หลัก 2 รายการเข้าช่าง Prep และวัสดุสิ้นเปลือง/ค่าแรง 2 รายการส่งตรงทีมช่าง Onsite'
+      },
+      {
+        timestamp: new Date(Date.now() - 86400000).toISOString(),
+        action: 'แอดรายการเพิ่มเข้าโปรเจกต์ (Add-on)',
+        actor: 'เซลล์บี',
+        role: 'sales',
+        note: 'แอดเพิ่มโดย เซลล์บี: Ubiquiti UniFi U6-Pro Wi-Fi 6 Access Point x3 เครื่อง (฿18,600)'
+      },
+      {
+        timestamp: new Date(Date.now() - 3600000 * 4).toISOString(),
+        action: 'ช่างหน้างานขอเบิกของเพิ่ม (Field Material Request)',
+        actor: 'ช่างซี',
+        role: 'onsite',
+        note: 'ขอเบิก: สายสัญญาณ LAN Link Cat6 UTP 305m (กล่อง) x2 — หน้างานโซนโกดัง C2 ระยะเดินสายไกลกว่าแบบแปลนเดิม'
+      }
+    ]
   }
 ];

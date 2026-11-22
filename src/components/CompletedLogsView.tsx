@@ -2,13 +2,15 @@ import React, { useMemo, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import {
     History, Search, FileCheck2, Truck, Store, Wrench, PackageCheck,
-    Clock, User, MapPin, ChevronDown, ChevronUp, CalendarClock, Timer, ShieldCheck, Printer
+    Clock, User, MapPin, ChevronDown, ChevronUp, CalendarClock, Timer, ShieldCheck, Printer, Camera
 } from 'lucide-react';
 import {
     ActivityLog, Order, Item, RepairTicket, formatThaiDateTime, getLatestLog,
     formatWarrantyDuration, formatDateDMY, getWarrantyState, WarrantyState
 } from '../types';
 import { ActivityTimeline } from './ActivityTimeline';
+import { BarcodeScannerModal } from './BarcodeScannerModal';
+import { EvidencePhotoUploader } from './EvidencePhotoUploader';
 
 // ==============================================================================
 // CompletedLogsView — "ประวัติปิดงาน & Log ย้อนหลัง (Completed Job Logs)"
@@ -31,6 +33,7 @@ interface CompletedJob {
     location?: string;
     typeLabel: string;          // ป้ายประเภทงาน
     logs: ActivityLog[];
+    photoUrls?: string[];
     ticket?: RepairTicket;      // raw ticket for repair jobs
     // --- Warranty coverage ---
     warrantyYears?: number;
@@ -106,12 +109,13 @@ const isRepairCompleted = (t: RepairTicket): boolean =>
     t.status === 'returned_closed' || !!t.delivered_at;
 
 export const CompletedLogsView: React.FC = () => {
-    const { orders, items, repairTickets, triggerPrintRepairReceipt } = useApp();
+    const { orders, items, repairTickets, projects, triggerPrintRepairReceipt } = useApp();
 
     const [search, setSearch] = useState('');
     const [activeTab, setActiveTab] = useState<FilterTab>('all');
     const [sortDir, setSortDir] = useState<'newest' | 'oldest'>('newest');
     const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+    const [scannerOpen, setScannerOpen] = useState(false);
 
     // ---- Aggregate completed jobs from all sources ----
     const allJobs = useMemo<CompletedJob[]>(() => {
@@ -157,6 +161,7 @@ export const CompletedLogsView: React.FC = () => {
                 location: o.delivery_location,
                 typeLabel: pickup ? 'ลูกค้ารับเองหน้าร้าน' : 'ส่งมอบ & ติดตั้ง',
                 logs: o.activity_logs || [],
+                photoUrls: Array.from(new Set(relatedItems.flatMap((it) => it.photo_urls || []))),
                 warrantyYears,
                 warrantyMonths,
                 warrantyVoidDate: warrantyItem?.warranty_void_date || null,
@@ -200,7 +205,8 @@ export const CompletedLogsView: React.FC = () => {
                 startedAt: it.assigned_at || it.created_at,
                 location: order?.delivery_location || order?.district,
                 typeLabel: 'ปิดงาน Onsite (ส่งต่อช่างหน้าร้าน)',
-                logs: it.activity_logs || []
+                logs: it.activity_logs || [],
+                photoUrls: it.photo_urls || []
             });
         });
 
@@ -230,6 +236,7 @@ export const CompletedLogsView: React.FC = () => {
                 location: t.delivery_location || t.district,
                 typeLabel: isRma ? 'งานส่งเคลม (RMA)' : 'งานซ่อมหน้าร้าน',
                 logs: t.activity_logs || [],
+                photoUrls: t.photo_urls || [],
                 ticket: t,
                 serviceType: isRma ? 'rma_claim' : 'in_house_repair',
                 rmaSupplier: t.rma_supplier || null,
@@ -241,8 +248,41 @@ export const CompletedLogsView: React.FC = () => {
             });
         });
 
+        // 4) Completed Projects (PRJ-...)
+        projects.forEach((p) => {
+            if (p.status !== 'completed') return;
+            const prjItems = items.filter((it) => it.project_id === p.id);
+            const serialNumbers = Array.from(
+                new Set([
+                    ...prjItems.map((it) => it.serial_number || '').filter(Boolean),
+                    ...p.items.flatMap((pi) => pi.serial_numbers || []).filter(Boolean)
+                ])
+            );
+            const photoUrls = Array.from(
+                new Set([
+                    ...(p.handover_photo_urls || []),
+                    ...p.daily_logs.flatMap((d) => d.photo_urls || [])
+                ])
+            );
+            jobs.push({
+                id: `project-${p.id}`,
+                kind: 'sales',
+                refNo: p.id,
+                customerName: `${p.customer_name} (${p.site_name})`,
+                productName: p.items.map((pi) => `${pi.model_name} x${pi.qty_required}`).join(', ') || p.site_name,
+                serialNumber: serialNumbers.join(', ') || null,
+                techs: p.assigned_techs || [],
+                completedAt: p.completed_at || p.updated_at || p.created_at,
+                startedAt: p.created_at,
+                location: p.location || p.district,
+                typeLabel: 'ปิดงานโปรเจกต์ / ติดตั้ง',
+                logs: p.activity_logs || [],
+                photoUrls,
+            });
+        });
+
         return jobs;
-    }, [orders, items, repairTickets]);
+    }, [orders, items, repairTickets, projects]);
 
     // ---- Filter + search + sort ----
     const filteredJobs = useMemo(() => {
@@ -292,13 +332,13 @@ export const CompletedLogsView: React.FC = () => {
                         <History className="w-5 h-5" />
                     </div>
                     <div>
-                        <h2 className="text-base sm:text-lg font-extrabold text-white flex items-center gap-2">
+                        <h2 className="text-base sm:text-lg font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
                             ประวัติปิดงาน & Log ย้อนหลัง
-                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/[0.06] text-slate-400 border border-white/[0.08] font-normal">
+                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-200/70 dark:bg-white/[0.06] text-slate-600 dark:text-slate-400 border border-slate-300 dark:border-white/[0.08] font-normal">
                                 Completed Job Logs
                             </span>
                         </h2>
-                        <p className="text-xs text-slate-400">
+                        <p className="text-xs text-slate-500 dark:text-slate-400">
                             ตรวจสอบงานที่ปิดแล้วทั้งหมด พร้อมไทม์ไลน์การดำเนินงานแบบครบขั้นตอน
                         </p>
                     </div>
@@ -312,9 +352,18 @@ export const CompletedLogsView: React.FC = () => {
                             type="text"
                             value={search}
                             onChange={(e) => setSearch(e.target.value)}
-                            placeholder="ค้นหา: ชื่อลูกค้า, เลขที่บิล (ORD-/REP-), ชื่อสินค้า, S/N, ชื่อช่าง..."
-                            className="w-full liquid-glass-input rounded-2xl pl-9 pr-3 py-2.5 text-xs text-white focus:outline-none"
+                            placeholder="ค้นหา: ชื่อลูกค้า, เลขที่บิล (ORD-/REP-/PRJ-), ชื่อสินค้า, S/N, ชื่อช่าง..."
+                            className="w-full liquid-glass-input rounded-2xl pl-9 pr-10 py-2.5 text-xs text-slate-900 dark:text-white focus:outline-none"
                         />
+                        <button
+                            type="button"
+                            onClick={() => setScannerOpen(true)}
+                            title="สแกน S/N ด้วยกล้อง"
+                            aria-label="สแกน S/N ด้วยกล้อง"
+                            className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-slate-500 dark:text-slate-400 hover:text-[#FF6B00] hover:bg-slate-200/70 dark:hover:bg-white/[0.08] transition cursor-pointer active:scale-95"
+                        >
+                            <Camera className="w-4 h-4" />
+                        </button>
                     </div>
                     <div className="flex items-center gap-1.5">
                         <CalendarClock className="w-4 h-4 text-slate-400 flex-shrink-0" />
@@ -322,10 +371,10 @@ export const CompletedLogsView: React.FC = () => {
                             value={sortDir}
                             onChange={(e) => setSortDir(e.target.value as 'newest' | 'oldest')}
                             aria-label="เรียงลำดับ"
-                            className="liquid-glass-input rounded-2xl px-3 py-2.5 text-xs text-white focus:outline-none cursor-pointer min-h-[42px]"
+                            className="liquid-glass-input rounded-2xl px-3 py-2.5 text-xs text-slate-900 dark:text-white focus:outline-none cursor-pointer min-h-[42px]"
                         >
-                            <option value="newest" className="bg-[#12141A]">ปิดงานล่าสุด → เก่าสุด</option>
-                            <option value="oldest" className="bg-[#12141A]">เก่าสุด → ล่าสุด</option>
+                            <option value="newest" className="bg-white dark:bg-[#12141A]">ปิดงานล่าสุด → เก่าสุด</option>
+                            <option value="oldest" className="bg-white dark:bg-[#12141A]">เก่าสุด → ล่าสุด</option>
                         </select>
                     </div>
                 </div>
@@ -341,12 +390,12 @@ export const CompletedLogsView: React.FC = () => {
                                 onClick={() => setActiveTab(tab.id)}
                                 className={`px-3 py-1.5 rounded-xl text-[11px] font-semibold border transition-all duration-150 active:scale-[0.97] cursor-pointer inline-flex items-center gap-1.5 ${isActive
                                     ? 'bg-[#FF6B00] text-black border-[#FF6B00] shadow-md shadow-[#FF6B00]/25'
-                                    : 'bg-white/[0.04] text-slate-300 border-white/[0.08] hover:bg-white/[0.08]'
+                                    : 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200 dark:bg-white/[0.04] dark:text-slate-300 dark:border-white/[0.08] dark:hover:bg-white/[0.08]'
                                     }`}
                             >
                                 {tab.label}
                                 <span
-                                    className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${isActive ? 'bg-black/20 text-black' : 'bg-white/[0.08] text-slate-400'
+                                    className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${isActive ? 'bg-black/20 text-black' : 'bg-slate-200 text-slate-600 dark:bg-white/[0.08] dark:text-slate-400'
                                         }`}
                                 >
                                     {tabCount(tab.id)}
@@ -486,6 +535,19 @@ export const CompletedLogsView: React.FC = () => {
                                 )}
 
                                 {/* Expand toggle + timeline + actions */}
+                                {job.photoUrls && job.photoUrls.length > 0 && (
+                                    <div className="pt-2 border-t border-slate-200/70 dark:border-white/[0.08]">
+                                        <EvidencePhotoUploader
+                                            value={job.photoUrls}
+                                            onChange={() => {}}
+                                            folder="onsite"
+                                            editable={false}
+                                            compact
+                                            label="รูปถ่ายหลักฐานปิดงาน"
+                                        />
+                                    </div>
+                                )}
+
                                 <div className="pt-2 border-t border-white/[0.08]">
                                     <div className="flex items-center justify-between gap-2 flex-wrap">
                                         <button
@@ -529,6 +591,16 @@ export const CompletedLogsView: React.FC = () => {
                     })}
                 </div>
             )}
+
+            <BarcodeScannerModal
+                open={scannerOpen}
+                onClose={() => setScannerOpen(false)}
+                onScan={(code) => {
+                    const clean = code.trim();
+                    if (clean) setSearch(clean);
+                    setScannerOpen(false);
+                }}
+            />
         </div>
     );
 };

@@ -3,7 +3,7 @@ import { useApp } from '../context/AppContext';
 import {
   Clock, Package, ClipboardList, Truck, Wrench, CheckCircle2,
   Search, ShieldAlert, ShieldCheck, Hash, ChevronRight,
-  FileText, ShoppingCart, X
+  FileText, ShoppingCart, X, Camera
 } from 'lucide-react';
 import { formatDateDMY, formatThaiDateTime } from '../types';
 import {
@@ -18,15 +18,17 @@ import {
 } from '../utils/snLookup';
 import { SnDetailModal } from './SnDetailModal';
 import { DocumentDetailModal, DocumentDetailTarget } from './DocumentDetailModal';
+import { BarcodeScannerModal } from './BarcodeScannerModal';
 
 type UnifiedSearchFilter = 'all' | 'sn' | 'so' | 'po' | 'repair';
 
 export const DashboardView: React.FC = () => {
-  const { orders, items, repairTickets, stockPOs, isSyncing } = useApp();
+  const { orders, items, repairTickets, stockPOs, projects, isSyncing } = useApp();
   const [searchTerm, setSearchTerm] = useState('');
   const [searchFilter, setSearchFilter] = useState<UnifiedSearchFilter>('all');
   const [selectedMatch, setSelectedMatch] = useState<SnSearchMatch | null>(null);
   const [selectedDoc, setSelectedDoc] = useState<DocumentDetailTarget>(null);
+  const [scannerOpen, setScannerOpen] = useState(false);
 
   const pendingPurchasing = orders.filter(o => o.order_status === 'pending_purchasing' || o.order_status === 'waiting_po' || o.order_status === 'po_received_in_stock').length;
   const pendingPrep = items.filter(i => i.status === 'pending_prep').length;
@@ -35,7 +37,10 @@ export const DashboardView: React.FC = () => {
   const inRepair = repairTickets.filter(r => r.status !== 'returned_closed' && r.repair_status !== 'completed' && !r.delivered_at).length;
   const delivered = items.filter(i => {
     const ord = i.order_id ? orders.find(o => o.id === i.order_id) || null : null;
-    return resolveLiveSnStatus(i, ord, []).isCompleted;
+    const linked = repairTickets.filter(
+      t => t.item_id === i.id || (i.serial_number && (t.walkin_sn === i.serial_number || t.replacement_sn === i.serial_number))
+    );
+    return resolveLiveSnStatus(i, ord, linked).isCompleted;
   }).length;
 
   const searchQuery = searchTerm.trim();
@@ -47,8 +52,8 @@ export const DashboardView: React.FC = () => {
   };
 
   const snMatches = useMemo(
-    () => searchSnRecords(searchQuery, items, orders, repairTickets),
-    [searchQuery, items, orders, repairTickets]
+    () => searchSnRecords(searchQuery, items, orders, repairTickets, projects),
+    [searchQuery, items, orders, repairTickets, projects]
   );
 
   const repairMatches = useMemo(
@@ -213,19 +218,28 @@ export const DashboardView: React.FC = () => {
               placeholder="พิมพ์ S/N, เลขบิล, SO, PO, REP-... หรือชื่อลูกค้า..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full liquid-glass-input rounded-2xl px-4 py-2.5 pl-10 pr-24 text-sm text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none transition"
+              className="w-full liquid-glass-input rounded-2xl px-4 py-2.5 pl-10 pr-32 text-sm text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none transition"
             />
             <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
             {searchTerm && (
               <button
                 type="button"
                 onClick={() => setSearchTerm('')}
-                className="absolute right-16 top-3 text-slate-400 hover:text-slate-900 dark:hover:text-white transition cursor-pointer"
+                className="absolute right-24 top-1/2 -translate-y-1/2 p-2 rounded-lg text-slate-400 hover:text-slate-900 dark:hover:text-white transition cursor-pointer"
                 aria-label="ล้างคำค้นหา"
               >
                 <X className="w-4 h-4" />
               </button>
             )}
+            <button
+              type="button"
+              onClick={() => setScannerOpen(true)}
+              title="สแกน S/N ด้วยกล้อง"
+              aria-label="สแกน S/N ด้วยกล้อง"
+              className="absolute right-16 top-2 p-1.5 rounded-lg text-slate-500 dark:text-slate-400 hover:text-[#FF6B00] hover:bg-slate-200/70 dark:hover:bg-white/[0.08] transition cursor-pointer active:scale-95"
+            >
+              <Camera className="w-4 h-4" />
+            </button>
             <button
               type="submit"
               className="absolute right-1.5 top-1.5 px-3 py-1.5 bg-[#FF6B00] hover:bg-[#E65A00] hover:brightness-105 text-black font-bold rounded-xl text-xs transition-all duration-150 active:scale-[0.97] cursor-pointer shadow-md shadow-[#FF6B00]/25"
@@ -604,7 +618,7 @@ export const DashboardView: React.FC = () => {
                   <tr
                     key={i.id}
                     onClick={() => {
-                      const matches = searchSnRecords(i.serial_number || i.id, [i], ord ? [ord] : [], linkedRepairs);
+                      const matches = searchSnRecords(i.serial_number || i.id, [i], ord ? [ord] : [], linkedRepairs, projects);
                       if (matches[0]) setSelectedMatch(matches[0]);
                     }}
                     className="hover:bg-slate-50 dark:hover:bg-white/[0.03] transition cursor-pointer"
@@ -657,6 +671,17 @@ export const DashboardView: React.FC = () => {
         items={items}
         repairTickets={repairTickets}
         onClose={() => setSelectedDoc(null)}
+      />
+
+      {/* Camera Barcode / QR Scanner */}
+      <BarcodeScannerModal
+        open={scannerOpen}
+        onClose={() => setScannerOpen(false)}
+        onScan={(code) => {
+          const clean = code.trim();
+          if (clean) setSearchTerm(clean);
+          setScannerOpen(false);
+        }}
       />
     </div>
   );

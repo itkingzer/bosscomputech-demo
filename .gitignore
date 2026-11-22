@@ -79,3 +79,6 @@ Thumbs.db
 # Duplicate skill copies (canonical copies live in .roo/skills and .agents/skills)
 /data/skills/
 /skills/
+
+# Local AI prompt notes
+prompt_agent.md

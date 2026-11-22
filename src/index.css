@@ -376,6 +376,52 @@ html.light .text-white {
   color: #090D16 !important;
 }
 
+/* Preserve crisp white text on solid dark/saturated backgrounds in Light Mode */
+html.light :is(
+  .bg-rose-500, .bg-rose-600, .bg-rose-700,
+  .bg-red-500, .bg-red-600, .bg-red-700,
+  .bg-blue-500, .bg-blue-600, .bg-blue-700,
+  .bg-indigo-500, .bg-indigo-600, .bg-indigo-700,
+  .bg-purple-500, .bg-purple-600, .bg-purple-700,
+  .bg-violet-500, .bg-violet-600, .bg-violet-700,
+  .bg-emerald-600, .bg-emerald-700,
+  .bg-teal-600, .bg-teal-700,
+  .bg-cyan-600, .bg-cyan-700,
+  .bg-sky-600, .bg-sky-700,
+  .bg-green-600, .bg-green-700,
+  .bg-pink-600, .bg-pink-700,
+  .bg-amber-600, .bg-orange-600,
+  .bg-black,
+  .from-rose-600, .from-red-600,
+  .from-blue-600, .from-indigo-600,
+  .from-purple-600, .from-violet-600,
+  .from-emerald-600, .from-teal-600,
+  .from-cyan-600, .from-sky-600
+).text-white,
+html.light :is(
+  .bg-rose-500, .bg-rose-600, .bg-rose-700,
+  .bg-red-500, .bg-red-600, .bg-red-700,
+  .bg-blue-500, .bg-blue-600, .bg-blue-700,
+  .bg-indigo-500, .bg-indigo-600, .bg-indigo-700,
+  .bg-purple-500, .bg-purple-600, .bg-purple-700,
+  .bg-violet-500, .bg-violet-600, .bg-violet-700,
+  .bg-emerald-600, .bg-emerald-700,
+  .bg-teal-600, .bg-teal-700,
+  .bg-cyan-600, .bg-cyan-700,
+  .bg-sky-600, .bg-sky-700,
+  .bg-green-600, .bg-green-700,
+  .bg-pink-600, .bg-pink-700,
+  .bg-amber-600, .bg-orange-600,
+  .bg-black,
+  .from-rose-600, .from-red-600,
+  .from-blue-600, .from-indigo-600,
+  .from-purple-600, .from-violet-600,
+  .from-emerald-600, .from-teal-600,
+  .from-cyan-600, .from-sky-600
+) .text-white {
+  color: #FFFFFF !important;
+}
+
 html.light .text-slate-100 {
   color: #090D16 !important;
 }
@@ -857,10 +903,11 @@ html.light ::-webkit-scrollbar-thumb {
     color: #000000 !important;
   }
 
-  /* Hide everything by default. `display: none` (not `visibility: hidden`)
+  /* Hide everything by default for repair receipts. `display: none` (not `visibility: hidden`)
      removes nodes from layout entirely so they reserve zero vertical space
-     and can never push the receipt onto page 2. */
-  body * {
+     and can never push the receipt onto page 2.
+     Exclude ORDER FORM 2026 which has its own dedicated print layout rules below. */
+  body:not(:has(#order-form-2026-print)) * {
     display: none !important;
   }
 
@@ -1104,10 +1151,10 @@ html.light ::-webkit-scrollbar-thumb {
   }
 
   /* Hide app chrome, buttons and navbars from the printed page */
-  nav,
-  header,
-  footer,
-  aside,
+  body:not(:has(#order-form-2026-print)) nav,
+  body:not(:has(#order-form-2026-print)) header,
+  body:not(:has(#order-form-2026-print)) footer,
+  body:not(:has(#order-form-2026-print)) aside,
   .no-print,
   button {
     display: none !important;
@@ -1119,4 +1166,73 @@ html.light ::-webkit-scrollbar-thumb {
 @page receipt-a5 {
   size: A5 landscape;
   margin: 4mm;
+}
+
+/* ========================================================================= */
+/* ORDER FORM 2026 (A4 Portrait Official Print Styles)                       */
+/* ========================================================================= */
+@page order-form-a4 {
+  size: A4 portrait;
+  margin: 6mm;
+}
+
+@media print {
+  html:has(#order-form-2026-print),
+  body:has(#order-form-2026-print) {
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #FFFFFF !important;
+    color: #000000 !important;
+  }
+
+  body:has(#order-form-2026-print) > *:not(.order-form-print-portal) {
+    display: none !important;
+  }
+
+  body:has(#order-form-2026-print) .order-form-print-portal {
+    page: order-form-a4;
+    position: static !important;
+    display: block !important;
+    overflow: visible !important;
+    height: auto !important;
+    width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: #FFFFFF !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    animation: none !important;
+  }
+
+  body:has(#order-form-2026-print) .order-form-print-portal .no-print {
+    display: none !important;
+  }
+
+  #order-form-2026-print {
+    page: order-form-a4;
+    box-sizing: border-box !important;
+    width: 100% !important;
+    max-width: 198mm !important;
+    min-height: auto !important;
+    margin: 0 auto !important;
+    padding: 2mm !important;
+    background: #FFFFFF !important;
+    color: #000000 !important;
+    box-shadow: none !important;
+    border: none !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  #order-form-2026-print * {
+    color: #000000 !important;
+    border-color: #000000 !important;
+    box-shadow: none !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
 }
