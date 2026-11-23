@@ -69,7 +69,11 @@ export const AccountingView: React.FC = () => {
   });
 
   const summary = useMemo(() => {
-    const readyOrdersCount = orders.filter(o => (o.order_status === 'fulfilled' || o.order_status === 'approved_for_prep') && o.billing_status !== 'billed').length;
+    const readyOrdersCount = orders.filter(o => {
+      const isRecurringOrAddon = o.billing_type === 'rental' || o.billing_type === 'ma' || o.billing_type === 'addon';
+      const isReadyStatus = isRecurringOrAddon || o.order_status === 'fulfilled' || o.order_status === 'approved_for_prep';
+      return isReadyStatus && o.billing_status !== 'billed';
+    }).length;
     const readyProjectsCount = projects.filter(p => (p.status === 'completed' || p.status === 'handover_pending') && p.billing_status !== 'billed').length;
     const billedTotalCount =
       orders.filter(o => o.billing_status === 'billed').length +

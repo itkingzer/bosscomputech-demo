@@ -98,6 +98,8 @@ interface AppContextType {
   stockPOs: StockPO[];
   projects: Project[];
   contracts: Contract[];
+  addContract: (payload: Omit<Contract, 'id' | 'created_at' | 'items'> & { items: Omit<ContractItem, 'id' | 'contract_id'>[] }) => Contract;
+  updateContractStatus: (contractId: string, status: Contract['status']) => void;
 
   // Project & Site Installation Module (PRJ-2026-XXX)
   createProject: (payload: {
@@ -842,6 +844,55 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Actions
+  const addContract = (
+    payload: Omit<Contract, 'id' | 'created_at' | 'items'> & { items: Omit<ContractItem, 'id' | 'contract_id'>[] }
+  ): Contract => {
+    const now = new Date().toISOString();
+    const contractId = newUuid();
+    const contractItems: ContractItem[] = (payload.items || []).map((it, idx) => ({
+      id: `${contractId}-item-${idx + 1}`,
+      contract_id: contractId,
+      product_id: it.product_id,
+      model_name: it.model_name,
+      item_type: it.item_type,
+      unit: it.unit,
+      quantity: it.quantity,
+      unit_price: it.unit_price,
+      unit_cost: it.unit_cost,
+      description: it.description
+    }));
+    const newContract: Contract = {
+      ...payload,
+      id: contractId,
+      items: contractItems,
+      created_at: now,
+      updated_at: now
+    };
+    setContracts(prev => [newContract, ...prev]);
+
+    if (isSupabaseLive && supabaseClient) {
+      const { items: _ci, ...dbContract } = newContract;
+      void _ci;
+      void supabaseClient.from('contracts').insert([dbContract]).then(({ error }) => {
+        if (error) console.warn('Supabase contracts insert warning:', error.message);
+        else if (contractItems.length > 0) {
+          void supabaseClient.from('contract_items').insert(contractItems).then(({ error: ciErr }) => {
+            if (ciErr) console.warn('Supabase contract_items insert warning:', ciErr.message);
+          });
+        }
+      });
+    }
+    return newContract;
+  };
+
+  const updateContractStatus = (contractId: string, status: Contract['status']) => {
+    const now = new Date().toISOString();
+    setContracts(prev => prev.map(c => c.id === contractId ? { ...c, status, updated_at: now } : c));
+    if (isSupabaseLive && supabaseClient) {
+      void supabaseClient.from('contracts').update({ status, updated_at: now }).eq('id', contractId);
+    }
+  };
+
   const createOrder = async (orderData: Omit<Order, 'id' | 'created_at' | 'order_status'> & { planned_model?: string; planned_quantity?: number }) => {
     const routeCode = orderData.district ? getRouteByDistrict(orderData.district) : ('route_5' as RouteCode);
     const actor = currentUserRef.current;
@@ -860,6 +911,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       `ลูกค้า: ${orderData.customer_name}${orderData.billing_period ? ` | งวด: ${orderData.billing_period}` : ''}${orderData.district ? ` | พื้นที่: ${orderData.district}` : ''}`
     );
 
+    const resolvedItems = orderData.items_list || (orderData.planned_model ? [{ model_name: orderData.planned_model, quantity: orderData.planned_quantity || 1 }] : []);
+    const isServiceOnlyContractBill =
+      (orderData.billing_type === 'rental' || orderData.billing_type === 'ma') &&
+      resolvedItems.length > 0 &&
+      resolvedItems.every(it => it.item_type === 'service');
+
     const newOrder: Order = {
       id: newUuid(),
       sales_ref: orderData.sales_ref,
@@ -876,11 +933,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       payment_term: orderData.payment_term || 'cash',
       delivery_mode: orderData.delivery_mode || 'install',
       site_notes: orderData.site_notes,
-      items_list: orderData.items_list || (orderData.planned_model ? [{ model_name: orderData.planned_model, quantity: orderData.planned_quantity || 1 }] : []),
+      items_list: resolvedItems,
       extra_cost: orderData.extra_cost || 0,
       deposit_amount: Math.max(0, orderData.deposit_amount || 0),
       bill_no: null,
-      order_status: 'pending_purchasing',
+      order_status: isServiceOnlyContractBill ? 'fulfilled' : 'pending_purchasing',
+      fulfilled_at: isServiceOnlyContractBill ? now : null,
       billing_status: orderData.billing_status || 'pending',
       billing_type: orderData.billing_type || 'sales',
       sub_type: orderData.sub_type || 'standard',
@@ -3784,6 +3842,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       stockPOs,
       projects,
       contracts,
+      addContract,
+      updateContractStatus,
       createProject,
       addProjectAddonItems,
       releaseProjectBatch,

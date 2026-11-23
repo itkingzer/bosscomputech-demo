@@ -93,7 +93,7 @@ const DELIVERY_MODE_META: Record<DeliveryMode, { label: string; cls: string }> =
 export const SalesView: React.FC = () => {
   const {
     orders, createOrder, currentUser, users, products, addProduct, updateProduct, deleteProduct, items,
-    projects, createProject, addProjectAddonItems, contracts
+    projects, createProject, addProjectAddonItems, contracts, addContract, updateContractStatus
   } = useApp();
 
   // ชื่อพนักงานขายที่ล็อกอินอยู่ (auto-tag ลงทุกออเดอร์ ไม่ต้องเลือกเอง)
@@ -152,7 +152,28 @@ export const SalesView: React.FC = () => {
 
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isCatalogModalOpen, setIsCatalogModalOpen] = useState(false);
-  const [catalogTarget, setCatalogTarget] = useState<'order' | 'contract_order' | 'project_equipment' | 'project_consumable' | 'addon'>('order');
+  const [catalogTarget, setCatalogTarget] = useState<'order' | 'contract_order' | 'contract_template' | 'project_equipment' | 'project_consumable' | 'addon'>('order');
+
+  // Contract Manager & Add Contract Modal State
+  const [isContractManagerOpen, setIsContractManagerOpen] = useState(false);
+  const [showAddContractForm, setShowAddContractForm] = useState(false);
+  const [ctrType, setCtrType] = useState<'rental' | 'ma'>('rental');
+  const [ctrSubType, setCtrSubType] = useState<Contract['sub_type']>('internet_rental');
+  const [ctrBillingCycle, setCtrBillingCycle] = useState<Contract['billing_cycle']>('monthly');
+  const [ctrNo, setCtrNo] = useState('');
+  const [ctrCustomerName, setCtrCustomerName] = useState('');
+  const [ctrCustomerPhone, setCtrCustomerPhone] = useState('');
+  const [ctrDistrict, setCtrDistrict] = useState('เมืองสุราษฎร์ธานี');
+  const [ctrLocation, setCtrLocation] = useState('');
+  const [ctrStartDate, setCtrStartDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [ctrEndDate, setCtrEndDate] = useState(() => {
+    const d = new Date();
+    d.setFullYear(d.getFullYear() + 1);
+    d.setDate(d.getDate() - 1);
+    return d.toISOString().split('T')[0];
+  });
+  const [ctrNotes, setCtrNotes] = useState('');
+  const [ctrItems, setCtrItems] = useState<OrderItem[]>([]);
   const [detailOrder, setDetailOrder] = useState<Order | null>(null);
   const [printTarget, setPrintTarget] = useState<{ order?: Order | null; project?: Project | null } | null>(null);
 
@@ -528,6 +549,100 @@ export const SalesView: React.FC = () => {
     setTimeout(() => setToast(''), 4500);
   };
 
+  // ---- Contract Manager & Add Contract Handlers ----
+  const makeContractNo = (subType: Contract['sub_type']) => {
+    const y = new Date().getFullYear();
+    const num = String(contracts.length + 1).padStart(3, '0');
+    const prefix =
+      subType === 'internet_rental' ? 'RENT-NET' :
+      subType === 'system_rental' ? 'RENT-SYS' :
+      subType === 'equipment_rental' ? 'RENT-EQ' : 'MA';
+    return `${prefix}-${y}-${num}`;
+  };
+
+  const handleOpenContractManager = (openForm = false, presetType: 'rental' | 'ma' = 'rental') => {
+    const defaultSub: Contract['sub_type'] = presetType === 'ma' ? 'ma_monthly' : 'internet_rental';
+    setCtrType(presetType);
+    setCtrSubType(defaultSub);
+    setCtrBillingCycle('monthly');
+    setCtrNo(makeContractNo(defaultSub));
+    setCtrCustomerName('');
+    setCtrCustomerPhone('');
+    setCtrDistrict('เมืองสุราษฎร์ธานี');
+    setCtrLocation('');
+    const today = new Date();
+    const nextYear = new Date(today);
+    nextYear.setFullYear(nextYear.getFullYear() + 1);
+    nextYear.setDate(nextYear.getDate() - 1);
+    setCtrStartDate(today.toISOString().split('T')[0]);
+    setCtrEndDate(nextYear.toISOString().split('T')[0]);
+    setCtrNotes('');
+    setCtrItems([]);
+    setShowAddContractForm(openForm);
+    setIsContractManagerOpen(true);
+  };
+
+  const handleSaveNewContract = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!ctrCustomerName.trim() || !ctrNo.trim() || ctrItems.length === 0) {
+      alert('กรุณากรอกเลขที่สัญญา ชื่อลูกค้า และเพิ่มรายการในสัญญาอย่างน้อย 1 รายการ');
+      return;
+    }
+    const custSlug = `cust-${ctrCustomerName.trim().toLowerCase().replace(/[^a-z0-9ก-๙]+/gi, '-').slice(0, 24)}-${Date.now().toString().slice(-4)}`;
+    const created = addContract({
+      contract_no: ctrNo.trim(),
+      customer_id: custSlug,
+      customer_name: ctrCustomerName.trim(),
+      customer_phone: ctrCustomerPhone.trim(),
+      district: ctrDistrict,
+      delivery_location: ctrLocation.trim() || `อ.${ctrDistrict}`,
+      contract_type: ctrType,
+      sub_type: ctrSubType,
+      billing_cycle: ctrBillingCycle,
+      start_date: ctrStartDate,
+      end_date: ctrEndDate,
+      status: 'active',
+      notes: ctrNotes.trim(),
+      items: ctrItems.map(it => ({
+        model_name: it.model_name,
+        item_type: it.item_type || 'service',
+        unit: it.unit || 'รายการ',
+        quantity: it.quantity || 1,
+        unit_price: it.unit_price || 0,
+        unit_cost: it.unit_cost || 0
+      }))
+    });
+
+    setToast(`เพิ่มสัญญา ${created.contract_no} (${created.customer_name}) เรียบร้อยแล้ว`);
+    setShowAddContractForm(false);
+
+    // If user opened this from inside Rental/MA billing modal, auto-select the newly created contract
+    if (isContractBillingOpen && created.contract_type === contractBillingMode) {
+      setIsContractManagerOpen(false);
+      setTimeout(() => {
+        setSelectedContractCustomerId(created.customer_id);
+        setSelectedContractId(created.id);
+        const defaults = getDefaultBillingPeriod(created.billing_cycle);
+        setContractBillingPeriod(defaults.period);
+        setContractPeriodStart(defaults.start);
+        setContractPeriodEnd(defaults.end);
+        setContractSiteNotes(created.notes || '');
+        setContractOrderItems(
+          created.items.map(ci => ({
+            model_name: ci.model_name,
+            item_type: ci.item_type,
+            quantity: ci.quantity,
+            unit: ci.unit,
+            unit_price: ci.unit_price,
+            unit_cost: ci.unit_cost,
+            warranty_years: 0
+          }))
+        );
+      }, 0);
+    }
+    setTimeout(() => setToast(''), 4500);
+  };
+
   // ---- Create Order Modal (Sales / Addon) ----
   const handleOpenCreateModal = (mode: 'sales' | 'addon' = 'sales') => {
     setIsBillingTypeModalOpen(false);
@@ -557,7 +672,7 @@ export const SalesView: React.FC = () => {
   const handleCloseCreateModal = () => setIsCreateModalOpen(false);
 
   // Open Catalog Modal
-  const handleOpenCatalogModal = (target: 'order' | 'contract_order' | 'project_equipment' | 'project_consumable' | 'addon' = 'order') => {
+  const handleOpenCatalogModal = (target: 'order' | 'contract_order' | 'contract_template' | 'project_equipment' | 'project_consumable' | 'addon' = 'order') => {
     setCatalogTarget(target);
     setModalSelectedMap({});
     setSearchQuery('');
@@ -733,6 +848,8 @@ export const SalesView: React.FC = () => {
 
     if (catalogTarget === 'contract_order') {
       setContractOrderItems(prev => [...prev, ...itemsToAdd]);
+    } else if (catalogTarget === 'contract_template') {
+      setCtrItems(prev => [...prev, ...itemsToAdd]);
     } else {
       setOrderItems(prev => [...prev, ...itemsToAdd]);
     }
@@ -1085,6 +1202,14 @@ export const SalesView: React.FC = () => {
             >
               <Plus className="w-4 h-4" />
               <span>เปิดบิล</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleOpenContractManager(false, 'rental')}
+              className="px-4 py-2.5 min-h-[44px] rounded-xl bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-700 dark:text-indigo-300 border border-indigo-500/30 font-bold text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-2 active:scale-[0.97]"
+            >
+              <FileCheck2 className="w-4 h-4" />
+              <span>จัดการ / เพิ่มสัญญา ({contracts.filter(c => c.status === 'active').length})</span>
             </button>
             <button
               type="button"
@@ -3266,18 +3391,36 @@ export const SalesView: React.FC = () => {
 
             <form onSubmit={handleSubmitContractBilling} className="flex-1 overflow-y-auto overscroll-contain p-4 sm:p-6 space-y-5">
               {matchingActiveContracts.length === 0 ? (
-                <div className="p-8 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 text-center space-y-2">
+                <div className="p-8 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 text-center space-y-3">
                   <AlertTriangle className="w-8 h-8 text-amber-500 mx-auto" />
                   <p className="text-sm font-bold text-slate-800 dark:text-slate-200">
                     ไม่พบสัญญา{contractBillingMode === 'rental' ? 'งานเช่า' : 'ดูแลระบบ MA'} ที่สถานะ Active
                   </p>
                   <p className="text-xs text-slate-500 dark:text-slate-400">
-                    กรุณาตรวจสอบข้อมูลสัญญาในระบบ หรือใช้การเปิดบิลแบบทั่วไป/นอกสัญญา
+                    กดปุ่มด้านล่างเพื่อเพิ่มสัญญาใหม่ หรือใช้การเปิดบิลแบบทั่วไป/นอกสัญญา
                   </p>
+                  <button
+                    type="button"
+                    onClick={() => handleOpenContractManager(true, contractBillingMode)}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#FF6B00] hover:bg-[#FF8A24] text-black font-extrabold text-xs cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>+ เพิ่มสัญญา{contractBillingMode === 'rental' ? 'งานเช่า' : ' MA '}ใหม่</span>
+                  </button>
                 </div>
               ) : (
                 <>
                   {/* 1. เลือกลูกค้า & สัญญา Active */}
+                  <div className="flex items-center justify-end">
+                    <button
+                      type="button"
+                      onClick={() => handleOpenContractManager(true, contractBillingMode)}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-indigo-50 dark:bg-indigo-500/15 hover:bg-indigo-100 dark:hover:bg-indigo-500/25 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-500/30 text-[11px] font-bold cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>+ เพิ่มสัญญาใหม่</span>
+                    </button>
+                  </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
@@ -3603,6 +3746,405 @@ export const SalesView: React.FC = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* ========================================================================= */}
+      {/* CONTRACT MANAGER & ADD CONTRACT PORTAL MODAL (z-[10000])                  */}
+      {/* ========================================================================= */}
+      {isContractManagerOpen && createPortal(
+        <div
+          className="fixed inset-0 z-[10000] bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-4 animate-fade-in overscroll-contain"
+          onClick={() => setIsContractManagerOpen(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-t-3xl sm:rounded-3xl w-full sm:w-[92vw] max-w-4xl max-h-[94dvh] sm:max-h-[90vh] flex flex-col overflow-hidden pb-[env(safe-area-inset-bottom)] animate-modal-pop"
+          >
+            <div className="sm:hidden flex justify-center pt-2.5 pb-1 flex-shrink-0">
+              <span className="h-1.5 w-10 rounded-full bg-slate-300 dark:bg-white/20" />
+            </div>
+
+            <div className="p-4 sm:p-5 bg-slate-50/90 dark:bg-slate-900/95 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 flex-shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 rounded-2xl bg-indigo-500/15 text-indigo-600 dark:text-indigo-400 border border-indigo-500/30">
+                  <FileCheck2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm sm:text-base font-extrabold text-slate-900 dark:text-white">
+                    {showAddContractForm ? 'เพิ่มสัญญาใหม่ (เช่า / ดูแลระบบ MA)' : 'จัดการสัญญาลูกค้า (เช่าเน็ต / เช่าระบบ / เช่าอุปกรณ์ / MA)'}
+                  </h3>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    สัญญาที่สถานะ Active จะสามารถเลือกออกบิลรายงวดได้ทันที
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                {!showAddContractForm && (
+                  <button
+                    type="button"
+                    onClick={() => handleOpenContractManager(true, 'rental')}
+                    className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] text-black font-extrabold text-xs cursor-pointer flex items-center gap-1.5 shadow-sm"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>+ เพิ่มสัญญาใหม่</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setIsContractManagerOpen(false)}
+                  aria-label="ปิดหน้าต่างจัดการสัญญา"
+                  className="p-2 rounded-xl bg-slate-100 dark:bg-white/[0.06] text-slate-500 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {showAddContractForm ? (
+              <form onSubmit={handleSaveNewContract} className="flex-1 overflow-y-auto overscroll-contain p-4 sm:p-6 space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">ประเภทสัญญาหลัก *</label>
+                    <select
+                      value={ctrType}
+                      onChange={(e) => {
+                        const nextType = e.target.value as 'rental' | 'ma';
+                        setCtrType(nextType);
+                        const nextSub: Contract['sub_type'] = nextType === 'ma' ? 'ma_monthly' : 'internet_rental';
+                        setCtrSubType(nextSub);
+                        setCtrBillingCycle('monthly');
+                        setCtrNo(makeContractNo(nextSub));
+                      }}
+                      className="w-full rounded-xl px-3 py-2 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700"
+                    >
+                      <option value="rental">สัญญาเช่า (Rental)</option>
+                      <option value="ma">สัญญาดูแลระบบ (MA)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">ประเภทย่อย *</label>
+                    <select
+                      value={ctrSubType}
+                      onChange={(e) => {
+                        const nextSub = e.target.value as Contract['sub_type'];
+                        setCtrSubType(nextSub);
+                        setCtrNo(makeContractNo(nextSub));
+                        if (nextSub === 'ma_quarterly') setCtrBillingCycle('quarterly');
+                        else if (nextSub === 'ma_yearly') setCtrBillingCycle('yearly');
+                        else setCtrBillingCycle('monthly');
+                      }}
+                      className="w-full rounded-xl px-3 py-2 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700"
+                    >
+                      {ctrType === 'rental' ? (
+                        <>
+                          <option value="internet_rental">เช่าอินเทอร์เน็ต (เช่าเน็ต)</option>
+                          <option value="system_rental">เช่าระบบ (POS / Cloud / Software)</option>
+                          <option value="equipment_rental">เช่าอุปกรณ์ (Printer / PC / Network)</option>
+                        </>
+                      ) : (
+                        <>
+                          <option value="ma_monthly">ดูแลระบบ MA รายเดือน</option>
+                          <option value="ma_quarterly">ดูแลระบบ MA รายไตรมาส</option>
+                          <option value="ma_yearly">ดูแลระบบ MA รายปี</option>
+                        </>
+                      )}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">เลขที่สัญญา *</label>
+                    <input
+                      type="text"
+                      required
+                      value={ctrNo}
+                      onChange={(e) => setCtrNo(e.target.value)}
+                      className="w-full rounded-xl px-3 py-2 text-xs font-mono bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">ชื่อลูกค้า / บริษัท *</label>
+                    <input
+                      type="text"
+                      required
+                      value={ctrCustomerName}
+                      onChange={(e) => setCtrCustomerName(e.target.value)}
+                      placeholder="เช่น บจก. สุราษฎร์..."
+                      className="w-full rounded-xl px-3 py-2 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">เบอร์โทร</label>
+                    <input
+                      type="text"
+                      value={ctrCustomerPhone}
+                      onChange={(e) => setCtrCustomerPhone(e.target.value)}
+                      placeholder="077-xxx-xxx"
+                      className="w-full rounded-xl px-3 py-2 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">อำเภอ / พื้นที่</label>
+                    <select
+                      value={ctrDistrict}
+                      onChange={(e) => setCtrDistrict(e.target.value)}
+                      className="w-full rounded-xl px-3 py-2 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700"
+                    >
+                      {DISTRICT_OPTIONS.map(d => (
+                        <option key={d.district} value={d.district}>{d.district}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                  <div className="sm:col-span-2">
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">ที่อยู่ / สถานที่ติดตั้ง</label>
+                    <input
+                      type="text"
+                      value={ctrLocation}
+                      onChange={(e) => setCtrLocation(e.target.value)}
+                      placeholder="เช่น 88/9 ถ.ตลาดใหม่ อ.เมือง..."
+                      className="w-full rounded-xl px-3 py-2 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">วันเริ่มสัญญา *</label>
+                    <input
+                      type="date"
+                      required
+                      value={ctrStartDate}
+                      onChange={(e) => setCtrStartDate(e.target.value)}
+                      className="w-full rounded-xl px-3 py-2 text-xs font-mono bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">วันสิ้นสุดสัญญา *</label>
+                    <input
+                      type="date"
+                      required
+                      value={ctrEndDate}
+                      onChange={(e) => setCtrEndDate(e.target.value)}
+                      className="w-full rounded-xl px-3 py-2 text-xs font-mono bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">หมายเหตุสัญญา</label>
+                  <input
+                    type="text"
+                    value={ctrNotes}
+                    onChange={(e) => setCtrNotes(e.target.value)}
+                    placeholder="รายละเอียดเงื่อนไข SLA / รอบเข้าตรวจ PM"
+                    className="w-full rounded-xl px-3 py-2 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700"
+                  />
+                </div>
+
+                {/* Contract Line Items */}
+                <div className="space-y-2.5 pt-2 border-t border-slate-200 dark:border-slate-800">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <label className="text-xs font-extrabold text-slate-900 dark:text-white">
+                      รายการในสัญญา (จะถูกดึงอัตโนมัติเมื่อเปิดบิลรายงวด) *
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleOpenCatalogModal('contract_template')}
+                        className="px-3 py-1.5 rounded-xl bg-[#FF6B00]/15 hover:bg-[#FF6B00]/25 border border-[#FF6B00]/40 text-[#C2410C] dark:text-[#FF6B00] text-[11px] font-bold cursor-pointer flex items-center gap-1"
+                      >
+                        <Layers className="w-3.5 h-3.5" />
+                        <span>เลือกจากแคตตาล็อก</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setCtrItems(prev => [
+                            ...prev,
+                            {
+                              model_name: ctrType === 'rental' ? 'ค่าบริการเช่า...' : 'ค่าบริการดูแลระบบ MA...',
+                              item_type: 'service',
+                              quantity: 1,
+                              unit: 'รายการ',
+                              unit_price: 0,
+                              unit_cost: 0
+                            }
+                          ])
+                        }
+                        className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-white/[0.06] border border-slate-300 dark:border-white/[0.1] text-slate-800 dark:text-white text-[11px] font-bold cursor-pointer flex items-center gap-1"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>เพิ่มรายการเอง</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {ctrItems.length === 0 ? (
+                    <div className="p-5 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 text-center text-xs text-slate-500">
+                      ยังไม่มีรายการในสัญญา — กด &quot;เลือกจากแคตตาล็อก&quot; หรือ &quot;เพิ่มรายการเอง&quot;
+                    </div>
+                  ) : (
+                    ctrItems.map((it, idx) => (
+                      <div key={idx} className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 space-y-2">
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            required
+                            value={it.model_name}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setCtrItems(prev => prev.map((row, i) => i === idx ? { ...row, model_name: val } : row));
+                            }}
+                            className="flex-1 rounded-lg px-2.5 py-1.5 text-xs font-bold bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setCtrItems(prev => prev.filter((_, i) => i !== idx))}
+                            className="p-1.5 rounded-lg text-rose-600 dark:text-rose-400 bg-rose-100 dark:bg-rose-500/10 cursor-pointer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2">
+                          <div>
+                            <label className="block text-[10px] text-slate-500 mb-0.5">จำนวน</label>
+                            <input
+                              type="number"
+                              min={1}
+                              value={it.quantity}
+                              onChange={(e) => {
+                                const val = Math.max(1, parseInt(e.target.value) || 1);
+                                setCtrItems(prev => prev.map((row, i) => i === idx ? { ...row, quantity: val } : row));
+                              }}
+                              className="w-full rounded-lg px-2 py-1.5 text-xs font-mono bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] text-slate-500 mb-0.5">ต้นทุน/งวด</label>
+                            <input
+                              type="number"
+                              min={0}
+                              value={it.unit_cost ?? 0}
+                              onChange={(e) => {
+                                const val = Math.max(0, parseFloat(e.target.value) || 0);
+                                setCtrItems(prev => prev.map((row, i) => i === idx ? { ...row, unit_cost: val } : row));
+                              }}
+                              className="w-full rounded-lg px-2 py-1.5 text-xs font-mono bg-white dark:bg-slate-900 text-amber-700 dark:text-amber-300 border border-slate-300 dark:border-slate-700"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] text-slate-500 mb-0.5">ค่าบริการ/งวด</label>
+                            <input
+                              type="number"
+                              min={0}
+                              value={it.unit_price ?? 0}
+                              onChange={(e) => {
+                                const val = Math.max(0, parseFloat(e.target.value) || 0);
+                                setCtrItems(prev => prev.map((row, i) => i === idx ? { ...row, unit_price: val } : row));
+                              }}
+                              className="w-full rounded-lg px-2 py-1.5 text-xs font-mono bg-white dark:bg-slate-900 text-emerald-700 dark:text-emerald-300 border border-slate-300 dark:border-slate-700"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddContractForm(false)}
+                    className="px-4 py-2 rounded-xl bg-slate-100 dark:bg-white/[0.06] text-slate-700 dark:text-slate-300 text-xs font-bold cursor-pointer"
+                  >
+                    กลับหน้ารายการสัญญา
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={ctrItems.length === 0}
+                    className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] disabled:opacity-40 text-black font-extrabold text-xs cursor-pointer flex items-center gap-1.5 shadow-md"
+                  >
+                    <Check className="w-4 h-4" />
+                    <span>บันทึกสัญญาใหม่</span>
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div className="flex-1 overflow-y-auto overscroll-contain p-4 sm:p-6 space-y-3">
+                {contracts.length === 0 ? (
+                  <div className="p-8 text-center text-xs text-slate-500 border border-dashed border-slate-300 dark:border-slate-700 rounded-2xl">
+                    ยังไม่มีสัญญาในระบบ — กด &quot;+ เพิ่มสัญญาใหม่&quot; ด้านบน
+                  </div>
+                ) : (
+                  contracts.map(ctr => {
+                    const badge = BILLING_BADGE_META[getOrderBillingBadgeKey({ billing_type: ctr.contract_type, sub_type: ctr.sub_type })];
+                    const totalVal = (ctr.items || []).reduce((s, i) => s + i.unit_price * i.quantity, 0);
+                    return (
+                      <div key={ctr.id} className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-mono font-extrabold text-xs text-[#FF6B00]">{ctr.contract_no}</span>
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${badge.cls}`}>{badge.label}</span>
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                              ctr.status === 'active'
+                                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300'
+                                : 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-300'
+                            }`}>
+                              {ctr.status} ({ctr.billing_cycle})
+                            </span>
+                          </div>
+                          <div className="text-sm font-bold text-slate-900 dark:text-white">{ctr.customer_name}</div>
+                          <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                            {ctr.start_date} → {ctr.end_date} • ฿{fmt(totalVal)}/งวด ({ctr.items.length} รายการ)
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          {ctr.status === 'active' ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setIsContractManagerOpen(false);
+                                  setContractBillingMode(ctr.contract_type);
+                                  const prefix = ctr.contract_type === 'rental' ? 'RN' : 'MA';
+                                  setContractSalesRef(`${prefix}-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`);
+                                  applySelectedContract(ctr);
+                                  setIsContractBillingOpen(true);
+                                }}
+                                className="px-3 py-1.5 rounded-xl bg-[#FF6B00] hover:bg-[#FF8A24] text-black font-extrabold text-xs cursor-pointer"
+                              >
+                                เปิดบิลจากสัญญานี้
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => updateContractStatus(ctr.id, 'cancelled')}
+                                className="px-2.5 py-1.5 rounded-xl bg-rose-100 dark:bg-rose-500/15 text-rose-700 dark:text-rose-300 text-[11px] font-bold cursor-pointer"
+                              >
+                                ปิดสัญญา
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => updateContractStatus(ctr.id, 'active')}
+                              className="px-3 py-1.5 rounded-xl bg-emerald-100 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-xs font-bold cursor-pointer"
+                            >
+                              เปิดใช้งานอีกครั้ง
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            )}
           </div>
         </div>,
         document.body
