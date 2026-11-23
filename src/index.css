@@ -881,11 +881,10 @@ html.light ::-webkit-scrollbar-thumb {
 /* Print Styles */
 @media print {
 
-  /* Half-A4 (A5) landscape page setup — the repair receipt is designed to fit
-     the entire form (header, grid table, terms, signatures) on one sheet. */
+  /* Half-A4 (A5) landscape / 9x5.5" continuous dot-matrix paper setup */
   @page {
     size: A5 landscape;
-    margin: 4mm;
+    margin: 4mm 8mm;
   }
 
   /* Collapse the document to a single A5 landscape sheet. `max-height` +
@@ -903,24 +902,78 @@ html.light ::-webkit-scrollbar-thumb {
     color: #000000 !important;
   }
 
-  /* Hide everything by default for repair receipts. `display: none` (not `visibility: hidden`)
-     removes nodes from layout entirely so they reserve zero vertical space
-     and can never push the receipt onto page 2.
-     Exclude ORDER FORM 2026 which has its own dedicated print layout rules below. */
-  body:not(:has(#order-form-2026-print)) * {
+  /* Hide everything by default for legacy inline repair receipts.
+     Exclude ORDER FORM 2026, #repair-print-root, and .repair-receipt-print-portal
+     which each have their own dedicated print layout rules below. */
+  body:not(:has(#order-form-2026-print)):not(:has(#onsite-daily-report-print)):not(:has(#repair-print-root #repair-receipt-print)):not(:has(.repair-receipt-print-portal #repair-receipt-print)) * {
     display: none !important;
   }
 
-  /* Dedicated portal container outside #root */
-  #repair-print-root,
-  #repair-print-root *,
-  .print-portal-wrapper,
-  .print-portal-wrapper * {
+  /* Dedicated portal container outside #root (#repair-print-root) */
+  body:has(#repair-print-root #repair-receipt-print) > *:not(#repair-print-root) {
+    display: none !important;
+  }
+
+  body:has(#repair-print-root #repair-receipt-print) #repair-print-root,
+  body:has(#repair-print-root #repair-receipt-print) #repair-print-root .print-portal-wrapper {
     display: block !important;
     visibility: visible !important;
   }
 
-  /* Reveal only the printable regions (and their descendants) */
+  body:has(#repair-print-root #repair-receipt-print) #repair-print-root #repair-receipt-print {
+    display: block !important;
+    visibility: visible !important;
+  }
+
+  body:has(#repair-print-root #repair-receipt-print) #repair-print-root #repair-receipt-print * {
+    visibility: visible !important;
+  }
+
+  /* Dedicated RepairReceiptPrintModal portal (.repair-receipt-print-portal) */
+  body:has(.repair-receipt-print-portal #repair-receipt-print):not(:has(#repair-print-root #repair-receipt-print)) > *:not(.repair-receipt-print-portal) {
+    display: none !important;
+  }
+
+  body:has(.repair-receipt-print-portal #repair-receipt-print) .repair-receipt-print-portal {
+    position: static !important;
+    display: block !important;
+    overflow: visible !important;
+    height: auto !important;
+    width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: #FFFFFF !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    animation: none !important;
+  }
+
+  body:has(.repair-receipt-print-portal #repair-receipt-print) .repair-receipt-print-portal .no-print {
+    display: none !important;
+  }
+
+  body:has(.repair-receipt-print-portal #repair-receipt-print) .repair-receipt-print-portal .repair-receipt-sheet {
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+    margin: 0 auto !important;
+    max-width: 100% !important;
+    width: 100% !important;
+  }
+
+  body:has(.repair-receipt-print-portal #repair-receipt-print) .repair-receipt-print-portal .repair-receipt-sheet:not(:last-child) {
+    page-break-after: always !important;
+    break-after: page !important;
+  }
+
+  html:has(.repair-receipt-print-portal.allow-multipage),
+  body:has(.repair-receipt-print-portal.allow-multipage) {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  /* Reveal only the printable regions (and their descendants) for legacy inline modals */
   #print-section,
   #print-section *,
   #company-repair-receipt,
@@ -1064,43 +1117,79 @@ html.light ::-webkit-scrollbar-thumb {
   #repair-receipt-print {
     box-sizing: border-box !important;
     position: static !important;
-    display: block !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: space-between !important;
     width: 100% !important;
     max-width: 100% !important;
+    height: 128mm !important;
+    min-height: 128mm !important;
+    max-height: 131mm !important;
     margin: 0 auto !important;
     padding: 0 !important;
-    font-size: 10px !important;
-    line-height: 1.15 !important;
+    font-size: 11px !important;
+    line-height: 1.3 !important;
     background: #FFFFFF !important;
     color: #000000 !important;
     box-shadow: none !important;
     border: none !important;
     border-radius: 0 !important;
     overflow: hidden !important;
-    max-height: 140mm !important;
     page-break-after: avoid !important;
     break-after: avoid !important;
     page-break-inside: avoid !important;
     break-inside: avoid !important;
   }
 
+  #repair-receipt-print .repair-receipt-body {
+    display: flex !important;
+    flex-direction: column !important;
+    flex: 1 1 auto !important;
+  }
+
+  #repair-receipt-print .repair-receipt-footer {
+    display: block !important;
+    margin-top: 8px !important;
+  }
+
   /* Compact typography so the whole form fits one half-A4 landscape sheet */
   #repair-receipt-print h1,
   #repair-receipt-print h2,
   #repair-receipt-print h3 {
-    font-size: 11px !important;
-    line-height: 1.2 !important;
+    font-size: 12px !important;
+    line-height: 1.25 !important;
     margin: 0 !important;
   }
 
   #repair-receipt-print table {
-    font-size: 10px !important;
+    font-size: 11px !important;
+    flex: 1 1 auto !important;
   }
 
-  /* Tighten the header block and signature/terms spacing */
-  #repair-receipt-print>div {
-    margin-top: 0 !important;
-    margin-bottom: 0 !important;
+  /* Keep header flex & bottom signatures centered left/right with balanced space */
+  #repair-receipt-print .repair-receipt-header {
+    display: flex !important;
+    justify-content: space-between !important;
+    align-items: flex-start !important;
+    padding-bottom: 6px !important;
+    margin-bottom: 6px !important;
+  }
+
+  #repair-receipt-print .repair-receipt-signatures {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 32px !important;
+    margin-top: 14px !important;
+    margin-bottom: 4px !important;
+    padding-left: 20px !important;
+    padding-right: 20px !important;
+  }
+
+  #repair-receipt-print .repair-receipt-signatures > div {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    text-align: center !important;
   }
 
   /* Prevent the receipt from splitting awkwardly across pages */
@@ -1124,14 +1213,14 @@ html.light ::-webkit-scrollbar-thumb {
     overflow-wrap: anywhere !important;
   }
 
-  /* Compact cell padding keeps all 10 grid rows on a single A5 landscape page */
+  /* Comfortable cell padding fills the A5 landscape sheet evenly without spilling onto page 2 */
   #repair-receipt-print table td,
   #repair-receipt-print table th {
     border: 1px solid #000000 !important;
-    padding: 1px 4px !important;
-    font-size: 10px !important;
-    line-height: 1.15 !important;
-    vertical-align: top !important;
+    padding: 4px 7px !important;
+    font-size: 11px !important;
+    line-height: 1.3 !important;
+    vertical-align: middle !important;
   }
 
   /* Force crisp black text on pure white paper regardless of theme */
@@ -1173,7 +1262,7 @@ html.light ::-webkit-scrollbar-thumb {
 /* ========================================================================= */
 @page order-form-a4 {
   size: A4 portrait;
-  margin: 6mm;
+  margin: 6mm 8mm;
 }
 
 @media print {
@@ -1216,7 +1305,7 @@ html.light ::-webkit-scrollbar-thumb {
     page: order-form-a4;
     box-sizing: border-box !important;
     width: 100% !important;
-    max-width: 198mm !important;
+    max-width: 194mm !important;
     min-height: auto !important;
     margin: 0 auto !important;
     padding: 0 !important;
@@ -1227,12 +1316,17 @@ html.light ::-webkit-scrollbar-thumb {
   }
 
   #order-form-2026-print .order-form-page {
-    padding: 2mm !important;
+    padding: 1.5mm !important;
     margin: 0 !important;
     box-shadow: none !important;
     border: none !important;
     page-break-inside: avoid !important;
     break-inside: avoid !important;
+  }
+
+  #order-form-2026-print .bg-slate-50,
+  #order-form-2026-print .bg-slate-100 {
+    background: transparent !important;
   }
 
   #order-form-2026-print .order-form-page:not(:last-child) {
@@ -1246,5 +1340,70 @@ html.light ::-webkit-scrollbar-thumb {
     box-shadow: none !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
+  }
+}
+
+/* ========================================================================= */
+/* ONSITE DAILY REPORT (A4 Portrait Official Print Styles)                   */
+/* ========================================================================= */
+@page onsite-report-a4 {
+  size: A4 portrait;
+  margin: 10mm;
+}
+
+@media print {
+  html:has(#onsite-daily-report-print),
+  body:has(#onsite-daily-report-print) {
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #FFFFFF !important;
+    color: #000000 !important;
+  }
+
+  body:has(#onsite-daily-report-print) > *:not(.onsite-report-print-portal) {
+    display: none !important;
+  }
+
+  body:has(#onsite-daily-report-print) .onsite-report-print-portal {
+    page: onsite-report-a4;
+    position: static !important;
+    display: block !important;
+    overflow: visible !important;
+    height: auto !important;
+    width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: #FFFFFF !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    animation: none !important;
+  }
+
+  body:has(#onsite-daily-report-print) .onsite-report-print-portal .no-print {
+    display: none !important;
+  }
+
+  #onsite-daily-report-print {
+    page: onsite-report-a4;
+    box-sizing: border-box !important;
+    width: 100% !important;
+    max-width: 190mm !important;
+    margin: 0 auto !important;
+    padding: 0 !important;
+    background: #FFFFFF !important;
+    color: #000000 !important;
+    box-shadow: none !important;
+    border: none !important;
+  }
+
+  #onsite-daily-report-print * {
+    color: #000000 !important;
+    border-color: #000000 !important;
+    box-shadow: none !important;
+    background: transparent !important;
   }
 }

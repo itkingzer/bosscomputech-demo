@@ -2,15 +2,15 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from '../context/AppContext';
 import {
-  Boxes, PackagePlus, CheckCircle, Info, MapPin,
-  ShoppingCart, Clock, AlertTriangle, Truck, Tag, Send, Check,
-  ArrowRight, ShieldCheck, FileCheck, Layers, Lock, X, Warehouse, Zap,
-  Timer, Wrench, ChevronDown, ChevronRight, ClipboardList, PackageSearch,
-  Search, Filter, Trash2, ShoppingBag, Plus, Receipt, History, Hash, Camera, Printer
+  Boxes, PackagePlus, CheckCircle,
+  ShoppingCart, Clock, AlertTriangle, Truck, Send, Check,
+  ShieldCheck, FileCheck, Layers, Lock, X, Warehouse,
+  Timer, ChevronRight, ClipboardList, PackageSearch,
+  Search, Trash2, Plus, History, Hash, Camera, Printer
 } from 'lucide-react';
 import { ROUTE_DEFINITIONS, Order, Item, ProductCategory, PRODUCT_CATEGORY_LABELS, Product, StockPO, Project, formatThaiDateTime } from '../types';
 import { ListControls, useListControls } from './ListControls';
-import { ActivityTimeline, LatestUpdateBadge } from './ActivityTimeline';
+import { ActivityTimeline } from './ActivityTimeline';
 import { EvidencePhotoUploader } from './EvidencePhotoUploader';
 import { ToastBanner } from './ui/ToastBanner';
 import { OrderFormPrintModal } from './OrderFormPrintModal';
@@ -48,7 +48,7 @@ const fmt = (n: number): string => (n || 0).toLocaleString('th-TH');
 export const PurchasingStockView: React.FC = () => {
   const {
     orders, items, cutStock, updateOrderPOStatus, receivePOIntoStock, updateOrderCosts,
-    stockPOs, createStockPO, receiveStockPOToStorage, cancelStockPO,
+    stockPOs, createStockPO, receiveStockPOToStorage,
     sendRawStockToPrep, products,
     markDoaSentToSupplier, receiveDoaReplacement,
     projects, releaseProjectBatch, updateProjectMaterialRequestStatus
@@ -492,7 +492,19 @@ export const PurchasingStockView: React.FC = () => {
         || orderedModelKeys.has((p.product_name || '').trim().toLowerCase())
       )
     );
-    const isOrderWaitingPo = order.order_status === 'waiting_po';
+    const hasReceivedLinkedStockPo = Boolean(
+      orderPoNo &&
+      stockPOs.some(
+        p => p.status === 'received' && (p.po_number === orderPoNo || p.po_number.startsWith(`${orderPoNo}-`))
+      )
+    );
+    const allLinkedStockPosReceived =
+      hasReceivedLinkedStockPo &&
+      !stockPOs.some(
+        p => p.status === 'ordered' && (p.po_number === orderPoNo || p.po_number.startsWith(`${orderPoNo}-`))
+      );
+    const isOrderWaitingPo =
+      order.order_status === 'waiting_po' && !(allLinkedStockPosReceived && stockStatus.allSufficient);
     const hasActivePo = isOrderWaitingPo || pendingLinkedStockPOs.length > 0;
     const activePoLabel = pendingLinkedStockPOs.length > 0
       ? (pendingLinkedStockPOs.length === 1
@@ -769,8 +781,14 @@ export const PurchasingStockView: React.FC = () => {
     initialPageSize: 10
   });
 
-  const poTrackingList = useListControls(waitingPoOrders, {
-    getDate: (o) => o.updated_at || o.created_at,
+  const orderedStockPoList = useListControls(orderedStockPOs, {
+    getDate: (po) => po.ordered_at || po.created_at,
+    initialSort: 'newest',
+    initialPageSize: 10
+  });
+
+  const receivedStockPoList = useListControls(receivedStockPOs, {
+    getDate: (po) => po.received_at || po.updated_at || po.created_at,
     initialSort: 'newest',
     initialPageSize: 10
   });
@@ -875,7 +893,7 @@ export const PurchasingStockView: React.FC = () => {
       key: 'po_tracking',
       label: 'รอรับของ PO',
       sub: 'รอรับ PO',
-      count: waitingPoOrders.length + orderedStockPOs.length,
+      count: orderedStockPOs.length,
       icon: Truck,
       accent: 'purple'
     },
@@ -1325,104 +1343,57 @@ export const PurchasingStockView: React.FC = () => {
                   <p className="text-xs font-medium text-slate-700 dark:text-slate-300">ไม่มี Stock PO ที่รอของเข้า</p>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2.5">
-                  {orderedStockPOs.map((po) => (
-                    <button
-                      key={po.id}
-                      type="button"
-                      onClick={() => setPoDetail(po)}
-                      className="text-left p-3.5 rounded-2xl liquid-glass-card border border-purple-200 dark:border-purple-500/25 hover:border-purple-500/60 transition active:scale-[0.98] cursor-pointer flex flex-col gap-2 min-h-[120px]"
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="px-2 py-0.5 rounded-md bg-purple-100 text-purple-900 border border-purple-300 dark:bg-purple-500/15 dark:text-purple-300 dark:border-purple-500/30 font-mono text-[10px] font-bold truncate">
-                          {po.po_number}
-                        </span>
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-900 border border-purple-300 dark:bg-purple-500/15 dark:text-purple-300 dark:border-purple-500/30 whitespace-nowrap">
-                          รอของเข้า
-                        </span>
-                      </div>
-                      <div className="min-w-0">
-                        <div className="text-sm font-bold text-slate-900 dark:text-white truncate">{po.product_name}</div>
-                        <div className="text-[10px] text-slate-600 dark:text-slate-400 truncate">
-                          {PRODUCT_CATEGORY_LABELS[po.category]} • {po.supplier || '-'}
-                          {po.project_id ? ` • ผูก ${po.project_id}` : ''}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-1.5 flex-wrap mt-auto">
-                        <span className="px-2 py-0.5 rounded-md bg-[#FF6B00]/15 text-[#C2410C] dark:text-[#FF6B00] font-mono font-extrabold text-[11px] data-key">x{po.qty}</span>
-                        <span className="text-[10px] text-rose-700 dark:text-rose-300/80 font-mono font-bold data-key">ทุน ฿{fmt(po.unit_cost)}/หน่วย</span>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Box 2: Active Customer Order POs waiting for delivery */}
-            <div className="p-4 rounded-2xl bg-slate-50/70 dark:bg-white/[0.02] border border-slate-200 dark:border-white/[0.08] space-y-3">
-              <div className="flex items-center justify-between flex-wrap gap-2">
-                <span className="text-xs font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
-                  <Truck className="w-4 h-4 text-purple-600 dark:text-purple-400" />
-                  <span>ใบสั่งซื้อที่รอของเข้าตามออเดอร์ (waiting_po)</span>
-                </span>
-                <span className="text-[11px] text-slate-600 dark:text-slate-400 font-bold">{waitingPoOrders.length} ออเดอร์</span>
-              </div>
-
-              {waitingPoOrders.length === 0 ? (
-                <div className="text-center py-6 text-slate-500 border border-dashed border-slate-300 dark:border-white/[0.1] rounded-xl bg-white/60 dark:bg-transparent">
-                  <Truck className="w-7 h-7 mx-auto mb-1.5 text-slate-400 dark:text-slate-600" />
-                  <p className="text-xs font-medium text-slate-700 dark:text-slate-300">ไม่มีใบสั่งซื้อที่รอของเข้า</p>
-                </div>
-              ) : (
                 <>
                   <ListControls
-                    from={poTrackingList.from}
-                    to={poTrackingList.to}
-                    total={poTrackingList.total}
-                    page={poTrackingList.page}
-                    totalPages={poTrackingList.totalPages}
-                    pageSize={poTrackingList.pageSize}
-                    sort={poTrackingList.sort}
-                    onSortChange={poTrackingList.setSort}
-                    onPageSizeChange={poTrackingList.setPageSize}
-                    onPageChange={poTrackingList.setPage}
-                    unit="ออเดอร์"
+                    from={orderedStockPoList.from}
+                    to={orderedStockPoList.to}
+                    total={orderedStockPoList.total}
+                    page={orderedStockPoList.page}
+                    totalPages={orderedStockPoList.totalPages}
+                    pageSize={orderedStockPoList.pageSize}
+                    sort={orderedStockPoList.sort}
+                    onSortChange={orderedStockPoList.setSort}
+                    onPageSizeChange={orderedStockPoList.setPageSize}
+                    onPageChange={orderedStockPoList.setPage}
+                    pageSizeOptions={[10, 20, 30]}
+                    unit="ใบ"
                     className="mb-2"
                   />
                   <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2.5">
-                    {poTrackingList.pageItems.map((order) => {
-                      const rMeta = order.route_code ? ROUTE_DEFINITIONS[order.route_code] : null;
-                      const supplier = supplierInputs[order.id] || order.items_list?.[0]?.supplier || 'สต๊อกร้าน (Main Store)';
-                      const { activePoLabel } = getOrderPrepReadiness(order);
-                      const itemCount = (order.items_list || []).reduce((sum, it) => sum + (it.quantity || 1), 0);
-                      return (
-                        <button
-                          key={order.id}
-                          type="button"
-                          onClick={() => setActionOrder(order)}
-                          className="text-left p-3.5 rounded-2xl liquid-glass-card border border-slate-200 dark:border-white/[0.08] hover:border-purple-500/40 transition active:scale-[0.98] cursor-pointer flex flex-col gap-2 min-h-[120px]"
-                        >
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="px-2 py-0.5 rounded-lg bg-[#FF6B00] text-black font-extrabold font-mono text-[10px]">{order.sales_ref || order.id}</span>
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-900 border border-purple-300 dark:bg-purple-500/15 dark:text-purple-300 dark:border-purple-500/30 whitespace-nowrap">รอของเข้าจากใบ {activePoLabel}</span>
+                    {orderedStockPoList.pageItems.map((po) => (
+                      <button
+                        key={po.id}
+                        type="button"
+                        onClick={() => setPoDetail(po)}
+                        className="text-left p-3.5 rounded-2xl liquid-glass-card border border-purple-200 dark:border-purple-500/25 hover:border-purple-500/60 transition active:scale-[0.98] cursor-pointer flex flex-col gap-2 min-h-[120px]"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="px-2 py-0.5 rounded-md bg-purple-100 text-purple-900 border border-purple-300 dark:bg-purple-500/15 dark:text-purple-300 dark:border-purple-500/30 font-mono text-[10px] font-bold truncate">
+                            {po.po_number}
+                          </span>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-900 border border-purple-300 dark:bg-purple-500/15 dark:text-purple-300 dark:border-purple-500/30 whitespace-nowrap">
+                            รอของเข้า
+                          </span>
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-sm font-bold text-slate-900 dark:text-white truncate">{po.product_name}</div>
+                          <div className="text-[10px] text-slate-600 dark:text-slate-400 truncate">
+                            {PRODUCT_CATEGORY_LABELS[po.category]} • {po.supplier || '-'}
+                            {po.project_id ? ` • ผูก ${po.project_id}` : ''}
                           </div>
-                          <div className="min-w-0">
-                            <div className="text-sm font-bold text-slate-900 dark:text-white truncate">{order.customer_name}</div>
-                            <div className="text-[10px] text-slate-600 dark:text-slate-400 truncate font-mono">{supplier}</div>
-                          </div>
-                          <div className="flex items-center gap-1.5 flex-wrap mt-auto">
-                            <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-white/[0.05] text-[10px] text-slate-700 dark:text-slate-300 font-mono">{itemCount} ชิ้น</span>
-                            {rMeta && <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold border ${rMeta.badgeBg} ${rMeta.badgeBorder} ${rMeta.badgeText}`}>{rMeta.shortName}</span>}
-                          </div>
-                        </button>
-                      );
-                    })}
+                        </div>
+                        <div className="flex items-center gap-1.5 flex-wrap mt-auto">
+                          <span className="px-2 py-0.5 rounded-md bg-[#FF6B00]/15 text-[#C2410C] dark:text-[#FF6B00] font-mono font-extrabold text-[11px] data-key">x{po.qty}</span>
+                          <span className="text-[10px] text-rose-700 dark:text-rose-300/80 font-mono font-bold data-key">ทุน ฿{fmt(po.unit_cost)}/หน่วย</span>
+                        </div>
+                      </button>
+                    ))}
                   </div>
                 </>
               )}
             </div>
 
-            {/* Box 3: Received Stock POs (รับแล้ว) */}
+            {/* Box 2: Received Stock POs (รับแล้ว) */}
             <div className="p-4 rounded-2xl bg-teal-50/50 dark:bg-teal-500/[0.04] border border-teal-200 dark:border-teal-500/25 space-y-3">
               <div className="flex items-center justify-between flex-wrap gap-2">
                 <span className="text-xs font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
@@ -1439,43 +1410,60 @@ export const PurchasingStockView: React.FC = () => {
                   <p className="text-xs font-medium text-slate-700 dark:text-slate-300">ยังไม่มีใบ Stock PO ที่รับสินค้าแล้ว</p>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2.5">
-                  {receivedStockPOs.map((po) => (
-                    <button
-                      key={po.id}
-                      type="button"
-                      onClick={() => setPoDetail(po)}
-                      className="text-left p-3.5 rounded-2xl liquid-glass-card border border-teal-200 dark:border-teal-500/25 hover:border-teal-500/60 transition active:scale-[0.98] cursor-pointer flex flex-col gap-2 min-h-[120px]"
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="px-2 py-0.5 rounded-md bg-teal-100 text-teal-900 border border-teal-300 dark:bg-teal-500/15 dark:text-teal-300 dark:border-teal-500/30 font-mono text-[10px] font-bold truncate">
-                          {po.po_number}
-                        </span>
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-100 text-teal-900 border border-teal-300 dark:bg-teal-500/15 dark:text-teal-300 dark:border-teal-500/30 whitespace-nowrap">
-                          รับเข้าแล้ว
-                        </span>
-                      </div>
-                      <div className="min-w-0">
-                        <div className="text-sm font-bold text-slate-900 dark:text-white truncate">{po.product_name}</div>
-                        <div className="text-[10px] text-slate-600 dark:text-slate-400 truncate">
-                          {PRODUCT_CATEGORY_LABELS[po.category]} • {po.supplier || '-'}
-                          {po.project_id ? ` • ผูก ${po.project_id}` : ''}
-                        </div>
-                      </div>
-                      <div className="flex items-center justify-between gap-1.5 flex-wrap mt-auto">
-                        <div className="flex items-center gap-1.5">
-                          <span className="px-2 py-0.5 rounded-md bg-[#FF6B00]/15 text-[#C2410C] dark:text-[#FF6B00] font-mono font-extrabold text-[11px] data-key">x{po.qty}</span>
-                          <span className="text-[10px] text-rose-700 dark:text-rose-300/80 font-mono font-bold data-key">ทุน ฿{fmt(po.unit_cost)}/หน่วย</span>
-                        </div>
-                        {po.received_at && (
-                          <span className="text-[10px] font-mono text-teal-700 dark:text-teal-300">
-                            รับ {formatThaiDateTime(po.received_at)}
+                <>
+                  <ListControls
+                    from={receivedStockPoList.from}
+                    to={receivedStockPoList.to}
+                    total={receivedStockPoList.total}
+                    page={receivedStockPoList.page}
+                    totalPages={receivedStockPoList.totalPages}
+                    pageSize={receivedStockPoList.pageSize}
+                    sort={receivedStockPoList.sort}
+                    onSortChange={receivedStockPoList.setSort}
+                    onPageSizeChange={receivedStockPoList.setPageSize}
+                    onPageChange={receivedStockPoList.setPage}
+                    pageSizeOptions={[10, 20, 30]}
+                    unit="ใบ"
+                    className="mb-2"
+                  />
+                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2.5">
+                    {receivedStockPoList.pageItems.map((po) => (
+                      <button
+                        key={po.id}
+                        type="button"
+                        onClick={() => setPoDetail(po)}
+                        className="text-left p-3.5 rounded-2xl liquid-glass-card border border-teal-200 dark:border-teal-500/25 hover:border-teal-500/60 transition active:scale-[0.98] cursor-pointer flex flex-col gap-2 min-h-[120px]"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="px-2 py-0.5 rounded-md bg-teal-100 text-teal-900 border border-teal-300 dark:bg-teal-500/15 dark:text-teal-300 dark:border-teal-500/30 font-mono text-[10px] font-bold truncate">
+                            {po.po_number}
                           </span>
-                        )}
-                      </div>
-                    </button>
-                  ))}
-                </div>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-100 text-teal-900 border border-teal-300 dark:bg-teal-500/15 dark:text-teal-300 dark:border-teal-500/30 whitespace-nowrap">
+                            รับเข้าแล้ว
+                          </span>
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-sm font-bold text-slate-900 dark:text-white truncate">{po.product_name}</div>
+                          <div className="text-[10px] text-slate-600 dark:text-slate-400 truncate">
+                            {PRODUCT_CATEGORY_LABELS[po.category]} • {po.supplier || '-'}
+                            {po.project_id ? ` • ผูก ${po.project_id}` : ''}
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between gap-1.5 flex-wrap mt-auto">
+                          <div className="flex items-center gap-1.5">
+                            <span className="px-2 py-0.5 rounded-md bg-[#FF6B00]/15 text-[#C2410C] dark:text-[#FF6B00] font-mono font-extrabold text-[11px] data-key">x{po.qty}</span>
+                            <span className="text-[10px] text-rose-700 dark:text-rose-300/80 font-mono font-bold data-key">ทุน ฿{fmt(po.unit_cost)}/หน่วย</span>
+                          </div>
+                          {po.received_at && (
+                            <span className="text-[10px] font-mono text-teal-700 dark:text-teal-300">
+                              รับ {formatThaiDateTime(po.received_at)}
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </>
               )}
             </div>
           </div>

@@ -152,7 +152,7 @@ export const PrepView: React.FC = () => {
 
   // Stage 1: S/N inputs & notes (keyed by item id)
   const [snInputs, setSnInputs] = useState<Record<string, string>>({});
-  const [prepNotesInputs, setPrepNotesInputs] = useState<Record<string, string>>({});
+  const [prepNotesInputs] = useState<Record<string, string>>({});
 
   // Stage 2: Void date inputs (keyed by item id)
   const [voidDateInputs, setVoidDateInputs] = useState<Record<string, string>>({});
@@ -237,12 +237,6 @@ export const PrepView: React.FC = () => {
   const showToast = (msg: string, ms = 4000) => {
     setToast(msg);
     setTimeout(() => setToast(''), ms);
-  };
-
-  // Handle Accept Prep Task (บันทึกชื่อผู้รับงานและเวลาอัตโนมัติ)
-  const handleAcceptTask = (itemId: string) => {
-    acceptPrepTask(itemId, currentTechName);
-    showToast(`ช่าง "${currentTechName}" รับงานชิ้นนี้เรียบร้อยแล้ว`, 3500);
   };
 
   // Accept an entire stacked batch at once

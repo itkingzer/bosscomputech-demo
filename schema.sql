@@ -410,7 +410,7 @@ CREATE TABLE IF NOT EXISTS public.projects (
     created_by TEXT NOT NULL,
     start_date DATE,
     due_date DATE,
-    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'in_progress', 'completed', 'cancelled')),
+    status TEXT NOT NULL DEFAULT 'planning' CHECK (status IN ('planning', 'active', 'in_progress', 'handover_pending', 'completed', 'cancelled')),
     assigned_techs TEXT[] NOT NULL DEFAULT '{}',
     billing_status TEXT DEFAULT 'pending' CHECK (billing_status IN ('pending', 'billed')),
     billed_at TIMESTAMPTZ,
@@ -420,11 +420,27 @@ CREATE TABLE IF NOT EXISTS public.projects (
     batches JSONB NOT NULL DEFAULT '[]'::jsonb,
     material_requests JSONB NOT NULL DEFAULT '[]'::jsonb,
     daily_logs JSONB NOT NULL DEFAULT '[]'::jsonb,
+    handover_photo_urls JSONB DEFAULT '[]'::jsonb,
+    handover_note TEXT,
+    completed_at TIMESTAMPTZ,
     activity_logs JSONB NOT NULL DEFAULT '[]'::jsonb,
     notes TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Migration: ensure projects supports all app statuses & handover columns (safe to re-run)
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS handover_photo_urls JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS handover_note TEXT;
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
+ALTER TABLE public.projects DROP CONSTRAINT IF EXISTS projects_status_check;
+ALTER TABLE public.projects ADD CONSTRAINT projects_status_check CHECK (
+    status IN ('planning', 'active', 'in_progress', 'handover_pending', 'completed', 'cancelled')
+);
+
+CREATE INDEX IF NOT EXISTS idx_projects_status ON public.projects(status);
+CREATE INDEX IF NOT EXISTS idx_users_username ON public.users(username);
+CREATE INDEX IF NOT EXISTS idx_users_role ON public.users(role);
 
 -- 6. Users Table (Phase 4: HR Staff Directory & Admin Management)
 CREATE TABLE IF NOT EXISTS public.users (

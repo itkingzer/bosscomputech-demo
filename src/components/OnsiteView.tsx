@@ -7,16 +7,18 @@ import {
   CheckSquare, Square, X, Smartphone, UserCheck, Layers,
   ClipboardList, ArrowRight, Phone, Calendar, ScanLine, Search, Check
 } from 'lucide-react';
-import { ROUTE_DEFINITIONS, RouteCode, RepairTicket, Item, Project, Product, ProductCategory, PRODUCT_CATEGORY_LABELS, getRouteByDistrict, formatThaiDateTime } from '../types';
+import { ROUTE_DEFINITIONS, RouteCode, RepairTicket, Item, Project, Product, ProductCategory, PRODUCT_CATEGORY_LABELS, formatThaiDateTime } from '../types';
 import { ListControls, useListControls } from './ListControls';
 import { ActivityTimeline, LatestUpdateBadge } from './ActivityTimeline';
 import { BarcodeScannerModal } from './BarcodeScannerModal';
 import { EvidencePhotoUploader } from './EvidencePhotoUploader';
 import { ToastBanner } from './ui/ToastBanner';
 import { OrderFormPrintModal } from './OrderFormPrintModal';
+import { RepairIntakeModal, RepairIntakeInitialValues } from './RepairIntakeModal';
+import { PrintGuideButton } from './PrintGuideButton';
 import {
   Modal, modalInputClass, modalLabelClass,
-  modalPrimaryBtnClass, modalSecondaryBtnClass
+  modalPrimaryBtnClass
 } from './ui/Modal';
 import { lookupPurchaseBySn } from '../utils/snLookup';
 
@@ -157,7 +159,7 @@ const DISTRICT_OPTIONS = [
 export const OnsiteView: React.FC = () => {
   const {
     items, orders, repairTickets, confirmOnsiteDelivery,
-    closeRepairTicket, completeOnsiteJobHandoff, currentUser, users,
+    completeOnsiteJobHandoff, currentUser, users,
     acceptOnsiteJob, completeRepairReturnOnsite, triggerPrintRepairReceipt,
     lookupWarrantyBySerial,
     projects, products, addProjectDailyLog, createProjectMaterialRequest, completeProjectHandover
@@ -168,6 +170,8 @@ export const OnsiteView: React.FC = () => {
   const [selectedTechNameFilter, setSelectedTechNameFilter] = useState<string>(currentUser?.role === 'onsite' ? currentUser.name : 'all');
   const [selectedCategory, setSelectedCategory] = useState<'all' | 'projects' | 'new_goods' | 'repair_return' | 'pickup'>('all');
   const [deliveryNotes, setDeliveryNotes] = useState<Record<string, string>>({});
+  const [repairIntakeOpen, setRepairIntakeOpen] = useState(false);
+  const [intakeInitialValues, setIntakeInitialValues] = useState<RepairIntakeInitialValues | null>(null);
   const [toast, setToast] = useState('');
 
   // ---- Onsite Project Workspace Modal State (PRJ-...) ----
@@ -428,6 +432,18 @@ export const OnsiteView: React.FC = () => {
     initialSort: 'newest',
   });
 
+  const repairedReturnsList = useListControls(assignedRepairedReturns, {
+    getDate: (t) => t.assigned_at || t.updated_at || t.created_at,
+    initialSort: 'newest',
+    initialPageSize: 10
+  });
+
+  const pickupsList = useListControls(assignedPickups, {
+    getDate: (t) => t.assigned_at || t.updated_at || t.created_at,
+    initialSort: 'newest',
+    initialPageSize: 10
+  });
+
   const handleAcceptGroup = (group: ItemGroup) => {
     const techName = currentUser?.name || 'ช่าง Onsite';
     group.items.forEach(it => {
@@ -473,29 +489,10 @@ export const OnsiteView: React.FC = () => {
     setIsPickupModalOpen(true);
   };
 
-  // เปิดฟอร์มออกใบ Service Sheet (รับฝาก/งานเพิ่มหน้างาน) — ทั้งเปิดอิสระและเปิดจากในงานส่งของ
+  // เปิดฟอร์มออกใบ Service Sheet (รับฝาก/งานเพิ่มหน้างาน) — ใช้ RepairIntakeModal เดียวกับหน้าร้าน
   const handleOpenNewServiceSheet = (defaultData?: { customer_name?: string; customer_phone?: string; district?: string; delivery_location?: string }) => {
-    setModalMode('service_sheet');
-    setSendToRepairShop(true);
-    setOriginJob(null); // ไม่ผูก origin เพื่อไม่ให้ปิดงานหลัก
-    setCustName(defaultData?.customer_name || '');
-    setCustPhone(defaultData?.customer_phone || '');
-    setDistrict(
-      defaultData?.district ||
-      (currentUser?.assigned_route && currentUser.assigned_route !== 'all'
-        ? (DISTRICT_OPTIONS.find(o => getRouteByDistrict(o.district) === currentUser.assigned_route)?.district || 'เมืองสุราษฎร์ธานี')
-        : 'เมืองสุราษฎร์ธานี')
-    );
-    setDeliveryLocation(defaultData?.delivery_location || '');
-    setProvinceCustom('');
-    setDeviceModel('');
-    setSn('');
-    setAutoFilledSn(null);
-    setSelectedAccessories(['Adapter / หม้อแปลง']);
-    setAccessoriesOther('');
-    setFaultSymptom('');
-    setPickupPhotos([]);
-    setIsPickupModalOpen(true);
+    setIntakeInitialValues(defaultData || null);
+    setRepairIntakeOpen(true);
   };
 
   const toggleAccessory = (acc: string) => {
@@ -592,8 +589,9 @@ export const OnsiteView: React.FC = () => {
             </p>
           </div>
 
-          {/* ช่าง Onsite ออกใบรับซ่อม / Service Sheet เองได้ (ส่งเข้าห้องช่าง) */}
+          {/* ช่าง Onsite ออกใบรับซ่อม / Service Sheet (ใช้ Modal เดียวกับหน้าร้าน) */}
           <button
+            type="button"
             onClick={() => handleOpenNewServiceSheet()}
             className="w-full lg:w-auto px-5 py-3 min-h-[44px] bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:brightness-110 active:scale-[0.97] text-black font-extrabold rounded-xl text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-[#FF6B00]/25 border border-white/20"
           >
@@ -725,7 +723,40 @@ export const OnsiteView: React.FC = () => {
                 onSortChange={newGoodsList.setSort}
                 onPageSizeChange={newGoodsList.setPageSize}
                 onPageChange={newGoodsList.setPage}
+                pageSizeOptions={[10, 20, 30]}
                 unit="งานส่งของใหม่"
+              />
+            )}
+            {(selectedCategory === 'repair_return' || (selectedCategory === 'all' && repairedReturnsList.total > 0)) && (
+              <ListControls
+                from={repairedReturnsList.from}
+                to={repairedReturnsList.to}
+                total={repairedReturnsList.total}
+                page={repairedReturnsList.page}
+                totalPages={repairedReturnsList.totalPages}
+                pageSize={repairedReturnsList.pageSize}
+                sort={repairedReturnsList.sort}
+                onSortChange={repairedReturnsList.setSort}
+                onPageSizeChange={repairedReturnsList.setPageSize}
+                onPageChange={repairedReturnsList.setPage}
+                pageSizeOptions={[10, 20, 30]}
+                unit="งานส่งคืนซ่อม"
+              />
+            )}
+            {(selectedCategory === 'pickup' || (selectedCategory === 'all' && pickupsList.total > 0)) && (
+              <ListControls
+                from={pickupsList.from}
+                to={pickupsList.to}
+                total={pickupsList.total}
+                page={pickupsList.page}
+                totalPages={pickupsList.totalPages}
+                pageSize={pickupsList.pageSize}
+                sort={pickupsList.sort}
+                onSortChange={pickupsList.setSort}
+                onPageSizeChange={pickupsList.setPageSize}
+                onPageChange={pickupsList.setPage}
+                pageSizeOptions={[10, 20, 30]}
+                unit="งานรับเครื่องซ่อม"
               />
             )}
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -913,7 +944,7 @@ export const OnsiteView: React.FC = () => {
 
               {/* 2. CARDS: REPAIRED RETURN */}
               {(selectedCategory === 'all' || selectedCategory === 'repair_return') &&
-                assignedRepairedReturns.map((ticket) => {
+                repairedReturnsList.pageItems.map((ticket) => {
                   const rMeta = ticket.route_code ? ROUTE_DEFINITIONS[ticket.route_code] : null;
                   const teamTechs = ticket.assigned_techs && ticket.assigned_techs.length > 0
                     ? ticket.assigned_techs
@@ -994,7 +1025,7 @@ export const OnsiteView: React.FC = () => {
 
               {/* 3. CARDS: ONSITE PICKUP */}
               {(selectedCategory === 'all' || selectedCategory === 'pickup') &&
-                assignedPickups.map((ticket) => {
+                pickupsList.pageItems.map((ticket) => {
                   const rMeta = ticket.route_code ? ROUTE_DEFINITIONS[ticket.route_code] : null;
                   const teamTechs = ticket.assigned_techs && ticket.assigned_techs.length > 0
                     ? ticket.assigned_techs
@@ -1906,6 +1937,7 @@ export const OnsiteView: React.FC = () => {
 
             {/* Modal Actions */}
             <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center gap-2 pt-4 border-t border-slate-200 dark:border-white/[0.08] no-print">
+              <PrintGuideButton docType="repair_receipt" />
               <button
                 onClick={() => setReceiptTicket(null)}
                 className="px-4 py-2.5 min-h-[44px] rounded-xl bg-slate-100 dark:bg-white/[0.06] hover:bg-slate-200 dark:hover:bg-white/[0.12] border border-slate-300 dark:border-white/[0.1] text-slate-700 dark:text-slate-300 text-xs font-semibold cursor-pointer"
@@ -2464,6 +2496,20 @@ export const OnsiteView: React.FC = () => {
         isOpen={!!printProjectTarget}
         onClose={() => setPrintProjectTarget(null)}
         project={printProjectTarget}
+      />
+
+      <RepairIntakeModal
+        open={repairIntakeOpen}
+        onClose={() => setRepairIntakeOpen(false)}
+        title="รับเครื่องซ่อม / Service Sheet (ช่าง Onsite)"
+        subtitle="Onsite Service Sheet · สร้างใบรับซ่อมเข้าคิวช่างในร้าน"
+        intakeChannel="onsite_pickup"
+        receivedChannel="onsite_service_sheet"
+        initialValues={intakeInitialValues}
+        onToast={(msg) => {
+          setToast(msg);
+          setTimeout(() => setToast(''), 4000);
+        }}
       />
     </div>
   );

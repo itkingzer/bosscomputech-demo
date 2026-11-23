@@ -3,20 +3,20 @@ import { createPortal } from 'react-dom';
 import { useApp } from '../context/AppContext';
 import { ToastBanner } from './ui/ToastBanner';
 import {
-  FilePlus2, Send, ListOrdered, CheckCircle, Plus,
+  FilePlus2, Send, ListOrdered, Plus,
   Sparkles, Layers, Trash2, Calendar, CreditCard,
-  FileText, Truck, Search, Filter, ShoppingBag, X, Check,
-  UserCheck, Pencil, Lock, TrendingUp, AlertTriangle, ShieldCheck,
+  FileText, Truck, Search, ShoppingBag, X, Check,
+  UserCheck, Pencil, TrendingUp, AlertTriangle, ShieldCheck,
   Receipt, Package, Printer
 } from 'lucide-react';
 import {
   ROUTE_DEFINITIONS, getRouteByDistrict, RouteCode, BillType, PaymentTerm, DeliveryMode, OrderItem,
   Product, ProductCategory, ProductUnit, PRODUCT_CATEGORY_LABELS, PRODUCT_UNIT_OPTIONS,
-  WARRANTY_PRESET_YEARS, formatWarrantyDuration, formatDateDMY, formatThaiDateTime, Order,
+  WARRANTY_PRESET_YEARS, formatThaiDateTime, Order,
   Project, ProjectItemType
 } from '../types';
 import { ListControls, useListControls } from './ListControls';
-import { ActivityTimeline, LatestUpdateBadge } from './ActivityTimeline';
+import { ActivityTimeline } from './ActivityTimeline';
 import { OrderFormPrintModal } from './OrderFormPrintModal';
 
 const DISTRICT_OPTIONS = [
@@ -155,13 +155,6 @@ export const SalesView: React.FC = () => {
     unit_price: number;
     warranty_years: number;
   }[]>([]);
-  const [prjDraftItemType, setPrjDraftItemType] = useState<ProjectItemType>('equipment');
-  const [prjDraftProductId, setPrjDraftProductId] = useState('');
-  const [prjDraftModel, setPrjDraftModel] = useState('');
-  const [prjDraftQty, setPrjDraftQty] = useState(1);
-  const [prjDraftCost, setPrjDraftCost] = useState(0);
-  const [prjDraftPrice, setPrjDraftPrice] = useState(0);
-  const [prjDraftWarranty, setPrjDraftWarranty] = useState(1);
 
   // Add-On Modal Form State (Multi-Sales Add-On Attribution — supports multiple items at once)
   const [addonAddedBy, setAddonAddedBy] = useState('');
@@ -738,71 +731,7 @@ export const SalesView: React.FC = () => {
     setPrjDueDate(nextWeek.toISOString().split('T')[0]);
     setPrjAssignedTechs(onsiteUsersList.length > 0 ? [onsiteUsersList[0].name] : []);
     setPrjItems([]);
-    setPrjDraftItemType('equipment');
-    setPrjDraftProductId('');
-    setPrjDraftModel('');
-    setPrjDraftQty(1);
-    setPrjDraftCost(0);
-    setPrjDraftPrice(0);
-    setPrjDraftWarranty(1);
     setIsCreateProjectOpen(true);
-  };
-
-  const handleSelectProjectCatalogProduct = (prodId: string, isAddonForm = false) => {
-    const found = products.find(p => p.id === prodId);
-    if (!found) return;
-    const inferredType: ProjectItemType =
-      found.item_type === 'service' || /สายสัญญาณ|ท่อ|ค่าบริการ|ค่าแรง/.test(found.name)
-        ? 'consumable'
-        : 'equipment';
-    if (isAddonForm) {
-      setAddonItems(prev => [
-        ...prev,
-        {
-          product_id: found.id,
-          model_name: found.name,
-          item_type: inferredType,
-          unit: found.unit,
-          qty_required: 1,
-          unit_cost: found.cost_price,
-          unit_price: found.sell_price,
-          warranty_years: inferredType === 'equipment' ? 1 : 0,
-        },
-      ]);
-    } else {
-      setPrjDraftProductId(found.id);
-      setPrjDraftModel(found.name);
-      setPrjDraftItemType(inferredType);
-      setPrjDraftCost(found.cost_price);
-      setPrjDraftPrice(found.sell_price);
-      setPrjDraftWarranty(inferredType === 'equipment' ? 1 : 0);
-    }
-  };
-
-  const handleAddDraftItemToProject = () => {
-    if (!prjDraftModel.trim()) {
-      alert('กรุณาเลือกหรือระบุชื่อรายการอุปกรณ์/วัสดุ');
-      return;
-    }
-    const catProd = products.find(p => p.id === prjDraftProductId);
-    setPrjItems(prev => [
-      ...prev,
-      {
-        product_id: prjDraftProductId || undefined,
-        model_name: prjDraftModel.trim(),
-        item_type: prjDraftItemType,
-        unit: catProd?.unit || (prjDraftItemType === 'consumable' ? 'รายการ' : 'เครื่อง'),
-        qty_required: Math.max(1, prjDraftQty),
-        unit_cost: Math.max(0, prjDraftCost),
-        unit_price: Math.max(0, prjDraftPrice),
-        warranty_years: prjDraftItemType === 'equipment' ? Math.max(0, prjDraftWarranty) : 0
-      }
-    ]);
-    setPrjDraftProductId('');
-    setPrjDraftModel('');
-    setPrjDraftQty(1);
-    setPrjDraftCost(0);
-    setPrjDraftPrice(0);
   };
 
   const handleSubmitCreateProject = (e: React.FormEvent) => {

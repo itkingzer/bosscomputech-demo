@@ -42,10 +42,18 @@ export const formatReceiptDate = (iso?: string | null): string => {
 
 interface RepairReceiptPrintDocumentProps {
   ticket: RepairTicket;
+  dueDateOverride?: string;
+  notesOverride?: string;
+  copyLabel?: string;
 }
 
-export const RepairReceiptPrintDocument: React.FC<RepairReceiptPrintDocumentProps> = ({ ticket }) => {
-  const cell = 'border border-black px-1.5 py-0.5 align-top leading-tight text-black';
+export const RepairReceiptPrintDocument: React.FC<RepairReceiptPrintDocumentProps> = ({
+  ticket,
+  dueDateOverride,
+  notesOverride,
+  copyLabel
+}) => {
+  const cell = 'border border-black px-2 py-1.5 align-middle leading-snug text-black';
   const label = 'font-bold whitespace-nowrap text-black';
   const value = 'font-normal text-black';
 
@@ -62,41 +70,56 @@ export const RepairReceiptPrintDocument: React.FC<RepairReceiptPrintDocumentProp
     ticket.replacement_sn ? `S/N ใหม่: ${ticket.replacement_sn}` : ''
   ].filter(Boolean).join(' • ');
 
-  const notes = [
-    ticket.repair_detail || '',
-    ticket.parts_used ? `อะไหล่: ${ticket.parts_used}` : '',
-    ticket.repair_status ? `สถานะ: ${ticket.repair_status}` : ''
-  ].filter(Boolean).join(' • ');
+  const notes =
+    notesOverride !== undefined
+      ? notesOverride
+      : [
+          ticket.repair_detail || '',
+          ticket.parts_used ? `อะไหล่: ${ticket.parts_used}` : '',
+          ticket.repair_status ? `สถานะ: ${ticket.repair_status}` : ''
+        ]
+          .filter(Boolean)
+          .join(' • ');
 
-  const dueDate = formatReceiptDate(ticket.finished_at) || formatReceiptDate(ticket.rma_returned_date);
+  const dueDate =
+    dueDateOverride !== undefined
+      ? dueDateOverride
+      : formatReceiptDate(ticket.finished_at) || formatReceiptDate(ticket.rma_returned_date);
 
   return (
     <div
       id="repair-receipt-print"
-      className="bg-white text-black rounded-lg p-3 sm:p-4 text-[10px] leading-tight print:p-0 print:text-[10px] print:leading-tight"
+      className="bg-white text-black rounded-lg p-3 sm:p-4 text-[11px] leading-snug min-h-[132mm] flex flex-col justify-between print:p-0 print:text-[11px] print:leading-snug"
     >
-      {/* Official Company Header */}
-      <div className="flex items-start justify-between gap-4 pb-1.5 mb-1.5 border-b-2 border-black">
-        <div className="min-w-0">
-          <div className="font-extrabold text-[12px] sm:text-[13px] leading-tight">{COMPANY_NAME}</div>
-          <div className="mt-0.5">{COMPANY_ADDRESS}</div>
-          <div className="mt-0.5">{COMPANY_PHONE}</div>
-        </div>
-        <div className="text-right flex-shrink-0">
-          <div className="font-extrabold text-base sm:text-lg tracking-wide">ใบรับซ่อมสินค้า</div>
-          <div className="mt-0.5 text-[10px]">
-            <span className={label}>วันที่ </span>
-            <span>{formatReceiptDateTime(ticket.received_at || ticket.created_at)}</span>
+      {/* Top + Middle Content */}
+      <div className="repair-receipt-body flex-1 flex flex-col">
+        {/* Official Company Header */}
+        <div className="repair-receipt-header flex items-start justify-between gap-4 pb-2 mb-2 border-b-2 border-black">
+          <div className="min-w-0">
+            <div className="font-extrabold text-[13px] sm:text-[14px] leading-tight">{COMPANY_NAME}</div>
+            <div className="mt-0.5 text-[11px]">{COMPANY_ADDRESS}</div>
+            <div className="mt-0.5 text-[11px]">{COMPANY_PHONE}</div>
           </div>
-          <div className="text-[10px]">
-            <span className={label}>ออกโดย </span>
-            <span>{staffName}</span>
+          <div className="text-right flex-shrink-0">
+            <div className="font-extrabold text-lg tracking-wide">ใบรับซ่อมสินค้า</div>
+            {copyLabel && (
+              <div className="text-[10px] font-bold border border-black px-1.5 py-0.5 inline-block mb-0.5">
+                {copyLabel}
+              </div>
+            )}
+            <div className="mt-0.5 text-[11px]">
+              <span className={label}>วันที่ </span>
+              <span>{formatReceiptDateTime(ticket.received_at || ticket.created_at)}</span>
+            </div>
+            <div className="text-[11px]">
+              <span className={label}>ออกโดย </span>
+              <span>{staffName}</span>
+            </div>
           </div>
         </div>
-      </div>
 
-      {/* Structured Bordered Grid */}
-      <table className="w-full border-collapse border border-black text-black bg-white">
+        {/* Structured Bordered Grid */}
+        <table className="w-full flex-1 border-collapse border border-black text-black bg-white">
         <tbody>
           {/* Row 1 */}
           <tr>
@@ -214,21 +237,24 @@ export const RepairReceiptPrintDocument: React.FC<RepairReceiptPrintDocumentProp
           </tr>
         </tbody>
       </table>
-
-      {/* Terms & Signature Footer */}
-      <div className="mt-1 text-[10px] leading-tight">
-        <span className="font-bold">หมายเหตุ : </span>
-        <span>{RECEIPT_DISCLAIMER}</span>
       </div>
 
-      <div className="mt-3 grid grid-cols-2 gap-8 text-[10px] leading-tight">
-        <div className="text-center">
-          <div className="mb-1">ลงชื่อ ........................................ ผู้ส่งซ่อม</div>
-          <div>วันที่ ........./........./.........</div>
+      {/* Bottom Footer: Terms & Signatures */}
+      <div className="repair-receipt-footer mt-2">
+        <div className="text-[10.5px] leading-snug">
+          <span className="font-bold">หมายเหตุ : </span>
+          <span>{RECEIPT_DISCLAIMER}</span>
         </div>
-        <div className="text-center">
-          <div className="mb-1">ลงชื่อ ........................................ พนักงาน</div>
-          <div>วันที่ ........./........./.........</div>
+
+        <div className="repair-receipt-signatures mt-4 mb-1 px-6 grid grid-cols-2 gap-12 text-[11px] leading-tight">
+          <div className="flex flex-col items-center text-center">
+            <div className="mb-1.5">ลงชื่อ ........................................ ผู้ส่งซ่อม</div>
+            <div>วันที่ ........./........./.........</div>
+          </div>
+          <div className="flex flex-col items-center text-center">
+            <div className="mb-1.5">ลงชื่อ ........................................ พนักงาน</div>
+            <div>วันที่ ........./........./.........</div>
+          </div>
         </div>
       </div>
     </div>

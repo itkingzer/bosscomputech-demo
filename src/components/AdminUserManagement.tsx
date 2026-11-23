@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from '../context/AppContext';
-import { Users, UserPlus, Trash2, Shield, Database, CheckCircle } from 'lucide-react';
+import { Users, UserPlus, Trash2, Shield, Database } from 'lucide-react';
 import { UserRole } from '../types';
 import { ToastBanner } from './ui/ToastBanner';
 

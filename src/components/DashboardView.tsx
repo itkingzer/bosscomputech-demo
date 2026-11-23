@@ -3,7 +3,7 @@ import { useApp } from '../context/AppContext';
 import {
   Clock, Package, ClipboardList, Truck, Wrench, CheckCircle2,
   Search, ShieldAlert, ShieldCheck, Hash, ChevronRight,
-  FileText, ShoppingCart, X, Camera
+  ShoppingCart, X, Camera
 } from 'lucide-react';
 import { formatDateDMY, formatThaiDateTime } from '../types';
 import {

@@ -11,6 +11,7 @@ import {
 import { ActivityTimeline } from './ActivityTimeline';
 import { BarcodeScannerModal } from './BarcodeScannerModal';
 import { EvidencePhotoUploader } from './EvidencePhotoUploader';
+import { ListControls, useListControls } from './ListControls';
 
 // ==============================================================================
 // CompletedLogsView — "ประวัติปิดงาน & Log ย้อนหลัง (Completed Job Logs)"
@@ -317,6 +318,12 @@ export const CompletedLogsView: React.FC = () => {
         return sorted;
     }, [allJobs, activeTab, search, sortDir]);
 
+    const jobsList = useListControls(filteredJobs, {
+        getDate: (j) => j.completedAt,
+        initialSort: 'newest',
+        initialPageSize: 10
+    });
+
     const toggleExpanded = (id: string) =>
         setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
 
@@ -414,7 +421,22 @@ export const CompletedLogsView: React.FC = () => {
                 </div>
             ) : (
                 <div className="space-y-3">
-                    {filteredJobs.map((job) => {
+                    <ListControls
+                        from={jobsList.from}
+                        to={jobsList.to}
+                        total={jobsList.total}
+                        page={jobsList.page}
+                        totalPages={jobsList.totalPages}
+                        pageSize={jobsList.pageSize}
+                        sort={jobsList.sort}
+                        onSortChange={jobsList.setSort}
+                        onPageSizeChange={jobsList.setPageSize}
+                        onPageChange={jobsList.setPage}
+                        pageSizeOptions={[10, 20, 30]}
+                        hideSort
+                        unit="งาน"
+                    />
+                    {jobsList.pageItems.map((job) => {
                         const meta = KIND_META[job.kind];
                         const Icon = meta.icon;
                         const isOpen = !!expanded[job.id];

@@ -2,10 +2,11 @@ import React, { useState, useEffect, Suspense, lazy } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from './context/AppContext';
 import { LoginPage } from './components/LoginPage';
-import { DashboardView } from './components/DashboardView';
-import { SettingsModal } from './components/SettingsModal';
 import { RepairReceiptPrintDocument } from './components/RepairReceiptPrintDocument';
-import { CustomerLandingPage } from './components/CustomerLandingPage';
+
+const DashboardView = lazy(() => import('./components/DashboardView').then(m => ({ default: m.DashboardView })));
+const SettingsModal = lazy(() => import('./components/SettingsModal').then(m => ({ default: m.SettingsModal })));
+const CustomerLandingPage = lazy(() => import('./components/CustomerLandingPage').then(m => ({ default: m.CustomerLandingPage })));
 
 const SalesView = lazy(() => import('./components/SalesView').then(m => ({ default: m.SalesView })));
 const PurchasingStockView = lazy(() => import('./components/PurchasingStockView').then(m => ({ default: m.PurchasingStockView })));
@@ -134,7 +135,11 @@ export const App: React.FC = () => {
     if (showStaffLogin) {
       return <LoginPage onBackToLanding={() => setShowStaffLogin(false)} />;
     }
-    return <CustomerLandingPage onOpenStaffLogin={() => setShowStaffLogin(true)} />;
+    return (
+      <Suspense fallback={<div className="min-h-screen flex items-center justify-center bg-slate-950 text-slate-300 text-sm">กำลังโหลด...</div>}>
+        <CustomerLandingPage onOpenStaffLogin={() => setShowStaffLogin(true)} />
+      </Suspense>
+    );
   }
 
   // Badge counts (aligned with each view's active queue)
@@ -531,7 +536,11 @@ export const App: React.FC = () => {
       </div>
 
       {/* Settings Modal */}
-      <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
+      {isSettingsOpen && (
+        <Suspense fallback={null}>
+          <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
+        </Suspense>
+      )}
 
       {/* Confirm Clear Demo Keep Stock Modal */}
       {isClearDemoModalOpen &&

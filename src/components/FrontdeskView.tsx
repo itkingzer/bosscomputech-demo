@@ -18,10 +18,11 @@ import {
 } from '../types';
 import { ListControls, useListControls } from './ListControls';
 import { ActivityTimeline, LatestUpdateBadge } from './ActivityTimeline';
-import { BarcodeScannerModal } from './BarcodeScannerModal';
 import { EvidencePhotoUploader } from './EvidencePhotoUploader';
 import { ToastBanner } from './ui/ToastBanner';
-import { lookupPurchaseBySn } from '../utils/snLookup';
+import { RepairReceiptPrintModal } from './RepairReceiptPrintModal';
+import { RepairIntakeModal } from './RepairIntakeModal';
+import { OnsiteDailyReportPrintModal, OnsiteCompletedReportRow } from './OnsiteDailyReportPrintModal';
 
 // ---------------------------------------------------------------------------
 // Static option data
@@ -43,15 +44,6 @@ const DISTRICT_OPTIONS = [
   { district: 'ขนอม', zone: 'สาย 4 (โซนตะวันออก)' },
   { district: 'เมืองสุราษฎร์ธานี', zone: 'สาย 5 (ในเมือง / รอบเมือง)' },
   { district: 'ต่างจังหวัด / งานเหมาพิเศษ', zone: 'สาย 6 (ต่างจังหวัด / ชั่วคราว)' }
-];
-
-const ACCESSORY_PRESETS = [
-  'Adapter / หม้อแปลง',
-  'สาย Power',
-  'สายชาร์จ',
-  'สายสัญญาณ (LAN/HDMI/USB)',
-  'กระเป๋า / กล่อง',
-  'ตัวเครื่องเปล่า (ไม่มีอุปกรณ์ติดมา)'
 ];
 
 // Quick-select job categories for onsite service calls
@@ -269,18 +261,29 @@ const QueueSection: React.FC<{
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
-type TabId = 'counter' | 'tracker';
+type TabId = 'counter' | 'prep_ready' | 'tracker' | 'onsite_summary';
+
+const toLocalDateKey = (iso?: string | null): string => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+};
 
 export const FrontdeskView: React.FC = () => {
   const {
-    currentUser, users, orders, items, repairTickets,
-    createRepairTicket, createOnsiteServiceCall,
-    applyVoidAndDispatch, assignOnsite, confirmCustomerPickup, updateOrderRoute,
+    currentUser, users, orders, items, repairTickets, projects,
+    createOnsiteServiceCall,
+    assignOnsite, confirmCustomerPickup, updateOrderRoute,
     selfPickupRepairTicket, dispatchRepairReturnOnsite, queueRepairTicketForDispatch,
-    triggerPrintRepairReceipt, updateOrderDeliveryDate, updateRepairTicketDueDate
+    updateOrderDeliveryDate, updateRepairTicketDueDate
   } = useApp();
 
   const [activeTab, setActiveTab] = useState<TabId>('counter');
+  const [printModalTicket, setPrintModalTicket] = useState<RepairTicket | null>(null);
   const [toast, setToast] = useState('');
   const showToast = (msg: string) => {
     setToast(msg);
@@ -310,107 +313,9 @@ export const FrontdeskView: React.FC = () => {
   }));
 
   // =========================================================================
-  // PILLAR 1A — Walk-in Repair Intake
+  // PILLAR 1A — Walk-in Repair Intake (shared RepairIntakeModal)
   // =========================================================================
   const [intakeOpen, setIntakeOpen] = useState(false);
-  const [intakeScannerOpen, setIntakeScannerOpen] = useState(false);
-  const [inName, setInName] = useState('');
-  const [inPhone, setInPhone] = useState('');
-  const [inDevice, setInDevice] = useState('');
-  const [inSn, setInSn] = useState('');
-  const [inSymptom, setInSymptom] = useState('');
-  const [inAccessories, setInAccessories] = useState<string[]>(['Adapter / หม้อแปลง']);
-  const [inAccessoriesOther, setInAccessoriesOther] = useState('');
-  const [inDistrict, setInDistrict] = useState('เมืองสุราษฎร์ธานี');
-  const [inMatchedItemId, setInMatchedItemId] = useState<string | null>(null);
-  const [inAutoFilledSn, setInAutoFilledSn] = useState<string | null>(null);
-  const [lastIntakeTicket, setLastIntakeTicket] = useState<RepairTicket | null>(null);
-
-  const inSnLookup = useMemo(
-    () => lookupPurchaseBySn(inSn, items, orders, repairTickets),
-    [inSn, items, orders, repairTickets]
-  );
-
-  const handleInSnChange = (val: string) => {
-    setInSn(val);
-    const res = lookupPurchaseBySn(val, items, orders, repairTickets);
-    if (res.found) {
-      if (res.customerName) setInName(res.customerName);
-      if (res.customerPhone) setInPhone(res.customerPhone);
-      if (res.deviceModel) setInDevice(res.deviceModel);
-      if (res.district && DISTRICT_OPTIONS.some(d => d.district === res.district)) {
-        setInDistrict(res.district);
-      }
-      setInMatchedItemId(res.itemId);
-      setInAutoFilledSn(val.trim());
-    } else if (inAutoFilledSn && val.trim() !== inAutoFilledSn) {
-      setInMatchedItemId(null);
-      setInAutoFilledSn(null);
-    }
-  };
-
-  const clearInAutoFill = () => {
-    setInName('');
-    setInPhone('');
-    setInDevice('');
-    setInMatchedItemId(null);
-    setInAutoFilledSn(null);
-  };
-
-  const resetIntake = () => {
-    setInName(''); setInPhone(''); setInDevice(''); setInSn('');
-    setInSymptom(''); setInAccessories(['Adapter / หม้อแปลง']);
-    setInAccessoriesOther(''); setInDistrict('เมืองสุราษฎร์ธานี');
-    setInMatchedItemId(null); setInAutoFilledSn(null);
-  };
-
-  const toggleAccessory = (acc: string) => {
-    if (acc === 'ตัวเครื่องเปล่า (ไม่มีอุปกรณ์ติดมา)') {
-      setInAccessories(prev => (prev.includes(acc) ? [] : [acc]));
-      return;
-    }
-    setInAccessories(prev => {
-      const cleaned = prev.filter(a => a !== 'ตัวเครื่องเปล่า (ไม่มีอุปกรณ์ติดมา)');
-      return cleaned.includes(acc) ? cleaned.filter(a => a !== acc) : [...cleaned, acc];
-    });
-  };
-
-  const submitIntake = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!inName.trim() || !inSymptom.trim()) {
-      showToast('กรุณากรอกชื่อลูกค้าและอาการเสีย');
-      return;
-    }
-    const created = await createRepairTicket({
-      item_id: inMatchedItemId,
-      walkin_sn: inSn.trim(),
-      customer_name: inName.trim(),
-      customer_phone: inPhone.trim() || null,
-      intake_channel: 'front_desk_walkin',
-      device_model: inDevice.trim() || null,
-      accessories: inAccessories,
-      accessories_other: inAccessoriesOther.trim() || null,
-      fault_symptom: inSymptom.trim(),
-      repair_detail: null,
-      parts_used: null,
-      repair_outcome: null,
-      district: inDistrict,
-      route_code: getRouteByDistrict(inDistrict),
-      delivery_location: '',
-      job_category: 'repair_pickup',
-      assigned_techs: [],
-      assigned_onsite_tech: null,
-      finished_at: null,
-      received_by: currentUser?.name || 'ระบบ',
-      received_channel: 'front_desk',
-      service_type: 'in_house_repair',
-      repair_status: 'pending_check'
-    });
-    setLastIntakeTicket(created);
-    setIntakeOpen(false);
-    resetIntake();
-    showToast('สร้างใบรับซ่อมสำเร็จ ส่งเข้าคิวช่างซ่อมในร้านแล้ว');
-  };
 
   // =========================================================================
   // PILLAR 1B — Onsite Service / Pickup Call
@@ -468,15 +373,28 @@ export const FrontdeskView: React.FC = () => {
 
   // =========================================================================
   // PILLAR 2A — Prepared Orders & Repair Return Dispatch
+  // (หน้าร้านไม่มีสิทธิ์แปะวอย — แสดงและจัดส่งเฉพาะของที่ช่างเตรียมติดวอยแล้ว ready_for_dispatch)
   // =========================================================================
   const readyItems = useMemo(
     () => items.filter(i => {
-      if (i.status !== 'prepped_in_stock' && i.status !== 'ready_for_dispatch') return false;
+      if (i.status !== 'ready_for_dispatch') return false;
       const ord = i.order_id ? orders.find(o => o.id === i.order_id) : null;
       return ord?.delivery_mode !== 'customer_pickup';
     }),
     [items, orders]
   );
+
+  // ของพร้อมปล่อยจากห้องช่างเตรียม (รวมทั้งติดวอยพร้อมปล่อยแล้ว และเทสเสร็จรอช่างเตรียมแปะวอย)
+  const [prepOverviewFilter, setPrepOverviewFilter] = useState<'all' | 'ready' | 'pending_void'>('all');
+  const prepReadyOverviewItems = useMemo(
+    () => items.filter(i => i.status === 'ready_for_dispatch' || i.status === 'prepped_in_stock'),
+    [items]
+  );
+  const filteredPrepOverviewItems = useMemo(() => {
+    if (prepOverviewFilter === 'ready') return prepReadyOverviewItems.filter(i => i.status === 'ready_for_dispatch');
+    if (prepOverviewFilter === 'pending_void') return prepReadyOverviewItems.filter(i => i.status === 'prepped_in_stock');
+    return prepReadyOverviewItems;
+  }, [prepReadyOverviewItems, prepOverviewFilter]);
 
   const awaitingDispatchTickets = useMemo(
     () => repairTickets.filter(t => t.status === 'awaiting_dispatch'),
@@ -488,7 +406,6 @@ export const FrontdeskView: React.FC = () => {
   const [dispatchTarget, setDispatchTarget] = useState<
     { type: 'item'; itemId: string } | { type: 'repair'; ticketId: string } | null
   >(null);
-  const [dispatchVoidDate, setDispatchVoidDate] = useState('');
   const [dispatchDueDate, setDispatchDueDate] = useState('');
   const [dispatchRoute, setDispatchRoute] = useState<RouteCode>('route_5');
   const [dispatchTechs, setDispatchTechs] = useState<string[]>([]);
@@ -502,7 +419,6 @@ export const FrontdeskView: React.FC = () => {
     const it = items.find(i => i.id === itemId);
     const ord = it?.order_id ? orders.find(o => o.id === it.order_id) : null;
     setDispatchTarget({ type: 'item', itemId });
-    setDispatchVoidDate(it?.void_date || new Date().toISOString().slice(0, 10));
     setDispatchDueDate(ord?.delivery_date || '');
     setDispatchRoute(ord?.route_code || (ord?.district ? getRouteByDistrict(ord.district) : 'route_5'));
     setDispatchTechs([]);
@@ -511,7 +427,6 @@ export const FrontdeskView: React.FC = () => {
   const openDispatchTicket = (ticketId: string) => {
     const t = repairTickets.find(x => x.id === ticketId);
     setDispatchTarget({ type: 'repair', ticketId });
-    setDispatchVoidDate('');
     setDispatchDueDate(t?.due_date || '');
     setDispatchRoute(t?.route_code || (t?.district ? getRouteByDistrict(t.district) : 'route_5'));
     setDispatchTechs(t?.assigned_techs || []);
@@ -519,6 +434,26 @@ export const FrontdeskView: React.FC = () => {
 
   const toggleDispatchTech = (name: string) => {
     setDispatchTechs(prev => (prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name]));
+  };
+
+  const saveDispatchScheduleOnly = async () => {
+    if (!dispatchTarget) return;
+    if (dispatchTarget.type === 'item' && dispatchOrder) {
+      if (dispatchDueDate !== (dispatchOrder.delivery_date || '')) {
+        await updateOrderDeliveryDate(dispatchOrder.id, dispatchDueDate);
+      }
+      if (dispatchRoute !== dispatchOrder.route_code) {
+        await updateOrderRoute(dispatchOrder.id, dispatchRoute);
+      }
+      setDispatchTarget(null);
+      showToast('บันทึกวันกำหนดส่งและสายรถใหม่เรียบร้อยแล้ว');
+    } else if (dispatchTarget.type === 'repair' && dispatchTicket) {
+      if (dispatchDueDate !== (dispatchTicket.due_date || '')) {
+        await updateRepairTicketDueDate(dispatchTicket.id, dispatchDueDate);
+      }
+      setDispatchTarget(null);
+      showToast('บันทึกวันนัดส่งคืนเรียบร้อยแล้ว');
+    }
   };
 
   const confirmDispatch = async () => {
@@ -535,9 +470,6 @@ export const FrontdeskView: React.FC = () => {
       }
       if (dispatchOrder && dispatchRoute !== dispatchOrder.route_code) {
         await updateOrderRoute(dispatchOrder.id, dispatchRoute);
-      }
-      if (dispatchItem.status === 'prepped_in_stock' || !dispatchItem.warranty_void_date) {
-        await applyVoidAndDispatch(dispatchItem.id, dispatchVoidDate);
       }
       await assignOnsite(dispatchItem.id, dispatchTechs, 'delivery');
       setDispatchTarget(null);
@@ -668,7 +600,7 @@ export const FrontdeskView: React.FC = () => {
   // =========================================================================
   const pickupItems = useMemo(
     () => items.filter(i => {
-      if (i.status !== 'prepped_in_stock' && i.status !== 'ready_for_dispatch') return false;
+      if (i.status !== 'ready_for_dispatch') return false;
       const ord = i.order_id ? orders.find(o => o.id === i.order_id) : null;
       return ord?.delivery_mode === 'customer_pickup';
     }),
@@ -676,19 +608,16 @@ export const FrontdeskView: React.FC = () => {
   );
 
   const [pickupItemId, setPickupItemId] = useState<string | null>(null);
-  const [pickupVoidDate, setPickupVoidDate] = useState('');
   const pickupItem = pickupItemId ? items.find(i => i.id === pickupItemId) : null;
   const pickupOrder = pickupItem?.order_id ? orders.find(o => o.id === pickupItem.order_id) : null;
 
   const openPickup = (itemId: string) => {
-    const it = items.find(i => i.id === itemId);
     setPickupItemId(itemId);
-    setPickupVoidDate(it?.void_date || new Date().toISOString().slice(0, 10));
   };
 
   const confirmPickup = async () => {
     if (!pickupItem) return;
-    await confirmCustomerPickup(pickupItem.id, pickupVoidDate);
+    await confirmCustomerPickup(pickupItem.id);
     setPickupItemId(null);
     showToast('ยืนยันรับสินค้าและปิดงานเรียบร้อยแล้ว');
   };
@@ -726,6 +655,131 @@ export const FrontdeskView: React.FC = () => {
   const trackerList = useListControls(activeRepairTickets, {
     getDate: (t) => t.created_at,
     initialSort: 'newest'
+  });
+
+  const prepReadyOverviewList = useListControls(filteredPrepOverviewItems, {
+    getDate: (i) => i.warranty_applied_at || i.prepped_at || i.created_at,
+    initialSort: 'newest',
+    initialPageSize: 10
+  });
+
+  const pickupReadyList = useListControls(pickupReadyTickets, {
+    getDate: (t) => t.finished_at || t.updated_at || t.created_at,
+    initialSort: 'newest',
+    initialPageSize: 10
+  });
+
+  const pickupItemsList = useListControls(pickupItems, {
+    getDate: (i) => i.warranty_applied_at || i.prepped_at || i.created_at,
+    initialSort: 'newest',
+    initialPageSize: 10
+  });
+
+  // =========================================================================
+  // PILLAR 4 — Onsite Completed Summary & Project Progress
+  // =========================================================================
+  const todayDateKey = toLocalDateKey(new Date().toISOString());
+  const [reportDate, setReportDate] = useState<string>(todayDateKey);
+  const [reportShowAllDates, setReportShowAllDates] = useState(false);
+  const [reportTechFilter, setReportTechFilter] = useState<string>('all');
+  const [onsiteReportPrintOpen, setOnsiteReportPrintOpen] = useState(false);
+
+  const onsiteCompletedJobs = useMemo<OnsiteCompletedReportRow[]>(() => {
+    const rows: OnsiteCompletedReportRow[] = [];
+
+    items.forEach((it) => {
+      if (it.status !== 'delivered' || !it.delivered_at) return;
+      const techs =
+        it.assigned_techs && it.assigned_techs.length > 0
+          ? it.assigned_techs
+          : it.assigned_onsite_tech
+            ? [it.assigned_onsite_tech]
+            : [];
+      const ord = it.order_id ? orders.find((o) => o.id === it.order_id) : null;
+      if (techs.length === 0 && ord?.delivery_mode === 'customer_pickup') return;
+      if (techs.length === 0) return;
+
+      rows.push({
+        id: `itm-${it.id}`,
+        dateKey: toLocalDateKey(it.delivered_at),
+        kind: 'ส่งมอบสินค้า',
+        refNo: ord?.sales_ref || it.serial_number || it.id,
+        customerName: ord?.customer_name || 'ไม่ระบุลูกค้า',
+        detail: `${it.model_name}${it.serial_number ? ` (S/N: ${it.serial_number})` : ''}`,
+        techs,
+        location: ord?.delivery_location || ord?.district || '-',
+        completedAt: it.delivered_at
+      });
+    });
+
+    repairTickets.forEach((t) => {
+      const isClosed = t.status === 'returned_closed' || Boolean(t.delivered_at);
+      if (!isClosed) return;
+      if (t.returned_by === 'รับเองหน้าร้าน') return;
+      const techs =
+        t.assigned_techs && t.assigned_techs.length > 0
+          ? t.assigned_techs
+          : t.returned_by
+            ? [t.returned_by]
+            : t.received_channel === 'onsite_pickup' || t.received_channel === 'onsite_service_sheet'
+              ? [t.received_by || 'ช่าง Onsite']
+              : [];
+      if (techs.length === 0) return;
+      const completedAt = t.delivered_at || t.updated_at || t.created_at;
+      rows.push({
+        id: `rep-${t.id}`,
+        dateKey: toLocalDateKey(completedAt),
+        kind: t.is_repair_return ? 'ส่งคืนเครื่องซ่อม' : 'บริการ / รับเครื่อง Onsite',
+        refNo: t.ticket_no,
+        customerName: t.customer_name,
+        detail: `${t.device_model || 'ไม่ระบุรุ่น'}${t.walkin_sn ? ` (S/N: ${t.walkin_sn})` : ''}`,
+        techs,
+        location: t.delivery_location || t.district || '-',
+        completedAt
+      });
+    });
+
+    projects.forEach((p) => {
+      if (p.status !== 'completed' || !p.completed_at) return;
+      rows.push({
+        id: `prj-${p.id}`,
+        dateKey: toLocalDateKey(p.completed_at),
+        kind: 'ปิดงานโปรเจกต์',
+        refNo: p.id,
+        customerName: p.customer_name,
+        detail: `${p.site_name} (100%)`,
+        techs: p.assigned_techs || [],
+        location: p.location || p.district || '-',
+        completedAt: p.completed_at
+      });
+    });
+
+    return rows.sort((a, b) => new Date(b.completedAt).getTime() - new Date(a.completedAt).getTime());
+  }, [items, orders, repairTickets, projects]);
+
+  const todayOnsiteCount = useMemo(
+    () => onsiteCompletedJobs.filter((j) => j.dateKey === todayDateKey).length,
+    [onsiteCompletedJobs, todayDateKey]
+  );
+
+  const filteredOnsiteJobs = useMemo(() => {
+    return onsiteCompletedJobs.filter((j) => {
+      if (!reportShowAllDates && reportDate && j.dateKey !== reportDate) return false;
+      if (reportTechFilter !== 'all' && !j.techs.includes(reportTechFilter)) return false;
+      return true;
+    });
+  }, [onsiteCompletedJobs, reportShowAllDates, reportDate, reportTechFilter]);
+
+  const onsiteJobsList = useListControls(filteredOnsiteJobs, {
+    getDate: (j) => j.completedAt,
+    initialSort: 'newest',
+    initialPageSize: 10
+  });
+
+  const projectsProgressList = useListControls(projects, {
+    getDate: (p) => p.updated_at || p.created_at,
+    initialSort: 'newest',
+    initialPageSize: 10
   });
 
   const [trackerTicketId, setTrackerTicketId] = useState<string | null>(null);
@@ -804,11 +858,11 @@ export const FrontdeskView: React.FC = () => {
             รับเครื่องซ่อม · รับแจ้งเหตุ Onsite · จัดส่งมอบ · ติดตามงานซ่อม/RMA
           </p>
         </div>
-        <div className="flex items-center gap-1 p-1 rounded-2xl bg-slate-100 dark:bg-white/[0.04] border border-slate-200 dark:border-white/[0.08] self-start">
+        <div className="flex items-center gap-1 p-1 rounded-2xl bg-slate-100 dark:bg-white/[0.04] border border-slate-200 dark:border-white/[0.08] self-start flex-wrap">
           <button
             type="button"
             onClick={() => setActiveTab('counter')}
-            className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold transition-colors ${activeTab === 'counter'
+            className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold transition-colors cursor-pointer ${activeTab === 'counter'
               ? 'bg-white dark:bg-white/[0.1] text-[#FF6B00] shadow-sm'
               : 'text-slate-500 dark:text-slate-400'
               }`}
@@ -818,12 +872,38 @@ export const FrontdeskView: React.FC = () => {
           <button
             type="button"
             onClick={() => setActiveTab('tracker')}
-            className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold transition-colors ${activeTab === 'tracker'
+            className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold transition-colors cursor-pointer ${activeTab === 'tracker'
               ? 'bg-white dark:bg-white/[0.1] text-[#FF6B00] shadow-sm'
               : 'text-slate-500 dark:text-slate-400'
               }`}
           >
             ติดตามงานซ่อม & RMA
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('prep_ready')}
+            className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold transition-colors cursor-pointer inline-flex items-center gap-1.5 ${activeTab === 'prep_ready'
+              ? 'bg-white dark:bg-white/[0.1] text-[#FF6B00] shadow-sm'
+              : 'text-slate-500 dark:text-slate-400'
+              }`}
+          >
+            <span>เช็คของพร้อมปล่อย</span>
+            <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono bg-sky-500/15 text-sky-700 dark:text-sky-300">
+              {prepReadyOverviewItems.length}
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('onsite_summary')}
+            className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold transition-colors cursor-pointer inline-flex items-center gap-1.5 ${activeTab === 'onsite_summary'
+              ? 'bg-white dark:bg-white/[0.1] text-[#FF6B00] shadow-sm'
+              : 'text-slate-500 dark:text-slate-400'
+              }`}
+          >
+            <span>สรุปงานช่าง Onsite</span>
+            <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono bg-emerald-500/15 text-emerald-700 dark:text-emerald-300">
+              {todayOnsiteCount}
+            </span>
           </button>
         </div>
       </div>
@@ -873,7 +953,23 @@ export const FrontdeskView: React.FC = () => {
             emptyText="ยังไม่มีเครื่องซ่อมที่ช่างส่งคืนหน้าร้าน"
           >
             <div className="space-y-3">
-              {pickupReadyTickets.map(t => (
+              {pickupReadyTickets.length > 0 && (
+                <ListControls
+                  from={pickupReadyList.from}
+                  to={pickupReadyList.to}
+                  total={pickupReadyList.total}
+                  page={pickupReadyList.page}
+                  totalPages={pickupReadyList.totalPages}
+                  pageSize={pickupReadyList.pageSize}
+                  sort={pickupReadyList.sort}
+                  onSortChange={pickupReadyList.setSort}
+                  onPageSizeChange={pickupReadyList.setPageSize}
+                  onPageChange={pickupReadyList.setPage}
+                  pageSizeOptions={[10, 20, 30]}
+                  unit="งาน"
+                />
+              )}
+              {pickupReadyList.pageItems.map(t => (
                 <CompactCard
                   key={t.id}
                   accent="emerald"
@@ -1045,7 +1141,23 @@ export const FrontdeskView: React.FC = () => {
             emptyText="ยังไม่มีออเดอร์แบบรับเองที่พร้อมส่งมอบ"
           >
             <div className="space-y-3">
-              {pickupItems.map(item => {
+              {pickupItems.length > 0 && (
+                <ListControls
+                  from={pickupItemsList.from}
+                  to={pickupItemsList.to}
+                  total={pickupItemsList.total}
+                  page={pickupItemsList.page}
+                  totalPages={pickupItemsList.totalPages}
+                  pageSize={pickupItemsList.pageSize}
+                  sort={pickupItemsList.sort}
+                  onSortChange={pickupItemsList.setSort}
+                  onPageSizeChange={pickupItemsList.setPageSize}
+                  onPageChange={pickupItemsList.setPage}
+                  pageSizeOptions={[10, 20, 30]}
+                  unit="รายการ"
+                />
+              )}
+              {pickupItemsList.pageItems.map(item => {
                 const ord = item.order_id ? orders.find(o => o.id === item.order_id) : null;
                 return (
                   <CompactCard
@@ -1067,6 +1179,399 @@ export const FrontdeskView: React.FC = () => {
                   />
                 );
               })}
+            </div>
+          </QueueSection>
+        </div>
+      )}
+
+      {/* ===================== PREP READY TAB: เช็คของพร้อมปล่อย (ช่างเตรียม) ===================== */}
+      {activeTab === 'prep_ready' && (
+        <div className="space-y-4">
+          <QueueSection
+            icon={<Package className="w-5 h-5" />}
+            title="เช็คของพร้อมปล่อย (สถานะจากห้องช่างเตรียม)"
+            count={prepReadyOverviewItems.length}
+            accent="sky"
+            emptyText="ยังไม่มีสินค้าจากห้องช่างเตรียมที่รอปล่อยหรือติดวอย"
+          >
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center gap-1.5">
+                {[
+                  { id: 'all' as const, label: `ทั้งหมด (${prepReadyOverviewItems.length})` },
+                  {
+                    id: 'ready' as const,
+                    label: `ติดวอยพร้อมปล่อยแล้ว (${prepReadyOverviewItems.filter(i => i.status === 'ready_for_dispatch').length})`
+                  },
+                  {
+                    id: 'pending_void' as const,
+                    label: `รอช่างเตรียมแปะวอย (${prepReadyOverviewItems.filter(i => i.status === 'prepped_in_stock').length})`
+                  }
+                ].map((f) => (
+                  <button
+                    key={f.id}
+                    type="button"
+                    onClick={() => setPrepOverviewFilter(f.id)}
+                    className={`px-2.5 py-1 rounded-full text-[11px] font-bold border transition cursor-pointer ${
+                      prepOverviewFilter === f.id
+                        ? 'bg-sky-500 text-white border-sky-500 shadow-sm'
+                        : 'bg-white dark:bg-white/[0.04] text-slate-600 dark:text-slate-300 border-slate-200 dark:border-white/[0.08] hover:border-sky-500/40'
+                    }`}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+
+              {filteredPrepOverviewItems.length === 0 ? (
+                <p className="text-xs text-slate-400 dark:text-slate-500 italic py-3 text-center">
+                  ไม่มีรายการในหมวดนี้
+                </p>
+              ) : (
+                <>
+                  <ListControls
+                    from={prepReadyOverviewList.from}
+                    to={prepReadyOverviewList.to}
+                    total={prepReadyOverviewList.total}
+                    page={prepReadyOverviewList.page}
+                    totalPages={prepReadyOverviewList.totalPages}
+                    pageSize={prepReadyOverviewList.pageSize}
+                    sort={prepReadyOverviewList.sort}
+                    onSortChange={prepReadyOverviewList.setSort}
+                    onPageSizeChange={prepReadyOverviewList.setPageSize}
+                    onPageChange={prepReadyOverviewList.setPage}
+                    pageSizeOptions={[10, 20, 30]}
+                    unit="รายการ"
+                  />
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {prepReadyOverviewList.pageItems.map((item) => {
+                    const ord = item.order_id ? orders.find(o => o.id === item.order_id) : null;
+                    const isReady = item.status === 'ready_for_dispatch';
+                    const isPickup = ord?.delivery_mode === 'customer_pickup';
+                    const rMeta = ord?.route_code ? ROUTE_DEFINITIONS[ord.route_code] : null;
+                    const addressText = [ord?.delivery_location, ord?.district].filter(Boolean).join(' · ');
+                    return (
+                      <div
+                        key={item.id}
+                        className={`rounded-2xl border p-4 flex flex-col gap-2.5 bg-white dark:bg-white/[0.04] shadow-sm ${
+                          isReady
+                            ? 'border-emerald-400 dark:border-emerald-500/40'
+                            : 'border-amber-400 dark:border-amber-500/40'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-mono font-extrabold px-2 py-0.5 rounded-lg bg-[#FF6B00] text-black truncate">
+                            {ord?.sales_ref || item.serial_number || item.id}
+                          </span>
+                          <span
+                            className={`text-[11px] font-extrabold px-2.5 py-0.5 rounded-full border whitespace-nowrap ${
+                              isReady
+                                ? 'bg-emerald-500/15 text-emerald-800 dark:text-emerald-300 border-emerald-500/40'
+                                : 'bg-amber-500/15 text-amber-800 dark:text-amber-300 border-amber-500/40'
+                            }`}
+                          >
+                            {isReady ? 'ติดวอยพร้อมปล่อย' : 'รอช่างเตรียมแปะวอย'}
+                          </span>
+                        </div>
+
+                        <div className="min-w-0 space-y-1">
+                          <div className="text-sm sm:text-base font-extrabold text-slate-900 dark:text-white leading-snug">
+                            {ord?.customer_name || 'สต๊อก / ไม่ระบุลูกค้า'}
+                          </div>
+                          <div className="text-xs sm:text-sm font-bold text-slate-800 dark:text-slate-100 leading-snug">
+                            {item.model_name}
+                          </div>
+                          <div className="text-xs font-mono font-semibold text-slate-700 dark:text-slate-200 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                            <span>S/N: {item.serial_number || '-'}</span>
+                            {isReady && item.void_date && (
+                              <span className="text-emerald-700 dark:text-emerald-300 font-bold">
+                                · วอย: {item.void_date}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* ที่อยู่และเบอร์โทรลูกค้า */}
+                        {(addressText || ord?.customer_phone || rMeta) && (
+                          <div className="rounded-xl p-2.5 bg-slate-50 dark:bg-white/[0.04] border border-slate-200 dark:border-white/[0.08] space-y-1 text-xs">
+                            {addressText && (
+                              <div className="flex items-start gap-1.5 font-semibold text-slate-800 dark:text-slate-100 leading-snug">
+                                <MapPin className="w-3.5 h-3.5 text-[#FF6B00] shrink-0 mt-0.5" />
+                                <span className="line-clamp-2">{addressText}</span>
+                              </div>
+                            )}
+                            <div className="flex flex-wrap items-center gap-2 text-[11px] font-semibold text-slate-700 dark:text-slate-200">
+                              {ord?.customer_phone && (
+                                <span className="inline-flex items-center gap-1">
+                                  <Phone className="w-3 h-3 text-slate-500 dark:text-slate-400" />
+                                  {ord.customer_phone}
+                                </span>
+                              )}
+                              {rMeta && (
+                                <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold border ${rMeta.badgeBg} ${rMeta.badgeBorder} ${rMeta.badgeText}`}>
+                                  {rMeta.shortName}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="mt-auto pt-2 border-t border-slate-200 dark:border-white/[0.08] flex items-center justify-between gap-2 text-xs">
+                          <span className="font-bold text-slate-700 dark:text-slate-200">
+                            {isPickup ? 'รับเองหน้าร้าน' : 'จัดส่ง Onsite'}
+                            {ord?.delivery_date ? ` · ส่ง ${formatDateDMY(ord.delivery_date)}` : ''}
+                          </span>
+                          {isReady && (
+                            <button
+                              type="button"
+                              onClick={() => (isPickup ? openPickup(item.id) : openDispatch(item.id))}
+                              className="px-3 py-1.5 rounded-xl bg-[#FF6B00] hover:bg-[#FF8A24] text-black font-extrabold text-xs cursor-pointer whitespace-nowrap shadow-sm"
+                            >
+                              {isPickup ? 'ยืนยันรับสินค้า' : 'มอบหมาย / วันส่ง'}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  </div>
+                </>
+              )}
+            </div>
+          </QueueSection>
+        </div>
+      )}
+
+      {/* ===================== ONSITE SUMMARY & PROJECT PROGRESS TAB ===================== */}
+      {activeTab === 'onsite_summary' && (
+        <div className="space-y-5">
+          {/* Top Summary & Filter Bar */}
+          <div className="rounded-2xl border border-slate-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.03] p-4 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="px-3.5 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30">
+                <div className="text-[11px] font-bold text-emerald-700 dark:text-emerald-300">
+                  วันนี้ Onsite ปิดงานแล้ว
+                </div>
+                <div className="text-xl font-black font-mono text-emerald-700 dark:text-emerald-300">
+                  {todayOnsiteCount} <span className="text-xs font-bold">งาน</span>
+                </div>
+              </div>
+              <div className="px-3.5 py-2 rounded-xl bg-purple-500/10 border border-purple-500/30">
+                <div className="text-[11px] font-bold text-purple-700 dark:text-purple-300">
+                  โปรเจกต์ที่ติดตาม
+                </div>
+                <div className="text-xl font-black font-mono text-purple-700 dark:text-purple-300">
+                  {projects.length} <span className="text-xs font-bold">โครงการ</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="date"
+                value={reportDate}
+                onChange={(e) => {
+                  setReportDate(e.target.value);
+                  setReportShowAllDates(false);
+                }}
+                aria-label="เลือกวันที่ดูสรุปงาน"
+                className="px-3 py-2 rounded-xl text-xs font-bold bg-slate-50 dark:bg-white/[0.05] border border-slate-200 dark:border-white/[0.1] text-slate-900 dark:text-white cursor-pointer"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  setReportDate(todayDateKey);
+                  setReportShowAllDates(false);
+                }}
+                className={`px-3 py-2 rounded-xl text-xs font-bold border transition cursor-pointer ${
+                  !reportShowAllDates && reportDate === todayDateKey
+                    ? 'bg-[#FF6B00] text-black border-[#FF6B00]'
+                    : 'bg-slate-50 dark:bg-white/[0.04] text-slate-700 dark:text-slate-200 border-slate-200 dark:border-white/[0.1]'
+                }`}
+              >
+                วันนี้
+              </button>
+              <button
+                type="button"
+                onClick={() => setReportShowAllDates((v) => !v)}
+                className={`px-3 py-2 rounded-xl text-xs font-bold border transition cursor-pointer ${
+                  reportShowAllDates
+                    ? 'bg-sky-500 text-white border-sky-500'
+                    : 'bg-slate-50 dark:bg-white/[0.04] text-slate-700 dark:text-slate-200 border-slate-200 dark:border-white/[0.1]'
+                }`}
+              >
+                แสดงทุกวัน
+              </button>
+              <select
+                value={reportTechFilter}
+                onChange={(e) => setReportTechFilter(e.target.value)}
+                aria-label="กรองตามชื่อช่าง Onsite"
+                className="px-3 py-2 rounded-xl text-xs font-bold bg-slate-50 dark:bg-white/[0.05] border border-slate-200 dark:border-white/[0.1] text-slate-900 dark:text-white cursor-pointer"
+              >
+                <option value="all" className="bg-white dark:bg-slate-900">ช่าง Onsite ทุกคน</option>
+                {onsiteTechs.map((u) => (
+                  <option key={u.id} value={u.name} className="bg-white dark:bg-slate-900">
+                    {u.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => setOnsiteReportPrintOpen(true)}
+                className="px-4 py-2 rounded-xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold text-xs shadow-lg shadow-[#FF6B00]/25 cursor-pointer flex items-center gap-1.5 whitespace-nowrap"
+              >
+                <Printer className="w-4 h-4" />
+                <span>พิมพ์รายงาน (A4)</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Section 1: Completed Onsite Jobs */}
+          <QueueSection
+            icon={<CheckCircle2 className="w-5 h-5" />}
+            title={
+              reportShowAllDates
+                ? 'ประวัติปิดงานเสร็จของช่าง Onsite (ทุกวัน)'
+                : `ประวัติปิดงานเสร็จของช่าง Onsite วันที่ ${formatDateDMY(reportDate)}`
+            }
+            count={filteredOnsiteJobs.length}
+            accent="emerald"
+            emptyText="ไม่มีรายการปิดงานเสร็จของช่าง Onsite ในวันที่เลือก"
+          >
+            <div className="space-y-3">
+              <ListControls
+                from={onsiteJobsList.from}
+                to={onsiteJobsList.to}
+                total={onsiteJobsList.total}
+                page={onsiteJobsList.page}
+                totalPages={onsiteJobsList.totalPages}
+                pageSize={onsiteJobsList.pageSize}
+                sort={onsiteJobsList.sort}
+                onSortChange={onsiteJobsList.setSort}
+                onPageSizeChange={onsiteJobsList.setPageSize}
+                onPageChange={onsiteJobsList.setPage}
+                pageSizeOptions={[10, 20, 30]}
+                unit="งาน"
+              />
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {onsiteJobsList.pageItems.map((job) => (
+                  <div
+                    key={job.id}
+                    className="rounded-2xl border border-emerald-300 dark:border-emerald-500/30 bg-white dark:bg-white/[0.03] p-3.5 flex flex-col gap-2"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] font-mono font-extrabold px-2 py-0.5 rounded-lg bg-[#FF6B00] text-black truncate">
+                        {job.refNo}
+                      </span>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 whitespace-nowrap">
+                        {job.kind}
+                      </span>
+                    </div>
+                    <div className="text-sm font-extrabold text-slate-900 dark:text-white leading-snug">
+                      {job.customerName}
+                    </div>
+                    <div className="text-xs font-semibold text-slate-700 dark:text-slate-200 leading-snug">
+                      {job.detail}
+                    </div>
+                    <div className="text-[11px] text-slate-600 dark:text-slate-300 flex items-start gap-1">
+                      <MapPin className="w-3.5 h-3.5 text-[#FF6B00] shrink-0 mt-0.5" />
+                      <span className="line-clamp-2">{job.location}</span>
+                    </div>
+                    <div className="mt-auto pt-2 border-t border-slate-200 dark:border-white/[0.08] flex items-center justify-between gap-2 text-[11px]">
+                      <span className="font-bold text-sky-700 dark:text-sky-300 truncate">
+                        ช่าง: {job.techs.join(', ') || '-'}
+                      </span>
+                      <span className="font-mono text-slate-500 dark:text-slate-400 shrink-0">
+                        {formatThaiDateTime(job.completedAt)}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </QueueSection>
+
+          {/* Section 2: Project Progress */}
+          <QueueSection
+            icon={<Building2 className="w-5 h-5" />}
+            title="ความคืบหน้างานโปรเจกต์ / ติดตั้ง (แจ้งหัวหน้าฝ่ายช่าง)"
+            count={projects.length}
+            accent="purple"
+            emptyText="ยังไม่มีงานโปรเจกต์ในระบบ"
+          >
+            <div className="space-y-3">
+              <ListControls
+                from={projectsProgressList.from}
+                to={projectsProgressList.to}
+                total={projectsProgressList.total}
+                page={projectsProgressList.page}
+                totalPages={projectsProgressList.totalPages}
+                pageSize={projectsProgressList.pageSize}
+                sort={projectsProgressList.sort}
+                onSortChange={projectsProgressList.setSort}
+                onPageSizeChange={projectsProgressList.setPageSize}
+                onPageChange={projectsProgressList.setPage}
+                pageSizeOptions={[10, 20, 30]}
+                unit="โครงการ"
+              />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {projectsProgressList.pageItems.map((prj) => {
+                  const latestLog =
+                    prj.daily_logs && prj.daily_logs.length > 0
+                      ? prj.daily_logs[prj.daily_logs.length - 1]
+                      : null;
+                  const pct =
+                    prj.status === 'completed' ? 100 : latestLog ? latestLog.progress_percent : 0;
+                  return (
+                    <div
+                      key={prj.id}
+                      className="rounded-2xl border border-purple-300 dark:border-purple-500/30 bg-white dark:bg-white/[0.03] p-4 space-y-2.5"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-mono font-extrabold px-2 py-0.5 rounded-lg bg-purple-600 text-white">
+                          {prj.id}
+                        </span>
+                        <span className="text-xs font-mono font-extrabold text-purple-700 dark:text-purple-300">
+                          คืบหน้า {pct}%
+                        </span>
+                      </div>
+                      <div>
+                        <div className="text-sm font-extrabold text-slate-900 dark:text-white">
+                          {prj.site_name}
+                        </div>
+                        <div className="text-xs text-slate-600 dark:text-slate-300">
+                          ลูกค้า: <b>{prj.customer_name}</b>
+                          {prj.due_date ? ` · กำหนดส่ง ${formatDateDMY(prj.due_date)}` : ''}
+                        </div>
+                      </div>
+                      <div className="w-full h-2 rounded-full bg-slate-200 dark:bg-white/10 overflow-hidden">
+                        <div
+                          className="h-full bg-gradient-to-r from-purple-500 to-emerald-500 transition-all"
+                          style={{ width: `${Math.min(100, Math.max(0, pct))}%` }}
+                        />
+                      </div>
+                      <div className="rounded-xl p-2.5 bg-slate-50 dark:bg-white/[0.04] border border-slate-200 dark:border-white/[0.08] text-xs">
+                        {latestLog ? (
+                          <>
+                            <div className="font-semibold text-slate-800 dark:text-slate-100">
+                              อัปเดตล่าสุด: {latestLog.note || '-'}
+                            </div>
+                            <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                              โดย {latestLog.tech_name} · {formatDateDMY(latestLog.date)}
+                            </div>
+                          </>
+                        ) : (
+                          <span className="text-slate-500 dark:text-slate-400">
+                            ยังไม่มีบันทึกความคืบหน้ารายวันจากช่าง Onsite
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[11px] font-bold text-slate-600 dark:text-slate-300">
+                        ทีมช่าง: {prj.assigned_techs?.length ? prj.assigned_techs.join(', ') : 'ยังไม่ระบุ'}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </QueueSection>
         </div>
@@ -1159,192 +1664,16 @@ export const FrontdeskView: React.FC = () => {
         </div>
       )}
 
-      {/* ===================== MODAL: Walk-in Intake ===================== */}
-      <Modal
+      {/* ===================== MODAL: Walk-in Intake (Shared) ===================== */}
+      <RepairIntakeModal
         open={intakeOpen}
         onClose={() => setIntakeOpen(false)}
         title="รับเครื่องซ่อมหน้าร้าน"
         subtitle="Walk-in Repair Intake · สร้างใบรับซ่อมเข้าคิวช่างในร้าน"
-        icon={<Wrench className="w-5 h-5" />}
-        maxWidthClass="max-w-2xl"
-        accentClass="border-[#FF6B00]/40"
-        footer={
-          <div className="flex gap-2">
-            <button type="button" onClick={() => setIntakeOpen(false)} className={modalSecondaryBtnClass}>
-              ยกเลิก
-            </button>
-            <button type="submit" form="intake-form" className={modalPrimaryBtnClass}>
-              <Printer className="w-4 h-4" />
-              บันทึก & พิมพ์ใบรับซ่อม
-            </button>
-          </div>
-        }
-      >
-        <form id="intake-form" onSubmit={submitIntake} className="space-y-3.5">
-          {/* S/N Smart Search & Auto-Fill */}
-          <div className="rounded-2xl p-3.5 border border-slate-200 dark:border-white/[0.1] bg-slate-50 dark:bg-white/[0.03] space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <label className={modalLabelClass + ' mb-0'}>
-                ค้นหาด้วย Serial Number (S/N) เพื่อดึงข้อมูลอัตโนมัติ
-              </label>
-              <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                หรือกรอกข้อมูลเองด้านล่าง
-              </span>
-            </div>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={inSn}
-                onChange={(e) => handleInSnChange(e.target.value)}
-                placeholder="สแกนหรือพิมพ์ S/N เช่น BC-2026-001 (ถ้าซื้อจากร้านระบบจะกรอกให้เอง)"
-                className={modalInputClass + ' font-mono'}
-              />
-              <button
-                type="button"
-                onClick={() => setIntakeScannerOpen(true)}
-                className="shrink-0 px-3 rounded-xl bg-[#FF6B00]/15 hover:bg-[#FF6B00]/25 text-[#FF6B00] border border-[#FF6B00]/30 transition-colors active:scale-[0.97] cursor-pointer"
-                aria-label="สแกนบาร์โค้ด S/N"
-              >
-                <ScanLine className="w-5 h-5" />
-              </button>
-            </div>
-
-            {inSnLookup.found ? (
-              <div className="rounded-xl p-2.5 bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/30 flex flex-wrap items-center justify-between gap-2 text-xs">
-                <div className="text-emerald-800 dark:text-emerald-200 space-y-0.5">
-                  <div className="font-bold flex items-center gap-1.5">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                    <span>
-                      พบข้อมูลในระบบ — กรอกชื่อลูกค้าและรุ่นเครื่องให้อัตโนมัติแล้ว
-                    </span>
-                  </div>
-                  <div className="text-[11px] opacity-90 flex flex-wrap gap-x-3">
-                    {(inSnLookup.billNo || inSnLookup.salesRef) && (
-                      <span className="font-mono">
-                        เอกสาร: {inSnLookup.billNo || inSnLookup.salesRef}
-                      </span>
-                    )}
-                    <span>
-                      ประกัน:{' '}
-                      <strong>
-                        {inSnLookup.warranty.state === 'active'
-                          ? `อยู่ในประกัน (${inSnLookup.warranty.durationLabel}, หมด ${formatDateDMY(inSnLookup.warranty.expireDate)})`
-                          : inSnLookup.warranty.state === 'expired'
-                          ? `หมดประกันแล้ว (${formatDateDMY(inSnLookup.warranty.expireDate)})`
-                          : inSnLookup.warranty.state === 'waiting'
-                          ? `รอแปะวอย (${inSnLookup.warranty.durationLabel})`
-                          : 'ไม่มีข้อมูลประกัน'}
-                      </strong>
-                    </span>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={clearInAutoFill}
-                  className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-white dark:bg-white/10 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-white/15 hover:bg-slate-100 dark:hover:bg-white/20 transition cursor-pointer"
-                >
-                  ล้างเพื่อกรอกเอง
-                </button>
-              </div>
-            ) : inSn.trim().length >= 3 ? (
-              <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                ไม่พบ S/N "{inSn.trim()}" ในประวัติการขาย — สามารถกรอกข้อมูลลูกค้าและรุ่นเครื่องเองด้านล่างได้เลย
-              </p>
-            ) : null}
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className={modalLabelClass}>ชื่อลูกค้า <span className="text-rose-500">*</span></label>
-              <input
-                type="text"
-                value={inName}
-                onChange={(e) => setInName(e.target.value)}
-                placeholder="เช่น คุณสมชาย ใจดี"
-                className={modalInputClass}
-                required
-              />
-            </div>
-            <div>
-              <label className={modalLabelClass}>เบอร์โทรศัพท์</label>
-              <input
-                type="tel"
-                value={inPhone}
-                onChange={(e) => setInPhone(e.target.value)}
-                placeholder="08x-xxx-xxxx"
-                className={modalInputClass}
-              />
-            </div>
-          </div>
-
-          <div>
-            <label className={modalLabelClass}>รุ่น / ประเภทเครื่อง</label>
-            <input
-              type="text"
-              value={inDevice}
-              onChange={(e) => setInDevice(e.target.value)}
-              placeholder="เช่น Lenovo ThinkPad T14"
-              className={modalInputClass}
-            />
-          </div>
-
-          <div>
-            <label className={modalLabelClass}>อาการเสีย / ปัญหา <span className="text-rose-500">*</span></label>
-            <textarea
-              value={inSymptom}
-              onChange={(e) => setInSymptom(e.target.value)}
-              rows={3}
-              placeholder="อธิบายอาการเสียที่ลูกค้าแจ้ง"
-              className={modalInputClass}
-              required
-            />
-          </div>
-
-          <div>
-            <label className={modalLabelClass}>อุปกรณ์ที่ติดมาด้วย</label>
-            <div className="flex flex-wrap gap-2">
-              {ACCESSORY_PRESETS.map(acc => {
-                const active = inAccessories.includes(acc);
-                return (
-                  <button
-                    key={acc}
-                    type="button"
-                    onClick={() => toggleAccessory(acc)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors active:scale-[0.97] ${active
-                      ? 'bg-[#FF6B00]/10 border-[#FF6B00]/50 text-[#FF6B00]'
-                      : 'bg-white dark:bg-white/[0.03] border-slate-200 dark:border-white/[0.08] text-slate-600 dark:text-slate-300'
-                      }`}
-                  >
-                    {acc}
-                  </button>
-                );
-              })}
-            </div>
-            <input
-              type="text"
-              value={inAccessoriesOther}
-              onChange={(e) => setInAccessoriesOther(e.target.value)}
-              placeholder="อุปกรณ์อื่นๆ เพิ่มเติม (ถ้ามี)"
-              className={`${modalInputClass} mt-2`}
-            />
-          </div>
-
-          <div>
-            <label className={modalLabelClass}>อำเภอ / เขตพื้นที่</label>
-            <select
-              value={inDistrict}
-              onChange={(e) => setInDistrict(e.target.value)}
-              className={modalInputClass}
-            >
-              {DISTRICT_OPTIONS.map(opt => (
-                <option key={opt.district} value={opt.district}>
-                  {opt.district} — {opt.zone}
-                </option>
-              ))}
-            </select>
-          </div>
-        </form>
-      </Modal>
+        intakeChannel="front_desk_walkin"
+        receivedChannel="front_desk"
+        onToast={showToast}
+      />
 
       {/* ===================== MODAL: Onsite Service Call ===================== */}
       <Modal
@@ -1481,16 +1810,19 @@ export const FrontdeskView: React.FC = () => {
           dispatchTarget?.type === 'repair' && dispatchTicket
             ? `ส่งคืนเครื่องซ่อม · ${dispatchTicket.ticket_no} · ${dispatchTicket.device_model || 'ไม่ระบุรุ่น'}`
             : dispatchItem
-            ? `${dispatchItem.model_name} · ${dispatchItem.serial_number || '-'}`
-            : ''
+              ? `${dispatchItem.model_name} · ${dispatchItem.serial_number || '-'}`
+              : ''
         }
         icon={<Truck className="w-5 h-5" />}
         maxWidthClass="max-w-lg"
         accentClass={dispatchTarget?.type === 'repair' ? 'border-amber-500/40' : 'border-emerald-500/40'}
         footer={
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2 justify-end">
             <button type="button" onClick={() => setDispatchTarget(null)} className={modalSecondaryBtnClass}>
               ยกเลิก
+            </button>
+            <button type="button" onClick={saveDispatchScheduleOnly} className={modalSecondaryBtnClass}>
+              บันทึกวันส่ง/สายรถอย่างเดียว
             </button>
             <button type="button" onClick={confirmDispatch} className={modalPrimaryBtnClass}>
               <Truck className="w-4 h-4" />
@@ -1502,9 +1834,14 @@ export const FrontdeskView: React.FC = () => {
         {dispatchTarget?.type === 'item' && dispatchItem && (
           <div className="space-y-3.5">
             <div className="rounded-2xl border border-slate-200 dark:border-white/[0.08] p-3 space-y-1.5">
-              <div className="flex items-center gap-1.5 text-sm font-bold text-slate-900 dark:text-white">
-                <User className="w-4 h-4 text-slate-400" />
-                {dispatchOrder?.customer_name || 'ไม่ระบุลูกค้า'}
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-1.5 text-sm font-bold text-slate-900 dark:text-white">
+                  <User className="w-4 h-4 text-slate-400" />
+                  {dispatchOrder?.customer_name || 'ไม่ระบุลูกค้า'}
+                </div>
+                <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30">
+                  วอยประกัน (จากช่างเตรียม): {dispatchItem.void_date || '-'}
+                </span>
               </div>
               {dispatchOrder?.customer_phone && (
                 <div className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-300">
@@ -1518,25 +1855,14 @@ export const FrontdeskView: React.FC = () => {
               )}
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className={modalLabelClass}>วันที่แปะวอยประกัน (เริ่มนับประกัน)</label>
-                <input
-                  type="date"
-                  value={dispatchVoidDate}
-                  onChange={(e) => setDispatchVoidDate(e.target.value)}
-                  className={modalInputClass}
-                />
-              </div>
-              <div>
-                <label className={modalLabelClass}>วันกำหนดส่งมอบ (Delivery Date)</label>
-                <input
-                  type="date"
-                  value={dispatchDueDate}
-                  onChange={(e) => setDispatchDueDate(e.target.value)}
-                  className={modalInputClass}
-                />
-              </div>
+            <div>
+              <label className={modalLabelClass}>วันกำหนดส่งมอบใหม่ (Delivery Date)</label>
+              <input
+                type="date"
+                value={dispatchDueDate}
+                onChange={(e) => setDispatchDueDate(e.target.value)}
+                className={modalInputClass}
+              />
             </div>
 
             <div>
@@ -1657,16 +1983,9 @@ export const FrontdeskView: React.FC = () => {
               <div className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-300">
                 <Hash className="w-3.5 h-3.5" /> S/N: {pickupItem.serial_number || '-'}
               </div>
-            </div>
-
-            <div>
-              <label className={modalLabelClass}>วันที่แปะวอยประกัน (เริ่มนับประกัน)</label>
-              <input
-                type="date"
-                value={pickupVoidDate}
-                onChange={(e) => setPickupVoidDate(e.target.value)}
-                className={modalInputClass}
-              />
+              <div className="flex items-center gap-1.5 text-xs text-emerald-700 dark:text-emerald-300 font-semibold">
+                <CheckCircle2 className="w-3.5 h-3.5" /> วอยประกัน (จากช่างเตรียม): {pickupItem.void_date || '-'}
+              </div>
             </div>
 
             <div className="flex items-start gap-2 rounded-xl bg-amber-500/10 border border-amber-500/30 p-3 text-xs text-amber-700 dark:text-amber-300">
@@ -1695,7 +2014,7 @@ export const FrontdeskView: React.FC = () => {
               <button
                 type="button"
                 onClick={() => {
-                  triggerPrintRepairReceipt(trackerTicket);
+                  setPrintModalTicket(trackerTicket);
                 }}
                 className={modalSecondaryBtnClass}
               >
@@ -1865,7 +2184,7 @@ export const FrontdeskView: React.FC = () => {
               <div className="rounded-2xl border border-slate-200 dark:border-white/[0.08] bg-slate-50 dark:bg-white/[0.03] p-3">
                 <EvidencePhotoUploader
                   value={trackerTicket.photo_urls}
-                  onChange={() => {}}
+                  onChange={() => { }}
                   folder="onsite"
                   editable={false}
                   label="รูปถ่ายหลักฐานหน้างาน / รับเครื่อง"
@@ -1879,65 +2198,29 @@ export const FrontdeskView: React.FC = () => {
         )}
       </Modal>
 
-      {/* ===================== MODAL: Intake Receipt Preview ===================== */}
-      <Modal
-        open={!!lastIntakeTicket}
-        onClose={() => setLastIntakeTicket(null)}
-        title="สร้างใบรับซ่อมสำเร็จ"
-        subtitle="พิมพ์ใบรับซ่อมสินค้า (ครึ่ง A4) ให้ลูกค้า"
-        icon={<CheckCircle2 className="w-5 h-5" />}
-        maxWidthClass="max-w-lg"
-        accentClass="border-emerald-500/40"
-        footer={
-          <div className="flex gap-2">
-            <button type="button" onClick={() => setLastIntakeTicket(null)} className={modalSecondaryBtnClass}>
-              ปิด
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                if (lastIntakeTicket) {
-                  triggerPrintRepairReceipt(lastIntakeTicket);
-                }
-              }}
-              className={modalPrimaryBtnClass}
-            >
-              <Printer className="w-4 h-4" />
-              พิมพ์ใบรับซ่อม
-            </button>
-          </div>
-        }
-      >
-        {lastIntakeTicket && (
-          <div className="space-y-2 text-sm">
-            <div className="flex items-center gap-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30 p-3 text-emerald-700 dark:text-emerald-300">
-              <CheckCircle2 className="w-5 h-5 shrink-0" />
-              <span className="text-xs font-semibold">ส่งเข้าคิวช่างซ่อมในร้านเรียบร้อยแล้ว</span>
-            </div>
-            <div className="rounded-xl border border-slate-200 dark:border-white/[0.08] p-3 space-y-1.5">
-              <div className="flex justify-between"><span className="text-slate-500 dark:text-slate-400">ลูกค้า</span><b className="text-slate-900 dark:text-white">{lastIntakeTicket.customer_name}</b></div>
-              {lastIntakeTicket.customer_phone && (
-                <div className="flex justify-between"><span className="text-slate-500 dark:text-slate-400">โทร</span><b className="text-slate-900 dark:text-white">{lastIntakeTicket.customer_phone}</b></div>
-              )}
-              <div className="flex justify-between"><span className="text-slate-500 dark:text-slate-400">เครื่อง</span><b className="text-slate-900 dark:text-white">{lastIntakeTicket.device_model || '-'}</b></div>
-              <div className="flex justify-between"><span className="text-slate-500 dark:text-slate-400">S/N</span><b className="text-slate-900 dark:text-white">{lastIntakeTicket.walkin_sn || '-'}</b></div>
-              <div className="flex justify-between"><span className="text-slate-500 dark:text-slate-400">ผู้รับเครื่อง</span><b className="text-slate-900 dark:text-white">{lastIntakeTicket.received_by}</b></div>
-            </div>
-            <p className="text-xs text-slate-500 dark:text-slate-400">{lastIntakeTicket.fault_symptom}</p>
-          </div>
-        )}
-      </Modal>
+      {/* Repair Receipt Print Preview Modal (mirrors OrderFormPrintModal) */}
+      <RepairReceiptPrintModal
+        isOpen={!!printModalTicket}
+        onClose={() => setPrintModalTicket(null)}
+        ticket={printModalTicket}
+      />
 
-      {/* Barcode scanner for intake S/N */}
-      <BarcodeScannerModal
-        open={intakeScannerOpen}
-        onClose={() => setIntakeScannerOpen(false)}
-        onScan={(code) => {
-          handleInSnChange(code);
-          setIntakeScannerOpen(false);
+      {/* Onsite Daily Report A4 Print Preview Modal */}
+      <OnsiteDailyReportPrintModal
+        isOpen={onsiteReportPrintOpen}
+        onClose={() => setOnsiteReportPrintOpen(false)}
+        selectedDate={reportShowAllDates ? '' : reportDate}
+        onDateChange={(d) => {
+          setReportDate(d);
+          setReportShowAllDates(false);
         }}
-        title="สแกน S/N เครื่อง"
-        hint="ส่องบาร์โค้ดที่ตัวเครื่องเพื่อกรอก Serial Number อัตโนมัติ"
+        jobs={
+          reportTechFilter === 'all'
+            ? onsiteCompletedJobs
+            : onsiteCompletedJobs.filter((j) => j.techs.includes(reportTechFilter))
+        }
+        projects={projects}
+        preparedBy={currentUser?.name || 'หน้าร้าน'}
       />
     </div>
   );

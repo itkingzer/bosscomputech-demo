@@ -16,13 +16,15 @@ import {
   getRouteByDistrict, getElapsedDays, toDateInputValue, fromDateInputValue, formatDateDMY
 } from '../types';
 import { ListControls, useListControls } from './ListControls';
-import { ActivityTimeline, LatestUpdateBadge } from './ActivityTimeline';
+import { ActivityTimeline } from './ActivityTimeline';
 import { BarcodeScannerModal } from './BarcodeScannerModal';
 import {
   Modal, modalInputClass, modalLabelClass,
   modalPrimaryBtnClass, modalSecondaryBtnClass
 } from './ui/Modal';
 import { lookupPurchaseBySn } from '../utils/snLookup';
+import { RepairIntakeModal } from './RepairIntakeModal';
+import { PrintGuideButton } from './PrintGuideButton';
 
 const ACCESSORY_PRESETS = [
   'Adapter / หม้อแปลง',
@@ -107,23 +109,6 @@ const inferDeviceCategory = (model?: string | null): string => {
   if (/(tablet|ipad|แท็บเล็ต)/.test(m)) return 'Tablet';
   if (/(iphone|samsung|oppo|vivo|xiaomi|โทรศัพท์|มือถือ)/.test(m)) return 'Smartphone';
   return 'อุปกรณ์อิเล็กทรอนิกส์';
-};
-
-// เดายี่ห้อจากรุ่น (คืนค่าว่างถ้าไม่พบ เพื่อให้ช่องว่างสำหรับเขียนด้วยมือ)
-const inferBrand = (model?: string | null): string => {
-  const m = (model || '').toLowerCase();
-  const brands = [
-    'ASUS', 'Acer', 'Lenovo', 'Dell', 'HP', 'MSI', 'Apple', 'MacBook', 'Toshiba',
-    'Samsung', 'LG', 'Epson', 'Canon', 'Brother', 'Xiaomi', 'Huawei', 'Sony', 'Logitech'
-  ];
-  const hit = brands.find(b => m.includes(b.toLowerCase()));
-  return hit || '';
-};
-
-// ดึง IMEI จาก S/N ถ้าเป็นตัวเลข 15 หลัก (รูปแบบ IMEI)
-const inferImei = (sn?: string | null): string => {
-  const digits = (sn || '').replace(/[^0-9]/g, '');
-  return digits.length === 15 ? digits : '';
 };
 
 // แปลง ISO -> DD/MM/YYYY (ค.ศ.) สำหรับช่องวันนัดรับ
@@ -236,6 +221,7 @@ export const RepairView: React.FC = () => {
   } = useApp();
 
   const [toast, setToast] = useState('');
+  const [repairIntakeOpen, setRepairIntakeOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<FilterTab>('all');
 
   // Scanner targets: 'new' = new ticket S/N, 'replacement' = RMA replacement S/N, 'edit' = edit modal S/N
@@ -637,11 +623,12 @@ export const RepairView: React.FC = () => {
 
           <div className="flex items-center gap-2 flex-wrap">
             <button
-              onClick={() => setIsNewTicketOpen(true)}
+              type="button"
+              onClick={() => setRepairIntakeOpen(true)}
               className="px-4 py-2 bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold rounded-2xl text-xs transition cursor-pointer flex items-center gap-1.5 shadow-lg shadow-[#FF6B00]/25 border border-white/20 active:scale-95"
             >
               <Plus className="w-4 h-4" />
-              <span>เปิดใบรับซ่อมใหม่ (REP-2569-XXX)</span>
+              <span>รับเครื่องซ่อม (ห้องช่างซ่อม)</span>
             </button>
             <span className="text-xs px-3 py-1.5 rounded-2xl bg-rose-100 text-rose-700 border border-rose-300 dark:bg-rose-500/15 dark:text-rose-400 dark:border-rose-500/30 font-semibold">
               {openTickets.length} งานค้างซ่อม
@@ -1504,6 +1491,7 @@ export const RepairView: React.FC = () => {
         maxWidthClass="max-w-4xl"
         footer={
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-2">
+            <PrintGuideButton docType="repair_receipt" />
             <button onClick={() => setReceiptTicket(null)} className={modalSecondaryBtnClass + ' sm:w-auto py-3 px-6 text-sm'}>
               ปิด
             </button>
@@ -1837,6 +1825,19 @@ export const RepairView: React.FC = () => {
           else if (scannerTarget === 'replacement') setDraftReplacementSn(code);
           else if (scannerTarget === 'edit') setEditSn(code);
           setScannerTarget(null);
+        }}
+      />
+
+      <RepairIntakeModal
+        open={repairIntakeOpen}
+        onClose={() => setRepairIntakeOpen(false)}
+        title="รับเครื่องซ่อม (ห้องช่างซ่อม)"
+        subtitle="In-House Repair Intake · สร้างใบรับซ่อมเข้าคิวช่างในร้าน"
+        intakeChannel="front_desk_walkin"
+        receivedChannel="front_desk"
+        onToast={(msg) => {
+          setToast(msg);
+          setTimeout(() => setToast(''), 4000);
         }}
       />
     </div>

@@ -2,13 +2,14 @@ import React, { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from '../context/AppContext';
 import {
-  FileText, Printer, CheckCircle2, Clock, Package, AlertTriangle,
+  FileText, Printer, CheckCircle2, Package, AlertTriangle,
   Receipt, TrendingUp, Building2, Eye, X, ShieldAlert
 } from 'lucide-react';
 import { Order, Project, formatThaiDateTime } from '../types';
 import { EvidencePhotoUploader } from './EvidencePhotoUploader';
 import { OrderFormPrintModal } from './OrderFormPrintModal';
-import { computeOrderFinancials, computeProjectFinancials } from '../utils/domainHelpers';
+import { computeProjectFinancials } from '../utils/domainHelpers';
+import { ListControls, useListControls } from './ListControls';
 
 const fmt = (n: number) => n.toLocaleString('th-TH', { maximumFractionDigits: 0 });
 
@@ -49,6 +50,18 @@ export const AccountingView: React.FC = () => {
     () => items.filter(i => i.status === 'doa_reported' || i.status === 'doa_sent_supplier' || i.status === 'doa_replaced'),
     [items]
   );
+
+  const billingProjectsList = useListControls(billingProjects, {
+    getDate: (p) => p.updated_at || p.created_at,
+    initialSort: 'newest',
+    initialPageSize: 10
+  });
+
+  const billingOrdersList = useListControls(billingOrders, {
+    getDate: (o) => o.updated_at || o.created_at,
+    initialSort: 'newest',
+    initialPageSize: 10
+  });
 
   const summary = useMemo(() => {
     const readyOrdersCount = orders.filter(o => (o.order_status === 'fulfilled' || o.order_status === 'approved_for_prep') && o.billing_status !== 'billed').length;
@@ -186,13 +199,26 @@ export const AccountingView: React.FC = () => {
                 <Building2 className="w-4 h-4" />
                 <span>งานโปรเจกต์ / ติดตั้ง (PRJ) — {billingProjects.length} โครงการ</span>
               </h3>
+              <ListControls
+                from={billingProjectsList.from}
+                to={billingProjectsList.to}
+                total={billingProjectsList.total}
+                page={billingProjectsList.page}
+                totalPages={billingProjectsList.totalPages}
+                pageSize={billingProjectsList.pageSize}
+                sort={billingProjectsList.sort}
+                onSortChange={billingProjectsList.setSort}
+                onPageSizeChange={billingProjectsList.setPageSize}
+                onPageChange={billingProjectsList.setPage}
+                pageSizeOptions={[10, 20, 30]}
+                unit="โครงการ"
+              />
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                {billingProjects.map(prj => {
+                {billingProjectsList.pageItems.map(prj => {
                   const prjFin = computeProjectFinancials(prj, stockPOs);
                   const baseRev = prjFin.baseTotal;
                   const addonRev = prjFin.addonTotal;
                   const totalCost = prjFin.totalCost;
-                  const totalRev = prjFin.revenue;
                   const netGp = prjFin.gp;
                   const evidencePhotos = Array.from(
                     new Set([
@@ -301,8 +327,23 @@ export const AccountingView: React.FC = () => {
                 ไม่มีรายการบิลขายในหมวดนี้
               </div>
             ) : (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                {billingOrders.map(ord => {
+              <>
+                <ListControls
+                  from={billingOrdersList.from}
+                  to={billingOrdersList.to}
+                  total={billingOrdersList.total}
+                  page={billingOrdersList.page}
+                  totalPages={billingOrdersList.totalPages}
+                  pageSize={billingOrdersList.pageSize}
+                  sort={billingOrdersList.sort}
+                  onSortChange={billingOrdersList.setSort}
+                  onPageSizeChange={billingOrdersList.setPageSize}
+                  onPageChange={billingOrdersList.setPage}
+                  pageSizeOptions={[10, 20, 30]}
+                  unit="รายการ"
+                />
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                  {billingOrdersList.pageItems.map(ord => {
                   const totalRev = (ord.items_list || []).reduce((s, i) => s + (i.unit_price || 0) * (i.quantity || 0), 0);
                   const totalCost =
                     (ord.items_list || []).reduce((s, i) => s + (i.unit_cost || 0) * (i.quantity || 0), 0) +
@@ -399,7 +440,8 @@ export const AccountingView: React.FC = () => {
                     </div>
                   );
                 })}
-              </div>
+                </div>
+              </>
             )}
           </div>
         </div>

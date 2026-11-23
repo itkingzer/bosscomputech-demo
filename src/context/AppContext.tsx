@@ -271,7 +271,7 @@ interface AppContextType {
   queueRepairTicketForDispatch: (ticketId: string) => void;
   updateOrderDeliveryDate: (orderId: string, deliveryDate: string) => void;
   updateOrderRoute: (orderId: string, routeCode: RouteCode) => Promise<void>;
-  confirmCustomerPickup: (itemId: string, voidDate: string) => Promise<void>;
+  confirmCustomerPickup: (itemId: string, voidDate?: string) => Promise<void>;
   updateRepairTicketDueDate: (ticketId: string, dueDate: string) => void;
   /**
    * ลูกค้ารับเครื่องซ่อมเองที่หน้าร้าน (ปิดงานทันที)
@@ -463,8 +463,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         window.print();
-        // Clear after print dialog closes (for browsers where window.print() blocks synchronously)
-        window.setTimeout(cleanup, 300);
       });
     });
   };
@@ -532,36 +530,75 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setSupabaseClient(client);
         setIsSupabaseLive(true);
 
+        const loadTable = async (table: 'orders' | 'items' | 'repair_tickets' | 'products' | 'stock_pos' | 'projects' | 'users') => {
+          if (table === 'orders') {
+            const { data } = await client.from('orders').select('*').order('created_at', { ascending: false });
+            if (data) setOrders(data);
+          } else if (table === 'items') {
+            const { data } = await client.from('items').select('*').order('created_at', { ascending: false });
+            if (data) setItems(data);
+          } else if (table === 'repair_tickets') {
+            const { data } = await client.from('repair_tickets').select('*').order('created_at', { ascending: false });
+            if (data) setRepairTickets(data);
+          } else if (table === 'products') {
+            const { data } = await client.from('products').select('*').order('created_at', { ascending: false });
+            if (data) setProducts(data as Product[]);
+          } else if (table === 'stock_pos') {
+            const { data } = await client.from('stock_pos').select('*').order('created_at', { ascending: false });
+            if (data) setStockPOs(data as StockPO[]);
+          } else if (table === 'projects') {
+            const { data } = await client.from('projects').select('*').order('created_at', { ascending: false });
+            if (data && data.length > 0) setProjects(data as Project[]);
+          } else if (table === 'users') {
+            const { data } = await client.from('users').select('*').order('created_at', { ascending: true });
+            if (data && data.length > 0) setUsers(data as UserAccount[]);
+          }
+        };
+
         const loadRemote = async () => {
           setIsSyncing(true);
           try {
-            const [o, i, r, p, sp] = await Promise.all([
-              client.from('orders').select('*').order('created_at', { ascending: false }),
-              client.from('items').select('*').order('created_at', { ascending: false }),
-              client.from('repair_tickets').select('*').order('created_at', { ascending: false }),
-              client.from('products').select('*').order('created_at', { ascending: false }),
-              client.from('stock_pos').select('*').order('created_at', { ascending: false })
+            await Promise.all([
+              loadTable('orders'),
+              loadTable('items'),
+              loadTable('repair_tickets'),
+              loadTable('products'),
+              loadTable('stock_pos'),
+              loadTable('projects'),
+              loadTable('users')
             ]);
-            if (o.data) setOrders(o.data);
-            if (i.data) setItems(i.data);
-            if (r.data) setRepairTickets(r.data);
-            if (p.data) setProducts(p.data as Product[]);
-            if (sp.data) setStockPOs(sp.data as StockPO[]);
           } finally {
             setIsSyncing(false);
           }
         };
         loadRemote();
 
+        // Debounced per-table refresh avoids refetching all 7 tables on every single row change
+        const refreshTimers: Record<string, number> = {};
+        const scheduleTableRefresh = (
+          table: 'orders' | 'items' | 'repair_tickets' | 'products' | 'stock_pos' | 'projects' | 'users'
+        ) => {
+          if (refreshTimers[table]) {
+            window.clearTimeout(refreshTimers[table]);
+          }
+          refreshTimers[table] = window.setTimeout(() => {
+            delete refreshTimers[table];
+            void loadTable(table);
+          }, 350);
+        };
+
         const channel = client.channel('schema-db-changes')
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => loadRemote())
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'items' }, () => loadRemote())
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'repair_tickets' }, () => loadRemote())
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => loadRemote())
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'stock_pos' }, () => loadRemote())
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => scheduleTableRefresh('orders'))
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'items' }, () => scheduleTableRefresh('items'))
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'repair_tickets' }, () => scheduleTableRefresh('repair_tickets'))
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => scheduleTableRefresh('products'))
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'stock_pos' }, () => scheduleTableRefresh('stock_pos'))
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'projects' }, () => scheduleTableRefresh('projects'))
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, () => scheduleTableRefresh('users'))
           .subscribe();
 
         return () => {
+          Object.values(refreshTimers).forEach((t) => window.clearTimeout(t));
           client.removeChannel(channel);
         };
       } catch (e) {
@@ -596,15 +633,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       id: 'u-' + Date.now()
     };
     setUsers(prev => [...prev, newUser]);
+    if (isSupabaseLive && supabaseClient) {
+      void supabaseClient.from('users').insert([newUser]).then(({ error }) => {
+        if (error) console.warn('Supabase users insert warning:', error.message);
+      });
+    }
   };
 
   const updateUser = (id: string, updates: Partial<UserAccount>) => {
     setUsers(prev => prev.map(u => (u.id === id ? { ...u, ...updates } : u)));
+    if (isSupabaseLive && supabaseClient) {
+      void supabaseClient.from('users').update(updates).eq('id', id).then(({ error }) => {
+        if (error) console.warn('Supabase users update warning:', error.message);
+      });
+    }
   };
 
   const deleteUser = (id: string) => {
     if (id === 'u-admin') return;
     setUsers(prev => prev.filter(u => u.id !== id));
+    if (isSupabaseLive && supabaseClient) {
+      void supabaseClient.from('users').delete().eq('id', id).then(({ error }) => {
+        if (error) console.warn('Supabase users delete warning:', error.message);
+      });
+    }
   };
 
   const markOrderBilled = async (orderId: string, taxInvoiceNo?: string) => {
@@ -648,6 +700,56 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
   };
 
+  const syncProjectRow = (proj: Project) => {
+    if (!isSupabaseLive || !supabaseClient) return;
+    void supabaseClient
+      .from('projects')
+      .upsert(
+        [{
+          id: proj.id,
+          site_name: proj.site_name,
+          customer_name: proj.customer_name,
+          phone: proj.phone || null,
+          location: proj.location || null,
+          district: proj.district || null,
+          route_code: proj.route_code || null,
+          created_by: proj.created_by,
+          start_date: proj.start_date || null,
+          due_date: proj.due_date || null,
+          status: proj.status,
+          assigned_techs: proj.assigned_techs || [],
+          billing_status: proj.billing_status || 'pending',
+          billed_at: proj.billed_at || null,
+          billed_by: proj.billed_by || null,
+          tax_invoice_no: proj.tax_invoice_no || null,
+          items: proj.items || [],
+          batches: proj.batches || [],
+          material_requests: proj.material_requests || [],
+          daily_logs: proj.daily_logs || [],
+          handover_photo_urls: proj.handover_photo_urls || [],
+          handover_note: proj.handover_note || null,
+          completed_at: proj.completed_at || null,
+          activity_logs: proj.activity_logs || [],
+          updated_at: proj.updated_at || new Date().toISOString()
+        }],
+        { onConflict: 'id' }
+      )
+      .then(({ error }) => {
+        if (error) console.warn('Supabase projects upsert warning:', error.message);
+      });
+  };
+
+  const updateProjectById = (projectId: string, updater: (p: Project) => Project) => {
+    setProjects(prev =>
+      prev.map(p => {
+        if (p.id !== projectId) return p;
+        const updated = updater(p);
+        syncProjectRow(updated);
+        return updated;
+      })
+    );
+  };
+
   const markProjectBilled = (projectId: string, taxInvoiceNo?: string) => {
     const nowIso = new Date().toISOString();
     const actor = currentUser?.name || 'ฝ่ายบัญชี';
@@ -658,21 +760,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       currentUser?.role,
       cleanInv ? `เลขที่ใบกำกับ/วางบิล: ${cleanInv}` : 'อัปเดตสถานะโปรเจกต์เป็นวางบิลเรียบร้อย'
     );
-    setProjects(prev =>
-      prev.map(p =>
-        p.id === projectId
-          ? {
-              ...p,
-              billing_status: 'billed',
-              billed_at: nowIso,
-              billed_by: actor,
-              tax_invoice_no: cleanInv ?? p.tax_invoice_no ?? null,
-              updated_at: nowIso,
-              activity_logs: appendLog(p.activity_logs, logEntry)
-            }
-          : p
-      )
-    );
+    updateProjectById(projectId, p => ({
+      ...p,
+      billing_status: 'billed',
+      billed_at: nowIso,
+      billed_by: actor,
+      tax_invoice_no: cleanInv ?? p.tax_invoice_no ?? null,
+      updated_at: nowIso,
+      activity_logs: appendLog(p.activity_logs, logEntry)
+    }));
   };
 
   // Product Catalog CRUD
@@ -953,7 +1049,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       `บิล: ${billNo} | จำนวนรายการ: ${itemsToCut.reduce((s, p) => s + (p.quantity || 1), 0)} ชิ้น`
     );
 
-    itemsToCut.forEach((plan, planIdx) => {
+    itemsToCut.forEach((plan) => {
       const qtyNeeded = Math.max(1, plan.quantity || 1);
       const normalizedModel = (plan.model_name || '').trim().toLowerCase();
       const matchedOrderItem = (targetOrder?.items_list || []).find(
@@ -1192,6 +1288,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       received_into_storage_at: receivedAt
     }));
 
+    // 2.2) ซิงก์ออเดอร์ที่สถานะ waiting_po และผูกกับใบ Stock PO นี้:
+    //      หาก Stock PO ที่ผูกกับออเดอร์นั้นรับเข้าคลังครบทุกใบแล้ว ให้เปลี่ยนสถานะออเดอร์เป็น po_received_in_stock อัตโนมัติ
+    const remainingOrderedPOs = stockPOs.filter(p => p.id !== stockPoId && p.status === 'ordered');
+    const matchedWaitingOrders = orders.filter(o => {
+      if (o.order_status !== 'waiting_po') return false;
+      const orderPoNos = Array.from(
+        new Set((o.items_list || []).map(it => (it.po_no || '').trim()).filter(Boolean))
+      );
+      if (orderPoNos.length === 0) return false;
+      const matchesThisPo = orderPoNos.some(
+        op => po.po_number === op || po.po_number.startsWith(`${op}-`)
+      );
+      if (!matchesThisPo) return false;
+      const stillHasPendingPo = remainingOrderedPOs.some(rp =>
+        orderPoNos.some(op => rp.po_number === op || rp.po_number.startsWith(`${op}-`))
+      );
+      return !stillHasPendingPo;
+    });
+
     if (isSupabaseLive && supabaseClient) {
       await supabaseClient.from('stock_pos').update({
         status: 'received',
@@ -1213,6 +1328,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         activity_logs: it.activity_logs,
         received_into_storage_at: it.received_into_storage_at
       })));
+      for (const ord of matchedWaitingOrders) {
+        const ordLog = makeLog(
+          'รับของ PO เข้าคลังแล้ว',
+          actor?.name || 'ระบบ',
+          actor?.role,
+          `รับของจาก Stock PO ${po.po_number} เข้าคลังเรียบร้อย พร้อมส่งช่างเตรียม`
+        );
+        await supabaseClient.from('orders').update({
+          order_status: 'po_received_in_stock',
+          updated_at: receivedAt,
+          po_received_at: receivedAt,
+          activity_logs: appendLog(ord.activity_logs, ordLog)
+        }).eq('id', ord.id);
+      }
     } else {
       setStockPOs(prev => prev.map(p => p.id === stockPoId ? {
         ...p,
@@ -1221,6 +1350,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         activity_logs: appendLog(p.activity_logs, receiveLog)
       } : p));
       setItems(prev => [...newItems, ...prev]);
+      if (matchedWaitingOrders.length > 0) {
+        const matchedIds = new Set(matchedWaitingOrders.map(o => o.id));
+        const ordLog = makeLog(
+          'รับของ PO เข้าคลังแล้ว',
+          actor?.name || 'ระบบ',
+          actor?.role,
+          `รับของจาก Stock PO ${po.po_number} เข้าคลังเรียบร้อย พร้อมส่งช่างเตรียม`
+        );
+        setOrders(prev => prev.map(o => matchedIds.has(o.id) ? {
+          ...o,
+          order_status: 'po_received_in_stock',
+          updated_at: receivedAt,
+          po_received_at: receivedAt,
+          activity_logs: appendLog(o.activity_logs, ordLog)
+        } : o));
+      }
     }
   };
 
@@ -1941,22 +2086,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } : i));
   };
 
-  // หน้าร้านยืนยันลูกค้ารับสินค้าเองหน้าร้าน -> แปะวอย (ถ้ายังไม่มี) + ปิดงานเป็น delivered + ปิดบิลถ้าครบทุกชิ้น
-  const confirmCustomerPickup = async (itemId: string, voidDate: string) => {
+  // หน้าร้านยืนยันลูกค้ารับสินค้าเองหน้าร้าน -> ปิดงานเป็น delivered + ปิดบิลถ้าครบทุกชิ้น
+  // (หน้าร้านไม่มีสิทธิ์แปะวอย — คงข้อมูลวอยประกันจากช่างเตรียมเท่านั้น)
+  const confirmCustomerPickup = async (itemId: string, _voidDate?: string) => {
     const targetItem = items.find(i => i.id === itemId);
     if (!targetItem) return;
     const orderId = targetItem.order_id;
     const actor = currentUserRef.current;
     const now = new Date().toISOString();
-    const needsVoid = !targetItem.warranty_void_date;
-    const warrantyExpire = needsVoid
-      ? computeWarrantyExpire(now, targetItem.warranty_years, targetItem.warranty_months)
-      : targetItem.warranty_expire_date;
     const entry = makeLog(
       'ลูกค้ารับสินค้าเองหน้าร้าน (ปิดงาน)',
       actor?.name || 'หน้าร้าน',
       actor?.role,
-      `วอยประกัน: ${targetItem.void_date || voidDate}`
+      targetItem.void_date ? `วอยประกัน (จากช่างเตรียม): ${targetItem.void_date}` : 'ลูกค้ารับสินค้าหน้าร้าน'
     );
 
     const updatedItems = items.map(i =>
@@ -1964,10 +2106,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         ? {
             ...i,
             status: 'delivered' as const,
-            void_date: i.void_date || voidDate,
-            warranty_applied_at: i.warranty_applied_at || now,
-            warranty_void_date: i.warranty_void_date || now,
-            warranty_expire_date: warrantyExpire ?? i.warranty_expire_date ?? null,
             dispatched_at: i.dispatched_at || now,
             delivered_at: now,
             activity_logs: appendLog(i.activity_logs, entry),
@@ -1982,10 +2120,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (isSupabaseLive && supabaseClient) {
       await supabaseClient.from('items').update({
         status: 'delivered',
-        void_date: targetItem.void_date || voidDate,
-        warranty_applied_at: targetItem.warranty_applied_at || now,
-        warranty_void_date: targetItem.warranty_void_date || now,
-        warranty_expire_date: warrantyExpire ?? targetItem.warranty_expire_date ?? null,
         dispatched_at: targetItem.dispatched_at || now,
         delivered_at: now,
         activity_logs: appendLog(targetItem.activity_logs, entry),
@@ -3058,6 +3192,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     setProjects(prev => [newProject, ...prev]);
+    syncProjectRow(newProject);
     return newProject;
   };
 
@@ -3108,18 +3243,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       `แอดเพิ่มโดย ${addedBy}: ${summaryText} (฿${totalAddonValue.toLocaleString('th-TH')})${payload.note ? ` | ${payload.note}` : ''}`
     );
 
-    setProjects(prev =>
-      prev.map(p =>
-        p.id === projectId
-          ? {
-              ...p,
-              items: [...p.items, ...addonItems],
-              updated_at: now,
-              activity_logs: appendLog(p.activity_logs, entry)
-            }
-          : p
-      )
-    );
+    updateProjectById(projectId, p => ({
+      ...p,
+      items: [...p.items, ...addonItems],
+      updated_at: now,
+      activity_logs: appendLog(p.activity_logs, entry)
+    }));
   };
 
   const releaseProjectBatch = (
@@ -3289,40 +3418,37 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       `อุปกรณ์หลักส่งช่าง Prep ${equipmentCount} ชิ้น | วัสดุสิ้นเปลือง/ค่าแรงส่งตรง Onsite ${consumableCount} รายการ${payload.note ? ` | ${payload.note}` : ''}`
     );
 
-    setProjects(prev =>
-      prev.map(p => {
-        if (p.id !== projectId) return p;
-        const nextItems = p.items.map(it => {
-          const rel = validReleases.find(r => r.project_item_id === it.id);
-          if (!rel) return it;
-          const nextAlloc = it.qty_allocated + rel.qty;
-          const nextPrep = it.item_type === 'consumable' ? it.qty_prepared + rel.qty : it.qty_prepared;
-          return {
-            ...it,
-            qty_allocated: nextAlloc,
-            qty_prepared: nextPrep
-          };
-        });
+    updateProjectById(projectId, p => {
+      const nextItems = p.items.map(it => {
+        const rel = validReleases.find(r => r.project_item_id === it.id);
+        if (!rel) return it;
+        const nextAlloc = it.qty_allocated + rel.qty;
+        const nextPrep = it.item_type === 'consumable' ? it.qty_prepared + rel.qty : it.qty_prepared;
         return {
-          ...p,
-          status: p.status === 'planning' ? 'in_progress' : p.status,
-          items: nextItems,
-          batches: [
-            ...(p.batches || []),
-            {
-              id: `batch-${Date.now()}`,
-              batch_no: nextBatchNo,
-              released_at: now,
-              released_by: actorName,
-              note: payload.note,
-              items: batchLineRecords
-            }
-          ],
-          updated_at: now,
-          activity_logs: appendLog(p.activity_logs, batchLog)
+          ...it,
+          qty_allocated: nextAlloc,
+          qty_prepared: nextPrep
         };
-      })
-    );
+      });
+      return {
+        ...p,
+        status: p.status === 'planning' ? 'in_progress' : p.status,
+        items: nextItems,
+        batches: [
+          ...(p.batches || []),
+          {
+            id: `batch-${Date.now()}`,
+            batch_no: nextBatchNo,
+            released_at: now,
+            released_by: actorName,
+            note: payload.note,
+            items: batchLineRecords
+          }
+        ],
+        updated_at: now,
+        activity_logs: appendLog(p.activity_logs, batchLog)
+      };
+    });
 
     return { batchNo: nextBatchNo, equipmentCount, consumableCount };
   };
@@ -3383,31 +3509,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       )
     );
 
-    setProjects(prev =>
-      prev.map(p => {
-        if (p.id !== target.project_id) return p;
-        const nextItems = p.items.map(pi => {
-          const isMatched =
-            (target.project_item_id && pi.id === target.project_item_id) ||
-            (!target.project_item_id && pi.model_name === target.model_name && pi.item_type === 'equipment');
-          if (!isMatched) return pi;
-          const existingSns = pi.serial_numbers || [];
-          const nextSns = existingSns.includes(sn) ? existingSns : [...existingSns, sn];
-          return {
-            ...pi,
-            qty_prepared: Math.min(pi.qty_required, pi.qty_prepared + 1),
-            serial_numbers: nextSns
-          };
-        });
+    updateProjectById(target.project_id, p => {
+      const nextItems = p.items.map(pi => {
+        const isMatched =
+          (target.project_item_id && pi.id === target.project_item_id) ||
+          (!target.project_item_id && pi.model_name === target.model_name && pi.item_type === 'equipment');
+        if (!isMatched) return pi;
+        const existingSns = pi.serial_numbers || [];
+        const nextSns = existingSns.includes(sn) ? existingSns : [...existingSns, sn];
         return {
-          ...p,
-          status: p.status === 'planning' ? 'in_progress' : p.status,
+          ...pi,
+          qty_prepared: Math.min(pi.qty_required, pi.qty_prepared + 1),
+          serial_numbers: nextSns
+        };
+      });
+      return {
+        ...p,
+        status: p.status === 'planning' ? 'in_progress' : p.status,
           items: nextItems,
           updated_at: now,
           activity_logs: appendLog(p.activity_logs, itemLog)
-        };
-      })
-    );
+      };
+    });
 
     return true;
   };
@@ -3435,34 +3558,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       `${payload.note}${payload.photo_urls.length > 0 ? ` | แนบรูปหน้างาน ${payload.photo_urls.length} รูป` : ''}`
     );
 
-    setProjects(prev =>
-      prev.map(p => {
-        if (p.id !== projectId) return p;
-        const nextStatus =
-          p.status === 'completed'
-            ? 'completed'
-            : progress >= 100
-              ? 'handover_pending'
-              : 'in_progress';
-        return {
-          ...p,
-          status: nextStatus,
-          daily_logs: [
-            ...(p.daily_logs || []),
-            {
-              id: `dlog-${Date.now()}`,
-              date: logDate,
-              tech_name: techName,
-              progress_percent: progress,
-              note: payload.note.trim(),
-              photo_urls: payload.photo_urls
-            }
-          ],
-          updated_at: now,
-          activity_logs: appendLog(p.activity_logs, activityEntry)
-        };
-      })
-    );
+    updateProjectById(projectId, p => {
+      const nextStatus =
+        p.status === 'completed'
+          ? 'completed'
+          : progress >= 100
+            ? 'handover_pending'
+            : 'in_progress';
+      return {
+        ...p,
+        status: nextStatus,
+        daily_logs: [
+          ...(p.daily_logs || []),
+          {
+            id: `dlog-${Date.now()}`,
+            date: logDate,
+            tech_name: techName,
+            progress_percent: progress,
+            note: payload.note.trim(),
+            photo_urls: payload.photo_urls
+          }
+        ],
+        updated_at: now,
+        activity_logs: appendLog(p.activity_logs, activityEntry)
+      };
+    });
   };
 
   const createProjectMaterialRequest = (
@@ -3485,30 +3605,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       `ขอเบิก: ${payload.item_name} x${payload.qty} — ${payload.reason}`
     );
 
-    setProjects(prev =>
-      prev.map(p =>
-        p.id === projectId
-          ? {
-              ...p,
-              material_requests: [
-                ...(p.material_requests || []),
-                {
-                  id: `mreq-${Date.now()}`,
-                  item_name: payload.item_name.trim(),
-                  product_id: payload.product_id,
-                  qty: Math.max(1, payload.qty),
-                  reason: payload.reason.trim(),
-                  requested_by: requester,
-                  requested_at: now,
-                  status: 'pending'
-                }
-              ],
-              updated_at: now,
-              activity_logs: appendLog(p.activity_logs, entry)
-            }
-          : p
-      )
-    );
+    updateProjectById(projectId, p => ({
+      ...p,
+      material_requests: [
+        ...(p.material_requests || []),
+        {
+          id: `mreq-${Date.now()}`,
+          item_name: payload.item_name.trim(),
+          product_id: payload.product_id,
+          qty: Math.max(1, payload.qty),
+          reason: payload.reason.trim(),
+          requested_by: requester,
+          requested_at: now,
+          status: 'pending'
+        }
+      ],
+      updated_at: now,
+      activity_logs: appendLog(p.activity_logs, entry)
+    }));
   };
 
   const updateProjectMaterialRequestStatus = (
@@ -3535,20 +3649,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       req ? `${req.item_name} x${req.qty} (ขอโดย ${req.requested_by})` : undefined
     );
 
-    setProjects(prev =>
-      prev.map(p =>
-        p.id === projectId
-          ? {
-              ...p,
-              material_requests: p.material_requests.map(r =>
-                r.id === requestId ? { ...r, status } : r
-              ),
-              updated_at: now,
-              activity_logs: appendLog(p.activity_logs, entry)
-            }
-          : p
-      )
-    );
+    updateProjectById(projectId, p => ({
+      ...p,
+      material_requests: p.material_requests.map(r =>
+        r.id === requestId ? { ...r, status } : r
+      ),
+      updated_at: now,
+      activity_logs: appendLog(p.activity_logs, entry)
+    }));
   };
 
   const completeProjectHandover = (
@@ -3568,32 +3676,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       `${payload.note || 'ลูกค้าตรวจรับงานติดตั้งเรียบร้อย 100%'}${payload.photo_urls && payload.photo_urls.length > 0 ? ` | รูปส่งมอบ ${payload.photo_urls.length} รูป` : ''}`
     );
 
-    setProjects(prev =>
-      prev.map(p =>
-        p.id === projectId
-          ? {
-              ...p,
-              status: 'completed',
-              completed_at: now,
-              handover_note: payload.note?.trim() || 'ส่งมอบปิดโปรเจกต์เรียบร้อย',
-              handover_photo_urls: payload.photo_urls || [],
-              daily_logs: [
-                ...(p.daily_logs || []),
-                {
-                  id: `dlog-handover-${Date.now()}`,
-                  date: now.split('T')[0],
-                  tech_name: techName,
-                  progress_percent: 100,
-                  note: `[ส่งมอบปิดโปรเจกต์] ${payload.note?.trim() || 'ติดตั้งและส่งมอบงานครบถ้วน 100%'}`,
-                  photo_urls: payload.photo_urls || []
-                }
-              ],
-              updated_at: now,
-              activity_logs: appendLog(p.activity_logs, entry)
-            }
-          : p
-      )
-    );
+    updateProjectById(projectId, p => ({
+      ...p,
+      status: 'completed',
+      completed_at: now,
+      handover_note: payload.note?.trim() || 'ส่งมอบปิดโปรเจกต์เรียบร้อย',
+      handover_photo_urls: payload.photo_urls || [],
+      daily_logs: [
+        ...(p.daily_logs || []),
+        {
+          id: `dlog-handover-${Date.now()}`,
+          date: now.split('T')[0],
+          tech_name: techName,
+          progress_percent: 100,
+          note: `[ส่งมอบปิดโปรเจกต์] ${payload.note?.trim() || 'ติดตั้งและส่งมอบงานครบถ้วน 100%'}`,
+          photo_urls: payload.photo_urls || []
+        }
+      ],
+      updated_at: now,
+      activity_logs: appendLog(p.activity_logs, entry)
+    }));
 
     setItems(prev =>
       prev.map(it =>

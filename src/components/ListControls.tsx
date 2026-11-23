@@ -137,6 +137,8 @@ interface ListControlsProps {
     unit?: string;
     /** Hide the sort selector (e.g. for lists that only need paging). */
     hideSort?: boolean;
+    /** Custom page-size options (e.g. [10, 20, 30]). Defaults to [10, 20, 50, 0]. */
+    pageSizeOptions?: number[];
     className?: string;
 }
 
@@ -158,6 +160,7 @@ export const ListControls: React.FC<ListControlsProps> = ({
     sortLabel = 'เรียงตาม',
     unit = 'รายการ',
     hideSort = false,
+    pageSizeOptions = PAGE_SIZE_OPTIONS,
     className = ''
 }) => {
     const SortIcon = sort === 'newest' || sort === 'high' ? ArrowDownWideNarrow : ArrowUpNarrowWide;
@@ -193,7 +196,7 @@ export const ListControls: React.FC<ListControlsProps> = ({
                         aria-label="จำนวนต่อหน้า"
                         className="liquid-glass-input rounded-xl px-2.5 py-1.5 text-[11px] text-white focus:outline-none cursor-pointer min-h-[36px]"
                     >
-                        {PAGE_SIZE_OPTIONS.map((size) => (
+                        {pageSizeOptions.map((size) => (
                             <option key={size} value={size} className="bg-[#12141A]">
                                 {size === 0 ? 'ทั้งหมด' : `${size} / หน้า`}
                             </option>

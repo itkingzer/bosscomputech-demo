@@ -1,9 +1,9 @@
 import React, { useMemo, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import {
-    TrendingUp, TrendingDown, Wallet, Percent, Users, Trophy,
+    TrendingUp, Wallet, Percent, Users, Trophy,
     AlertTriangle, Receipt, Coins, BarChart3, Lock, Crown,
-    Search, Hash, Layers, X
+    Search, Hash, X
 } from 'lucide-react';
 import { Order, Project, ROUTE_DEFINITIONS } from '../types';
 import { ListControls, useListControls } from './ListControls';
