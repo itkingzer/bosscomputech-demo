@@ -44,9 +44,10 @@ export const OrderFormPrintModal: React.FC<OrderFormPrintModalProps> = ({
   const [contactName, setContactName] = useState<string>('');
   const [callToSchedule, setCallToSchedule] = useState<boolean>(true);
   const [creditDays, setCreditDays] = useState<string>('30');
-  const [paymentChoice, setPaymentChoice] = useState<'credit' | 'billing' | 'cash' | 'transfer' | 'project'>('cash');
+  const [paymentChoice, setPaymentChoice] = useState<'credit' | 'billing' | 'cash' | 'transfer' | 'project' | 'government'>('cash');
   const [deliveryChoice, setDeliveryChoice] = useState<'install' | 'drop_off' | 'pickup'>('install');
   const [warrantyCheck, setWarrantyCheck] = useState<'in_warranty' | 'out_warranty'>('in_warranty');
+  const [depositAmount, setDepositAmount] = useState<number>(0);
   const [notesText, setNotesText] = useState<string>('');
 
   useEffect(() => {
@@ -56,6 +57,7 @@ export const OrderFormPrintModal: React.FC<OrderFormPrintModalProps> = ({
       setIncludeVat(true);
       setPaymentChoice('project');
       setDeliveryChoice('install');
+      setDepositAmount(0);
       setContactName(project.customer_name || '');
       const hasWarranty = (project.items || []).some(it => (it.warranty_years || 0) > 0);
       setWarrantyCheck(hasWarranty ? 'in_warranty' : 'out_warranty');
@@ -73,10 +75,13 @@ export const OrderFormPrintModal: React.FC<OrderFormPrintModalProps> = ({
       setPaymentChoice(
         order.payment_term === 'project'
           ? 'project'
-          : order.payment_term === 'credit_30'
-            ? 'credit'
-            : 'cash'
+          : order.payment_term === 'government'
+            ? 'government'
+            : order.payment_term === 'credit_30'
+              ? 'credit'
+              : 'cash'
       );
+      setDepositAmount(Math.max(0, order.deposit_amount || 0));
       setDeliveryChoice(
         order.delivery_mode === 'customer_pickup'
           ? 'pickup'
@@ -213,6 +218,8 @@ export const OrderFormPrintModal: React.FC<OrderFormPrintModalProps> = ({
   const subtotal = lineItems.reduce((sum, r) => sum + r.amount, 0);
   const vatAmount = includeVat ? subtotal * 0.07 : 0;
   const grandTotal = subtotal + vatAmount;
+  const clampedDeposit = Math.max(0, depositAmount || 0);
+  const balanceDue = Math.max(0, grandTotal - clampedDeposit);
   const thaiText = thaiBahtText(grandTotal);
 
   const isProjectDoc = !!project || order?.payment_term === 'project' || order?.delivery_mode === 'project';
@@ -389,7 +396,7 @@ export const OrderFormPrintModal: React.FC<OrderFormPrintModalProps> = ({
               โทรนัดลูกค้า
             </label>
           </div>
-          <div className="grid grid-cols-2 gap-1.5">
+          <div className="grid grid-cols-3 gap-1.5">
             <div>
               <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 mb-0.5">เงื่อนไขชำระเงิน</label>
               <select
@@ -402,7 +409,20 @@ export const OrderFormPrintModal: React.FC<OrderFormPrintModalProps> = ({
                 <option value="credit">เครดิต</option>
                 <option value="billing">วางบิล / รับเช็ค</option>
                 <option value="project">PROJECT</option>
+                <option value="government">งานราชการ / งานประมูล</option>
               </select>
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 mb-0.5">มัดจำแล้ว (บาท)</label>
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={depositAmount}
+                onChange={(e) => setDepositAmount(Math.max(0, parseFloat(e.target.value) || 0))}
+                placeholder="0"
+                className="w-full rounded-lg px-2 py-1.5 text-xs font-mono bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700"
+              />
             </div>
             <div>
               <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 mb-0.5">การประกัน</label>
@@ -608,10 +628,22 @@ export const OrderFormPrintModal: React.FC<OrderFormPrintModalProps> = ({
               <span className="font-bold">ภาษีมูลค่าเพิ่ม 7% (VAT 7%)</span>
               <span className="font-mono font-bold text-[11px]">{fmt2(vatAmount)}</span>
             </div>
-            <div className="flex items-center justify-between px-2 py-2 bg-slate-100">
+            <div className="flex items-center justify-between px-2 py-1.5 border-b border-black bg-slate-100">
               <span className="font-extrabold text-[11px]">รวมสุทธิ (Grand Total)</span>
-              <span className="font-mono font-extrabold text-[13px]">{fmt2(grandTotal)}</span>
+              <span className="font-mono font-extrabold text-[12.5px]">{fmt2(grandTotal)}</span>
             </div>
+            {clampedDeposit > 0 && (
+              <>
+                <div className="flex items-center justify-between px-2 py-1 border-b border-black">
+                  <span className="font-bold">หัก มัดจำแล้ว (Deposit)</span>
+                  <span className="font-mono font-bold text-[11px]">-{fmt2(clampedDeposit)}</span>
+                </div>
+                <div className="flex items-center justify-between px-2 py-1.5 bg-slate-100">
+                  <span className="font-extrabold text-[11px]">ยอดคงค้างชำระ (Balance Due)</span>
+                  <span className="font-mono font-extrabold text-[12.5px]">{fmt2(balanceDue)}</span>
+                </div>
+              </>
+            )}
           </div>
         </div>
 
@@ -622,7 +654,7 @@ export const OrderFormPrintModal: React.FC<OrderFormPrintModalProps> = ({
             <span className="font-bold">( {thaiText} )</span>
           </div>
           <div className="font-mono font-extrabold">
-            {fmt2(grandTotal)} บาท
+            {clampedDeposit > 0 ? `ค้างชำระ ${fmt2(balanceDue)} บาท` : `${fmt2(grandTotal)} บาท`}
           </div>
         </div>
 
@@ -635,6 +667,7 @@ export const OrderFormPrintModal: React.FC<OrderFormPrintModalProps> = ({
             <CheckBox checked={paymentChoice === 'cash'} label="เงินสด" />
             <CheckBox checked={paymentChoice === 'transfer'} label="โอน/มัดจำ" />
             <CheckBox checked={paymentChoice === 'project'} label="PROJECT" />
+            <CheckBox checked={paymentChoice === 'government'} label="งานราชการ / งานประมูล" />
           </div>
 
           <div className="grid grid-cols-12 gap-2 border-b border-dotted border-black pb-1">

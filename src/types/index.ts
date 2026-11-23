@@ -424,7 +424,7 @@ export type OrderStatus =
 export type BillType = 'tax_invoice' | 'cash_bill_quotation';
 
 // เงื่อนไขชำระเงิน
-export type PaymentTerm = 'cash' | 'credit_30' | 'project';
+export type PaymentTerm = 'cash' | 'credit_30' | 'project' | 'government';
 
 // ประเภทการส่งมอบ (Delivery Mode)
 export type DeliveryMode = 'install' | 'drop_off' | 'customer_pickup' | 'project';
@@ -492,6 +492,7 @@ export interface Order {
   order_status: OrderStatus;
   items_list?: OrderItem[];           // รายการสินค้าหลายรายการใน 1 บิล
   extra_cost?: number;                // ต้นทุนค่าแรง/ค่าดำเนินการอื่นต่อออเดอร์ (INTERNAL ONLY)
+  deposit_amount?: number;            // ยอดเงินมัดจำที่รับแล้ว (บาท)
   created_at: string;
   updated_at?: string;
   _planned_model?: string;

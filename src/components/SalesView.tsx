@@ -115,6 +115,8 @@ export const SalesView: React.FC = () => {
   const [siteNotes, setSiteNotes] = useState('');
   // ต้นทุนแฝง / ค่าดำเนินการหน้างาน (INTERNAL ONLY)
   const [extraJobCost, setExtraJobCost] = useState<number>(0);
+  // ยอดมัดจำที่รับแล้ว (บาท)
+  const [depositAmount, setDepositAmount] = useState<number>(0);
 
   // Multi-item Order List on White Sheet
   const [orderItems, setOrderItems] = useState<OrderItem[]>([]);
@@ -322,6 +324,7 @@ export const SalesView: React.FC = () => {
     setDeliveryMode('install');
     setSiteNotes('');
     setExtraJobCost(0);
+    setDepositAmount(0);
     setOrderItems([]);
     setAutoFilledCustomer(null);
     setShowCustomerSuggestions(false);
@@ -561,6 +564,7 @@ export const SalesView: React.FC = () => {
       site_notes: siteNotes.trim(),
       items_list: orderItems,
       extra_cost: Math.max(0, extraJobCost),
+      deposit_amount: Math.max(0, depositAmount),
       planned_model: orderItems[0]?.model_name || '',
       planned_quantity: totalQty,
       bill_no: null
@@ -573,6 +577,7 @@ export const SalesView: React.FC = () => {
     setDeliveryLoc('');
     setSiteNotes('');
     setExtraJobCost(0);
+    setDepositAmount(0);
     setOrderItems([]);
     setAutoFilledCustomer(null);
     setShowCustomerSuggestions(false);
@@ -1337,6 +1342,7 @@ export const SalesView: React.FC = () => {
                     <option value="cash" className="bg-white dark:bg-[#12141A]">เงินสด / โอนเงิน (Cash/Transfer)</option>
                     <option value="credit_30" className="bg-white dark:bg-[#12141A]">เครดิต 30 วัน (Credit 30 Days)</option>
                     <option value="project" className="bg-white dark:bg-[#12141A]">งานโครงการ / มัดจำตามงวด (PROJECT)</option>
+                    <option value="government" className="bg-white dark:bg-[#12141A]">งานราชการ / งานประมูล (Government / Bidding)</option>
                   </select>
                 </div>
               </div>
@@ -1494,23 +1500,37 @@ export const SalesView: React.FC = () => {
                   </div>
                 )}
 
-                {/* Extra Job Cost */}
-                <div className="mt-3">
-                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">ค่าใช้จ่ายเพิ่มเติม / ค่าดำเนินการ (Extra Cost)</label>
-                  <input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={extraJobCost}
-                    onChange={(e) => setExtraJobCost(parseFloat(e.target.value) || 0)}
-                    className="w-full rounded-xl px-3 py-2 text-xs bg-white dark:bg-slate-800 text-amber-700 dark:text-amber-300 border border-slate-300 dark:border-slate-700 font-mono tabular-nums focus:outline-none focus:border-blue-500"
-                  />
+                {/* Extra Job Cost & Deposit Amount */}
+                <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">ค่าใช้จ่ายเพิ่มเติม / ค่าดำเนินการ (Extra Cost)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={extraJobCost}
+                      onChange={(e) => setExtraJobCost(parseFloat(e.target.value) || 0)}
+                      className="w-full rounded-xl px-3 py-2 text-xs bg-white dark:bg-slate-800 text-amber-700 dark:text-amber-300 border border-slate-300 dark:border-slate-700 font-mono tabular-nums focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">เงินมัดจำที่รับแล้ว (Deposit · บาท)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={depositAmount}
+                      onChange={(e) => setDepositAmount(Math.max(0, parseFloat(e.target.value) || 0))}
+                      placeholder="0"
+                      className="w-full rounded-xl px-3 py-2 text-xs bg-white dark:bg-slate-800 text-emerald-700 dark:text-emerald-300 border border-slate-300 dark:border-slate-700 font-mono tabular-nums focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
                 </div>
               </div>
 
-              {/* Section 6: Live GP Summary */}
+              {/* Section 6: Live GP & Deposit Summary */}
               <div className="pt-3 border-t border-slate-200 dark:border-white/[0.06]">
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+                <div className="grid grid-cols-2 lg:grid-cols-5 gap-2.5">
                   <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700">
                     <p className="text-[10px] text-slate-500 dark:text-slate-400 mb-0.5">ยอดขายรวม (Revenue)</p>
                     <p className="text-sm font-extrabold text-slate-900 dark:text-white font-mono tabular-nums">฿{financials.revenue.toLocaleString('th-TH', { maximumFractionDigits: 0 })}</p>
@@ -1526,6 +1546,12 @@ export const SalesView: React.FC = () => {
                   <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700">
                     <p className="text-[10px] text-slate-500 dark:text-slate-400 mb-0.5">อัตรากำไร (Margin)</p>
                     <p className={`text-sm font-extrabold font-mono tabular-nums ${financials.marginPct < 0 ? 'text-rose-700 dark:text-rose-300' : 'text-blue-700 dark:text-blue-300'}`}>{financials.marginPct.toFixed(1)}%</p>
+                  </div>
+                  <div className="p-3 rounded-2xl bg-sky-50 dark:bg-sky-500/10 border border-sky-200 dark:border-sky-500/30">
+                    <p className="text-[10px] text-sky-700 dark:text-sky-300 mb-0.5">ยอดคงค้างชำระ (หลังหักมัดจำ)</p>
+                    <p className="text-sm font-extrabold text-sky-900 dark:text-sky-200 font-mono tabular-nums">
+                      ฿{Math.max(0, financials.revenue - depositAmount).toLocaleString('th-TH', { maximumFractionDigits: 0 })}
+                    </p>
                   </div>
                 </div>
 

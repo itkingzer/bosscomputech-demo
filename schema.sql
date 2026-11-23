@@ -16,13 +16,14 @@ CREATE TABLE IF NOT EXISTS public.orders (
     province_custom TEXT,                   -- สำหรับสาย 6 ระบุจังหวัดเพิ่มเติม
     delivery_date DATE,                     -- วันที่ส่งมอบ
     bill_type TEXT DEFAULT 'tax_invoice' CHECK (bill_type IN ('tax_invoice', 'cash_bill_quotation')), -- ใบกำกับภาษี / ใบเสนอราคา-บิลเงินสด
-    payment_term TEXT DEFAULT 'cash' CHECK (payment_term IN ('cash', 'credit_30', 'project')), -- เงินสด / เครดิต 30 วัน / PROJECT
+    payment_term TEXT DEFAULT 'cash' CHECK (payment_term IN ('cash', 'credit_30', 'project', 'government')), -- เงินสด / เครดิต 30 วัน / PROJECT / งานราชการ-ประมูล
     delivery_mode TEXT DEFAULT 'install' CHECK (delivery_mode IN ('install', 'drop_off', 'customer_pickup', 'project')), -- ส่งพร้อมติดตั้ง / ส่งไม่ต้องติดตั้ง / ลูกค้ารับเองหน้าร้าน / งานโครงการ
     site_notes TEXT,                        -- หมายเหตุหน้างาน
     bill_no TEXT UNIQUE,
     order_status TEXT NOT NULL DEFAULT 'pending_purchasing' CHECK (order_status IN ('pending_purchasing', 'waiting_po', 'po_received_in_stock', 'approved_for_prep', 'fulfilled')),
     items_list JSONB DEFAULT '[]'::jsonb,   -- รายการสินค้าหลายรายการใน 1 บิล (รองรับ item_type: hardware | service | unit_cost)
     extra_cost NUMERIC(12,2) DEFAULT 0,     -- ต้นทุนค่าแรง/ค่าดำเนินการอื่นต่อออเดอร์ (INTERNAL ONLY - ห้ามแสดงในเอกสารลูกค้า)
+    deposit_amount NUMERIC(12,2) DEFAULT 0, -- ยอดเงินมัดจำที่รับแล้ว (บาท)
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -441,6 +442,13 @@ ALTER TABLE public.projects ADD CONSTRAINT projects_status_check CHECK (
 CREATE INDEX IF NOT EXISTS idx_projects_status ON public.projects(status);
 CREATE INDEX IF NOT EXISTS idx_users_username ON public.users(username);
 CREATE INDEX IF NOT EXISTS idx_users_role ON public.users(role);
+
+-- Migration: Government/Bidding payment term & Order deposit_amount (safe to re-run)
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS deposit_amount NUMERIC(12,2) DEFAULT 0;
+ALTER TABLE public.orders DROP CONSTRAINT IF EXISTS orders_payment_term_check;
+ALTER TABLE public.orders ADD CONSTRAINT orders_payment_term_check CHECK (
+    payment_term IN ('cash', 'credit_30', 'project', 'government')
+);
 
 -- 6. Users Table (Phase 4: HR Staff Directory & Admin Management)
 CREATE TABLE IF NOT EXISTS public.users (

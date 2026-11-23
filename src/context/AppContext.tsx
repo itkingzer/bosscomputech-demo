@@ -838,6 +838,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       site_notes: orderData.site_notes,
       items_list: orderData.items_list || (orderData.planned_model ? [{ model_name: orderData.planned_model, quantity: orderData.planned_quantity || 1 }] : []),
       extra_cost: orderData.extra_cost || 0,
+      deposit_amount: Math.max(0, orderData.deposit_amount || 0),
       bill_no: null,
       order_status: 'pending_purchasing',
       created_at: now,
