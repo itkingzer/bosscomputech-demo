@@ -1,4 +1,4 @@
-import { UserAccount, Order, Item, RepairTicket, Product, StockPO, Project, computeWarrantyExpire } from '../types';
+import { UserAccount, Order, Item, RepairTicket, Product, StockPO, Project, Contract, computeWarrantyExpire } from '../types';
 
 // ==============================================================================
 // Helper: คำนวณวันหมดประกันจากวันแปะวอย (ISO) + ระยะเวลา (ปี/เดือน)
@@ -449,7 +449,125 @@ export const INITIAL_ORDERS: Order[] = [
     created_at_log: new Date(Date.now() - 86400000 * 8).toISOString(),
     stock_cut_at: new Date(Date.now() - 86400000 * 7).toISOString(),
     dispatched_at: new Date(Date.now() - 86400000 * 6).toISOString(),
-    fulfilled_at: new Date(Date.now() - 86400000 * 6).toISOString()
+    fulfilled_at: new Date(Date.now() - 86400000 * 6).toISOString(),
+    billing_type: 'sales',
+    sub_type: 'standard',
+    billing_status: 'billed',
+    tax_invoice_no: 'IV-2026-0108'
+  },
+  // ---------------------------------------------------------------------------
+  // Order 9: บิลเช่าเน็ต (Rental - Internet) รอบ 2026-10 (วางบิลแล้ว)
+  // ---------------------------------------------------------------------------
+  {
+    id: 'ord-009',
+    sales_ref: 'SO-2026-109',
+    salesperson: 'เซลล์เอ',
+    customer_id: 'cust-surat-resort',
+    customer_name: 'โรงแรมสุราษฎร์ แกรนด์ รีสอร์ท',
+    customer_phone: '077-288-900',
+    district: 'เมืองสุราษฎร์ธานี',
+    route_code: 'route_5',
+    delivery_location: '88/9 ถ.ตลาดใหม่ ต.ตลาด อ.เมือง จ.สุราษฎร์ธานี',
+    delivery_date: '2026-10-01',
+    issue_date: '2026-10-01',
+    due_date: '2026-10-31',
+    bill_type: 'tax_invoice',
+    payment_term: 'credit_30',
+    delivery_mode: 'install',
+    site_notes: 'ค่าบริการเช่าอินเทอร์เน็ต Fiber Leased Line + Wi-Fi Hotspot รอบ ต.ค. 2026',
+    bill_no: 'INV-2026-109',
+    order_status: 'fulfilled',
+    billing_type: 'rental',
+    sub_type: 'internet_rental',
+    contract_id: 'ctr-rent-net-01',
+    billing_period: '2026-10',
+    period_start: '2026-10-01',
+    period_end: '2026-10-31',
+    billing_status: 'billed',
+    tax_invoice_no: 'IV-2026-0109',
+    items_list: [
+      { model_name: 'ค่าเช่าวงจรอินเทอร์เน็ต Fiber Leased Line 500/500 Mbps (รายเดือน)', quantity: 1, item_type: 'service', unit: 'รายการ', unit_price: 8500, unit_cost: 4200 },
+      { model_name: 'ค่าเช่าชุดจัดการ Wi-Fi Gateway + Access Point 8 จุด', quantity: 1, item_type: 'service', unit: 'ชุด', unit_price: 4500, unit_cost: 1200 }
+    ],
+    extra_cost: 0,
+    created_at: new Date(Date.now() - 86400000 * 15).toISOString(),
+    created_by: 'เซลล์เอ',
+    created_at_log: new Date(Date.now() - 86400000 * 15).toISOString(),
+    fulfilled_at: new Date(Date.now() - 86400000 * 14).toISOString()
+  },
+  // ---------------------------------------------------------------------------
+  // Order 10: บิลดูแลระบบ MA (MA Monthly) รอบ 2026-10 (รอวางบิล)
+  // ---------------------------------------------------------------------------
+  {
+    id: 'ord-010',
+    sales_ref: 'SO-2026-110',
+    salesperson: 'เซลล์บี',
+    customer_id: 'cust-tapi-hospital',
+    customer_name: 'คลินิกเวชกรรมตาปี เมดิคอล',
+    customer_phone: '077-311-550',
+    district: 'พุนพิน',
+    route_code: 'route_1',
+    delivery_location: '112 ม.3 ต.ท่าข้าม อ.พุนพิน จ.สุราษฎร์ธานี',
+    delivery_date: '2026-10-05',
+    issue_date: '2026-10-05',
+    due_date: '2026-11-04',
+    bill_type: 'tax_invoice',
+    payment_term: 'credit_30',
+    delivery_mode: 'install',
+    site_notes: 'ค่าบริการดูแลระบบ Server, POS & Network รายเดือน (MA)',
+    bill_no: null,
+    order_status: 'fulfilled',
+    billing_type: 'ma',
+    sub_type: 'ma_monthly',
+    contract_id: 'ctr-ma-01',
+    billing_period: '2026-10',
+    period_start: '2026-10-01',
+    period_end: '2026-10-31',
+    billing_status: 'pending',
+    items_list: [
+      { model_name: 'ค่าบริการดูแลระบบ Server & Network (MA รายเดือน)', quantity: 1, item_type: 'service', unit: 'รายการ', unit_price: 9500, unit_cost: 2500 },
+      { model_name: 'ค่าบริการตรวจเช็กเครื่องลูกข่าย & Backup รายเดือน (12 เครื่อง)', quantity: 12, item_type: 'service', unit: 'เครื่อง', unit_price: 350, unit_cost: 100 }
+    ],
+    extra_cost: 0,
+    created_at: new Date(Date.now() - 86400000 * 5).toISOString(),
+    created_by: 'เซลล์บี',
+    created_at_log: new Date(Date.now() - 86400000 * 5).toISOString(),
+    fulfilled_at: new Date(Date.now() - 86400000 * 4).toISOString()
+  },
+  // ---------------------------------------------------------------------------
+  // Order 11: บิลนอกสัญญา / เพิ่มเติม (Addon)
+  // ---------------------------------------------------------------------------
+  {
+    id: 'ord-011',
+    sales_ref: 'SO-2026-111',
+    salesperson: 'เซลล์ซี',
+    customer_id: 'cust-surat-resort',
+    customer_name: 'โรงแรมสุราษฎร์ แกรนด์ รีสอร์ท',
+    customer_phone: '077-288-900',
+    district: 'เมืองสุราษฎร์ธานี',
+    route_code: 'route_5',
+    delivery_location: '88/9 ถ.ตลาดใหม่ ต.ตลาด อ.เมือง จ.สุราษฎร์ธานี',
+    delivery_date: '2026-11-12',
+    issue_date: '2026-11-12',
+    due_date: '2026-11-12',
+    bill_type: 'tax_invoice',
+    payment_term: 'cash',
+    delivery_mode: 'install',
+    site_notes: 'เดินจุดสาย LAN เพิ่มโซนห้องประชุมใหม่ (นอกสัญญาเช่าเน็ต)',
+    bill_no: null,
+    order_status: 'approved_for_prep',
+    billing_type: 'addon',
+    sub_type: 'addon_service',
+    contract_id: 'ctr-rent-net-01',
+    billing_status: 'pending',
+    items_list: [
+      { model_name: 'ค่าบริการเดินสาย LAN ท่อร้อยสาย และจัดตู้ Rack Server (ต่อจุด)', quantity: 4, item_type: 'service', unit: 'จุด', unit_price: 450, unit_cost: 250 },
+      { model_name: 'Ubiquiti UniFi U6-Pro Wi-Fi 6 Access Point', quantity: 1, item_type: 'hardware', unit: 'เครื่อง', unit_price: 6200, unit_cost: 4950, warranty_years: 2 }
+    ],
+    extra_cost: 0,
+    created_at: new Date(Date.now() - 86400000 * 2).toISOString(),
+    created_by: 'เซลล์ซี',
+    created_at_log: new Date(Date.now() - 86400000 * 2).toISOString()
   }
 ];
 
@@ -1299,6 +1417,221 @@ export const INITIAL_PROJECTS: Project[] = [
         actor: 'ช่างซี',
         role: 'onsite',
         note: 'ขอเบิก: สายสัญญาณ LAN Link Cat6 UTP 305m (กล่อง) x2 — หน้างานโซนโกดัง C2 ระยะเดินสายไกลกว่าแบบแปลนเดิม'
+      }
+    ]
+  }
+];
+
+// ==============================================================================
+// Contracts (สัญญาเช่า & สัญญาดูแลระบบ MA - Demo Seed Data)
+// ==============================================================================
+export const INITIAL_CONTRACTS: Contract[] = [
+  {
+    id: 'ctr-rent-net-01',
+    contract_no: 'RENT-NET-2026-001',
+    customer_id: 'cust-surat-resort',
+    customer_name: 'โรงแรมสุราษฎร์ แกรนด์ รีสอร์ท',
+    customer_phone: '077-288-900',
+    district: 'เมืองสุราษฎร์ธานี',
+    delivery_location: '88/9 ถ.ตลาดใหม่ ต.ตลาด อ.เมือง จ.สุราษฎร์ธานี',
+    contract_type: 'rental',
+    sub_type: 'internet_rental',
+    billing_cycle: 'monthly',
+    start_date: '2026-01-01',
+    end_date: '2026-12-31',
+    status: 'active',
+    notes: 'สัญญาเช่าอินเทอร์เน็ต Fiber + บริหารจัดการ Wi-Fi ทั้งโรงแรม 12 เดือน',
+    created_at: '2026-01-01T09:00:00.000Z',
+    items: [
+      {
+        id: 'ci-net-1',
+        contract_id: 'ctr-rent-net-01',
+        model_name: 'ค่าเช่าวงจรอินเทอร์เน็ต Fiber Leased Line 500/500 Mbps (รายเดือน)',
+        item_type: 'service',
+        unit: 'รายการ',
+        quantity: 1,
+        unit_price: 8500,
+        unit_cost: 4200,
+        description: 'วงจรหลัก SLA 99.5% พร้อม IP จริง'
+      },
+      {
+        id: 'ci-net-2',
+        contract_id: 'ctr-rent-net-01',
+        model_name: 'ค่าเช่าชุดจัดการ Wi-Fi Gateway + Access Point 8 จุด',
+        item_type: 'service',
+        unit: 'ชุด',
+        quantity: 1,
+        unit_price: 4500,
+        unit_cost: 1200,
+        description: 'รวมดูแลเปลี่ยนอุปกรณ์สำรองภายใน 4 ชม.'
+      }
+    ]
+  },
+  {
+    id: 'ctr-rent-sys-01',
+    contract_no: 'RENT-SYS-2026-002',
+    customer_id: 'cust-samui-mart',
+    customer_name: 'บจก. สมุย ซูเปอร์มาร์ท กรุ๊ป',
+    customer_phone: '077-425-777',
+    district: 'ดอนสัก',
+    delivery_location: '45/2 ท่าเรือเฟอร์รี่ อ.ดอนสัก จ.สุราษฎร์ธานี',
+    contract_type: 'rental',
+    sub_type: 'system_rental',
+    billing_cycle: 'monthly',
+    start_date: '2026-03-01',
+    end_date: '2027-02-28',
+    status: 'active',
+    notes: 'สัญญาเช่าระบบ POS Cloud + ระบบสต๊อกสาขา 3 จุดขาย',
+    created_at: '2026-03-01T09:00:00.000Z',
+    items: [
+      {
+        id: 'ci-sys-1',
+        contract_id: 'ctr-rent-sys-01',
+        model_name: 'ค่าเช่าระบบ POS Cloud & Backoffice Inventory (3 สาขา)',
+        item_type: 'service',
+        unit: 'ชุด',
+        quantity: 3,
+        unit_price: 2500,
+        unit_cost: 700,
+        description: 'รวม Cloud Server & อัปเดตซอฟต์แวร์'
+      }
+    ]
+  },
+  {
+    id: 'ctr-rent-eq-01',
+    contract_no: 'RENT-EQ-2026-003',
+    customer_id: 'cust-phunphin-logistics',
+    customer_name: 'หจก. พุนพิน โลจิสติกส์ แอนด์ พอร์ต',
+    customer_phone: '077-310-222',
+    district: 'พุนพิน',
+    delivery_location: '99 ถ.เอเชีย 41 ต.หนองไทร อ.พุนพิน จ.สุราษฎร์ธานี',
+    contract_type: 'rental',
+    sub_type: 'equipment_rental',
+    billing_cycle: 'monthly',
+    start_date: '2026-02-01',
+    end_date: '2027-01-31',
+    status: 'active',
+    notes: 'สัญญาเช่าเครื่องพิมพ์เลเซอร์สี & เครื่องสแกนบาร์โค้ดคลังสินค้า',
+    created_at: '2026-02-01T09:00:00.000Z',
+    items: [
+      {
+        id: 'ci-eq-1',
+        contract_id: 'ctr-rent-eq-01',
+        product_id: 'prod-4',
+        model_name: 'ค่าเช่าเครื่องพิมพ์ Brother HL-L3240CDW Color Laser (รวมหมึก)',
+        item_type: 'hardware',
+        unit: 'เครื่อง',
+        quantity: 2,
+        unit_price: 2200,
+        unit_cost: 800,
+        description: 'รวมโทนเนอร์และอะไหล่สึกหรอ'
+      },
+      {
+        id: 'ci-eq-2',
+        contract_id: 'ctr-rent-eq-01',
+        model_name: 'ค่าเช่าเครื่อง Workstation คุมคลังสินค้า',
+        item_type: 'hardware',
+        unit: 'เครื่อง',
+        quantity: 2,
+        unit_price: 1800,
+        unit_cost: 650
+      }
+    ]
+  },
+  {
+    id: 'ctr-ma-01',
+    contract_no: 'MA-2026-001',
+    customer_id: 'cust-tapi-hospital',
+    customer_name: 'คลินิกเวชกรรมตาปี เมดิคอล',
+    customer_phone: '077-311-550',
+    district: 'พุนพิน',
+    delivery_location: '112 ม.3 ต.ท่าข้าม อ.พุนพิน จ.สุราษฎร์ธานี',
+    contract_type: 'ma',
+    sub_type: 'ma_monthly',
+    billing_cycle: 'monthly',
+    start_date: '2026-01-01',
+    end_date: '2026-12-31',
+    status: 'active',
+    notes: 'สัญญาดูแลระบบรายเดือน (MA Monthly) เข้าตรวจ PM เดือนละ 1 ครั้ง + Remote Support',
+    created_at: '2026-01-01T09:00:00.000Z',
+    items: [
+      {
+        id: 'ci-ma-1',
+        contract_id: 'ctr-ma-01',
+        model_name: 'ค่าบริการดูแลระบบ Server & Network (MA รายเดือน)',
+        item_type: 'service',
+        unit: 'รายการ',
+        quantity: 1,
+        unit_price: 9500,
+        unit_cost: 2500
+      },
+      {
+        id: 'ci-ma-2',
+        contract_id: 'ctr-ma-01',
+        model_name: 'ค่าบริการตรวจเช็กเครื่องลูกข่าย & Backup รายเดือน (12 เครื่อง)',
+        item_type: 'service',
+        unit: 'เครื่อง',
+        quantity: 12,
+        unit_price: 350,
+        unit_cost: 100
+      }
+    ]
+  },
+  {
+    id: 'ctr-ma-02',
+    contract_no: 'MA-2026-002',
+    customer_id: 'cust-nasarn-coop',
+    customer_name: 'สหกรณ์การเกษตรบ้านนาสาร จำกัด',
+    customer_phone: '077-341-099',
+    district: 'บ้านนาสาร',
+    delivery_location: '18 ถ.นาสาร-คลองปราบ อ.บ้านนาสาร จ.สุราษฎร์ธานี',
+    contract_type: 'ma',
+    sub_type: 'ma_quarterly',
+    billing_cycle: 'quarterly',
+    start_date: '2026-01-01',
+    end_date: '2026-12-31',
+    status: 'active',
+    notes: 'สัญญาดูแลระบบกล้องวงจรปิดและระบบเครือข่ายรายไตรมาส (MA Quarterly)',
+    created_at: '2026-01-01T09:00:00.000Z',
+    items: [
+      {
+        id: 'ci-ma-q1',
+        contract_id: 'ctr-ma-02',
+        model_name: 'ค่าบริการบำรุงรักษาระบบ CCTV & Network (MA รายไตรมาส)',
+        item_type: 'service',
+        unit: 'ชุด',
+        quantity: 1,
+        unit_price: 15000,
+        unit_cost: 4200
+      }
+    ]
+  },
+  {
+    id: 'ctr-ma-03',
+    contract_no: 'MA-2026-003',
+    customer_id: 'cust-kanchanadit-school',
+    customer_name: 'โรงเรียนกาญจนดิษฐ์วิทยาคม',
+    customer_phone: '077-379-112',
+    district: 'กาญจนดิษฐ์',
+    delivery_location: '220 ม.1 ต.กะแดะ อ.กาญจนดิษฐ์ จ.สุราษฎร์ธานี',
+    contract_type: 'ma',
+    sub_type: 'ma_yearly',
+    billing_cycle: 'yearly',
+    start_date: '2026-01-01',
+    end_date: '2026-12-31',
+    status: 'active',
+    notes: 'สัญญาดูแลระบบห้องปฏิบัติการคอมพิวเตอร์และ Wi-Fi โรงเรียนรายปี (MA Yearly)',
+    created_at: '2026-01-01T09:00:00.000Z',
+    items: [
+      {
+        id: 'ci-ma-y1',
+        contract_id: 'ctr-ma-03',
+        model_name: 'ค่าบริการดูแลระบบห้องคอมพิวเตอร์ & Wi-Fi โรงเรียน (MA รายปี)',
+        item_type: 'service',
+        unit: 'รายการ',
+        quantity: 1,
+        unit_price: 48000,
+        unit_cost: 14000
       }
     ]
   }

@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
-import { UserAccount, Order, Item, RepairTicket, RepairStatus, RepairLifecycleStatus, ServiceType, RouteCode, JobCategory, Product, StockPO, ProductCategory, getRouteByDistrict, ActivityLog, computeWarrantyExpire, REPAIR_LIFECYCLE_META, ReceivedChannel, ROUTE_DEFINITIONS, WarrantyLookupResult, lookupWarrantyBySerial as lookupWarrantyHelper, Project, ProjectItem, ProjectItemType, ProjectMaterialRequestStatus } from '../types';
-import { INITIAL_USERS, INITIAL_ORDERS, INITIAL_ITEMS, INITIAL_REPAIR_TICKETS, INITIAL_PRODUCTS, INITIAL_STOCK_POS, INITIAL_PROJECTS } from '../data/initialData';
+import { UserAccount, Order, Item, RepairTicket, RepairStatus, RepairLifecycleStatus, ServiceType, RouteCode, JobCategory, Product, StockPO, ProductCategory, getRouteByDistrict, ActivityLog, computeWarrantyExpire, REPAIR_LIFECYCLE_META, ReceivedChannel, ROUTE_DEFINITIONS, WarrantyLookupResult, lookupWarrantyBySerial as lookupWarrantyHelper, Project, ProjectItem, ProjectItemType, ProjectMaterialRequestStatus, Contract, ContractItem, BILLING_BADGE_META, getOrderBillingBadgeKey } from '../types';
+import { INITIAL_USERS, INITIAL_ORDERS, INITIAL_ITEMS, INITIAL_REPAIR_TICKETS, INITIAL_PRODUCTS, INITIAL_STOCK_POS, INITIAL_PROJECTS, INITIAL_CONTRACTS } from '../data/initialData';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { newUuid, isSerialDuplicate } from '../utils/domainHelpers';
 
@@ -97,6 +97,7 @@ interface AppContextType {
   products: Product[];
   stockPOs: StockPO[];
   projects: Project[];
+  contracts: Contract[];
 
   // Project & Site Installation Module (PRJ-2026-XXX)
   createProject: (payload: {
@@ -425,6 +426,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     safeLoadJson<Project[]>('boss_projects', INITIAL_PROJECTS)
   );
 
+  // Contracts (Rental / MA Recurring Billing Contracts - localStorage Demo Mode + Supabase)
+  const [contracts, setContracts] = useState<Contract[]>(() =>
+    safeLoadJson<Contract[]>('boss_contracts', INITIAL_CONTRACTS)
+  );
+
   // Supabase state (matches imageStorageService env fallback)
   const [supabaseUrl, setSupabaseUrl] = useState(
     () => localStorage.getItem('boss_sb_url') || (import.meta.env.VITE_SUPABASE_URL as string | undefined) || ''
@@ -522,6 +528,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     safeSaveJson('boss_projects', projects);
   }, [projects]);
 
+  useEffect(() => {
+    safeSaveJson('boss_contracts', contracts);
+  }, [contracts]);
+
   // Connect Supabase if configured
   useEffect(() => {
     if (supabaseUrl && supabaseKey) {
@@ -530,7 +540,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setSupabaseClient(client);
         setIsSupabaseLive(true);
 
-        const loadTable = async (table: 'orders' | 'items' | 'repair_tickets' | 'products' | 'stock_pos' | 'projects' | 'users') => {
+        const loadTable = async (table: 'orders' | 'items' | 'repair_tickets' | 'products' | 'stock_pos' | 'projects' | 'users' | 'contracts') => {
           if (table === 'orders') {
             const { data } = await client.from('orders').select('*').order('created_at', { ascending: false });
             if (data) setOrders(data);
@@ -552,6 +562,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           } else if (table === 'users') {
             const { data } = await client.from('users').select('*').order('created_at', { ascending: true });
             if (data && data.length > 0) setUsers(data as UserAccount[]);
+          } else if (table === 'contracts') {
+            const [{ data: cData }, { data: ciData }] = await Promise.all([
+              client.from('contracts').select('*').order('created_at', { ascending: false }),
+              client.from('contract_items').select('*')
+            ]);
+            if (cData && cData.length > 0) {
+              const itemsByContract = new Map<string, ContractItem[]>();
+              ((ciData || []) as ContractItem[]).forEach((ci) => {
+                const list = itemsByContract.get(ci.contract_id) || [];
+                list.push(ci);
+                itemsByContract.set(ci.contract_id, list);
+              });
+              setContracts(
+                (cData as Omit<Contract, 'items'>[]).map((c) => ({
+                  ...c,
+                  items: itemsByContract.get(c.id) || []
+                }))
+              );
+            }
           }
         };
 
@@ -565,7 +594,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               loadTable('products'),
               loadTable('stock_pos'),
               loadTable('projects'),
-              loadTable('users')
+              loadTable('users'),
+              loadTable('contracts')
             ]);
           } finally {
             setIsSyncing(false);
@@ -573,10 +603,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         };
         loadRemote();
 
-        // Debounced per-table refresh avoids refetching all 7 tables on every single row change
+        // Debounced per-table refresh avoids refetching all tables on every single row change
         const refreshTimers: Record<string, number> = {};
         const scheduleTableRefresh = (
-          table: 'orders' | 'items' | 'repair_tickets' | 'products' | 'stock_pos' | 'projects' | 'users'
+          table: 'orders' | 'items' | 'repair_tickets' | 'products' | 'stock_pos' | 'projects' | 'users' | 'contracts'
         ) => {
           if (refreshTimers[table]) {
             window.clearTimeout(refreshTimers[table]);
@@ -595,6 +625,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           .on('postgres_changes', { event: '*', schema: 'public', table: 'stock_pos' }, () => scheduleTableRefresh('stock_pos'))
           .on('postgres_changes', { event: '*', schema: 'public', table: 'projects' }, () => scheduleTableRefresh('projects'))
           .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, () => scheduleTableRefresh('users'))
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'contracts' }, () => scheduleTableRefresh('contracts'))
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'contract_items' }, () => scheduleTableRefresh('contracts'))
           .subscribe();
 
         return () => {
@@ -814,17 +846,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const routeCode = orderData.district ? getRouteByDistrict(orderData.district) : ('route_5' as RouteCode);
     const actor = currentUserRef.current;
     const now = new Date().toISOString();
+    const billingBadge = BILLING_BADGE_META[getOrderBillingBadgeKey({
+      billing_type: orderData.billing_type || 'sales',
+      sub_type: orderData.sub_type || 'standard'
+    })];
+    const logAction = orderData.billing_type && orderData.billing_type !== 'sales'
+      ? `เปิดบิล (${billingBadge.label})`
+      : 'เปิดบิลขาย';
     const createdLog = makeLog(
-      'เปิดบิลขาย',
+      logAction,
       actor?.name || orderData.salesperson || 'ระบบ',
       actor?.role,
-      `ลูกค้า: ${orderData.customer_name}${orderData.district ? ` | พื้นที่: ${orderData.district}` : ''}`
+      `ลูกค้า: ${orderData.customer_name}${orderData.billing_period ? ` | งวด: ${orderData.billing_period}` : ''}${orderData.district ? ` | พื้นที่: ${orderData.district}` : ''}`
     );
 
     const newOrder: Order = {
       id: newUuid(),
       sales_ref: orderData.sales_ref,
       salesperson: orderData.salesperson || currentUser?.name,
+      customer_id: orderData.customer_id ?? null,
       customer_name: orderData.customer_name,
       customer_phone: orderData.customer_phone,
       delivery_location: orderData.delivery_location,
@@ -841,6 +881,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       deposit_amount: Math.max(0, orderData.deposit_amount || 0),
       bill_no: null,
       order_status: 'pending_purchasing',
+      billing_status: orderData.billing_status || 'pending',
+      billing_type: orderData.billing_type || 'sales',
+      sub_type: orderData.sub_type || 'standard',
+      contract_id: orderData.contract_id ?? null,
+      billing_period: orderData.billing_period ?? null,
+      period_start: orderData.period_start ?? null,
+      period_end: orderData.period_end ?? null,
+      issue_date: orderData.issue_date ?? null,
+      due_date: orderData.due_date ?? null,
       created_at: now,
       _planned_model: orderData.planned_model || (orderData.items_list && orderData.items_list[0]?.model_name),
       _planned_quantity: orderData.planned_quantity || (orderData.items_list && orderData.items_list.reduce((sum, item) => sum + (item.quantity || 1), 0)) || 1,
@@ -3057,6 +3106,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.removeItem('boss_products');
     localStorage.removeItem('boss_stock_pos');
     localStorage.removeItem('boss_projects');
+    localStorage.removeItem('boss_contracts');
     setOrders(INITIAL_ORDERS);
     setItems(INITIAL_ITEMS);
     setRepairTickets(INITIAL_REPAIR_TICKETS);
@@ -3064,6 +3114,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setProducts(INITIAL_PRODUCTS);
     setStockPOs(INITIAL_STOCK_POS);
     setProjects(INITIAL_PROJECTS);
+    setContracts(INITIAL_CONTRACTS);
   };
 
   /**
@@ -3100,12 +3151,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.setItem('boss_stock_pos', JSON.stringify([]));
     localStorage.setItem('boss_repair_tickets', JSON.stringify([]));
     localStorage.setItem('boss_projects', JSON.stringify([]));
+    localStorage.setItem('boss_contracts', JSON.stringify([]));
     localStorage.setItem('boss_items', JSON.stringify(cleanedStockItems));
 
     setOrders([]);
     setStockPOs([]);
     setRepairTickets([]);
     setProjects([]);
+    setContracts([]);
     setItems(cleanedStockItems);
   };
 
@@ -3730,6 +3783,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       products,
       stockPOs,
       projects,
+      contracts,
       createProject,
       addProjectAddonItems,
       releaseProjectBatch,

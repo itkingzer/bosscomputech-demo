@@ -5,7 +5,7 @@ import {
   FileText, Printer, CheckCircle2, Package, AlertTriangle,
   Receipt, TrendingUp, Building2, Eye, X, ShieldAlert
 } from 'lucide-react';
-import { Order, Project, formatThaiDateTime } from '../types';
+import { Order, Project, formatThaiDateTime, BillingBadgeKey, BILLING_BADGE_META, getOrderBillingBadgeKey } from '../types';
 import { EvidencePhotoUploader } from './EvidencePhotoUploader';
 import { OrderFormPrintModal } from './OrderFormPrintModal';
 import { computeProjectFinancials } from '../utils/domainHelpers';
@@ -21,20 +21,25 @@ export const AccountingView: React.FC = () => {
 
   const [activeSubTab, setActiveSubTab] = useState<'billing' | 'po_readonly' | 'doa_readonly'>('billing');
   const [billingFilter, setBillingFilter] = useState<'ready' | 'billed' | 'all'>('ready');
+  const [billingTypeFilter, setBillingTypeFilter] = useState<'all' | BillingBadgeKey>('all');
   const [printTarget, setPrintTarget] = useState<{ order?: Order | null; project?: Project | null } | null>(null);
   const [taxModalTarget, setTaxModalTarget] = useState<{ type: 'order' | 'project'; id: string; label: string } | null>(null);
   const [taxInvoiceInput, setTaxInvoiceInput] = useState('');
   const [photoPreviewUrls, setPhotoPreviewUrls] = useState<string[] | null>(null);
 
-  // Orders ready for billing or already billed
+  // Orders ready for billing or already billed (filtered by ประเภทบิล & สถานะการชำระเงิน)
   const billingOrders = useMemo(() => {
     return orders.filter(o => {
-      const isReadyStatus = o.order_status === 'fulfilled' || o.order_status === 'approved_for_prep';
+      if (billingTypeFilter !== 'all' && getOrderBillingBadgeKey(o) !== billingTypeFilter) {
+        return false;
+      }
+      const isRecurringOrAddon = o.billing_type === 'rental' || o.billing_type === 'ma' || o.billing_type === 'addon';
+      const isReadyStatus = isRecurringOrAddon || o.order_status === 'fulfilled' || o.order_status === 'approved_for_prep';
       if (billingFilter === 'ready') return isReadyStatus && o.billing_status !== 'billed';
       if (billingFilter === 'billed') return o.billing_status === 'billed';
       return true;
     });
-  }, [orders, billingFilter]);
+  }, [orders, billingFilter, billingTypeFilter]);
 
   // Projects ready for billing or already billed
   const billingProjects = useMemo(() => {
@@ -171,25 +176,54 @@ export const AccountingView: React.FC = () => {
       {/* TAB 1: BILLING QUEUE */}
       {activeSubTab === 'billing' && (
         <div className="space-y-4">
-          <div className="flex flex-wrap items-center gap-2">
-            {([
-              { id: 'ready', label: 'รอวางบิล / ปิดงานแล้ว' },
-              { id: 'billed', label: 'วางบิลแล้ว (Billed)' },
-              { id: 'all', label: 'ทั้งหมด' }
-            ] as const).map(f => (
-              <button
-                key={f.id}
-                type="button"
-                onClick={() => setBillingFilter(f.id)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
-                  billingFilter === f.id
-                    ? 'bg-slate-900 dark:bg-white text-white dark:text-black'
-                    : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'
-                }`}
-              >
-                {f.label}
-              </button>
-            ))}
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-2.5 p-3 rounded-2xl bg-slate-100/80 dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[11px] font-bold text-slate-600 dark:text-slate-400 mr-1">ประเภทบิล:</span>
+              {([
+                { id: 'all', label: 'ทั้งหมด' },
+                { id: 'sales', label: 'ขาย' },
+                { id: 'internet_rental', label: 'เช่าเน็ต' },
+                { id: 'system_rental', label: 'เช่าระบบ' },
+                { id: 'equipment_rental', label: 'เช่าอุปกรณ์' },
+                { id: 'ma', label: 'ดูแลระบบ MA' },
+                { id: 'addon', label: 'นอกสัญญา / เพิ่มเติม' }
+              ] as const).map(t => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setBillingTypeFilter(t.id)}
+                  className={`px-2.5 py-1 rounded-xl text-[11px] font-bold transition cursor-pointer ${
+                    billingTypeFilter === t.id
+                      ? 'bg-[#FF6B00] text-black shadow-sm'
+                      : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[11px] font-bold text-slate-600 dark:text-slate-400 mr-1">สถานะชำระเงิน:</span>
+              {([
+                { id: 'ready', label: 'รอวางบิล / รอชำระ' },
+                { id: 'billed', label: 'วางบิล / ชำระแล้ว' },
+                { id: 'all', label: 'ทั้งหมด' }
+              ] as const).map(f => (
+                <button
+                  key={f.id}
+                  type="button"
+                  onClick={() => setBillingFilter(f.id)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+                    billingFilter === f.id
+                      ? 'bg-slate-900 dark:bg-white text-white dark:text-black'
+                      : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'
+                  }`}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Projects Section */}
@@ -368,6 +402,14 @@ export const AccountingView: React.FC = () => {
                             <span className="font-mono font-extrabold text-xs text-[#FF6B00]">
                               {ord.bill_no || ord.sales_ref || ord.id}
                             </span>
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${BILLING_BADGE_META[getOrderBillingBadgeKey(ord)].cls}`}>
+                              {BILLING_BADGE_META[getOrderBillingBadgeKey(ord)].label}
+                            </span>
+                            {ord.billing_period && (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-slate-100 text-slate-800 border border-slate-300 dark:bg-white/[0.06] dark:text-slate-200 dark:border-white/[0.12]">
+                                งวด {ord.billing_period}
+                              </span>
+                            )}
                             {ord.billing_status === 'billed' ? (
                               <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 dark:bg-emerald-500/15 dark:text-emerald-300 dark:border-emerald-500/30">
                                 วางบิลแล้ว {ord.tax_invoice_no ? `(${ord.tax_invoice_no})` : ''}
@@ -381,6 +423,7 @@ export const AccountingView: React.FC = () => {
                           <div className="text-sm font-bold text-slate-900 dark:text-white mt-1">{ord.customer_name}</div>
                           <div className="text-[11px] text-slate-500 dark:text-slate-400">
                             Sale: {ord.salesperson || ord.created_by || '-'} • {formatThaiDateTime(ord.created_at)}
+                            {ord.due_date ? ` • ครบกำหนด ${ord.due_date}` : ''}
                           </div>
                         </div>
                         {orderPhotos.length > 0 && (

@@ -7,13 +7,15 @@ import {
   Sparkles, Layers, Trash2, Calendar, CreditCard,
   FileText, Truck, Search, ShoppingBag, X, Check,
   UserCheck, Pencil, TrendingUp, AlertTriangle, ShieldCheck,
-  Receipt, Package, Printer
+  Receipt, Package, Printer, Wifi, Server, Monitor, Wrench, FileCheck2
 } from 'lucide-react';
 import {
   ROUTE_DEFINITIONS, getRouteByDistrict, RouteCode, BillType, PaymentTerm, DeliveryMode, OrderItem,
   Product, ProductCategory, ProductUnit, PRODUCT_CATEGORY_LABELS, PRODUCT_UNIT_OPTIONS,
   WARRANTY_PRESET_YEARS, formatThaiDateTime, Order,
-  Project, ProjectItemType
+  Project, ProjectItemType,
+  Contract, BillingCategoryType, BillingSubType, BillingBadgeKey,
+  BILLING_BADGE_META, getOrderBillingBadgeKey
 } from '../types';
 import { ListControls, useListControls } from './ListControls';
 import { ActivityTimeline } from './ActivityTimeline';
@@ -91,7 +93,7 @@ const DELIVERY_MODE_META: Record<DeliveryMode, { label: string; cls: string }> =
 export const SalesView: React.FC = () => {
   const {
     orders, createOrder, currentUser, users, products, addProduct, updateProduct, deleteProduct, items,
-    projects, createProject, addProjectAddonItems
+    projects, createProject, addProjectAddonItems, contracts
   } = useApp();
 
   // ชื่อพนักงานขายที่ล็อกอินอยู่ (auto-tag ลงทุกออเดอร์ ไม่ต้องเลือกเอง)
@@ -121,10 +123,36 @@ export const SalesView: React.FC = () => {
   // Multi-item Order List on White Sheet
   const [orderItems, setOrderItems] = useState<OrderItem[]>([]);
 
-  // Modal State: Create Order Modal + Catalog Modal + Order Detail Modal + Project Modals
+  // Modal State: Billing Type Selector + Create Order Modal + Rental/MA Modal + Catalog Modal + Order Detail Modal + Project Modals
+  const [isBillingTypeModalOpen, setIsBillingTypeModalOpen] = useState(false);
+  const [orderBillingType, setOrderBillingType] = useState<BillingCategoryType>('sales');
+  const [orderContractId, setOrderContractId] = useState<string>('');
+  const [orderCustomerId, setOrderCustomerId] = useState<string>('');
+  const [orderDueDate, setOrderDueDate] = useState<string>('');
+
+  // Rental / MA Recurring Contract Billing Modal State
+  const [isContractBillingOpen, setIsContractBillingOpen] = useState(false);
+  const [contractBillingMode, setContractBillingMode] = useState<'rental' | 'ma'>('rental');
+  const [selectedContractCustomerId, setSelectedContractCustomerId] = useState<string>('');
+  const [selectedContractId, setSelectedContractId] = useState<string>('');
+  const [contractSalesRef, setContractSalesRef] = useState('');
+  const [contractBillingPeriod, setContractBillingPeriod] = useState('');
+  const [contractPeriodStart, setContractPeriodStart] = useState('');
+  const [contractPeriodEnd, setContractPeriodEnd] = useState('');
+  const [contractIssueDate, setContractIssueDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [contractDueDate, setContractDueDate] = useState('');
+  const [contractBillType, setContractBillType] = useState<BillType>('tax_invoice');
+  const [contractPaymentTerm, setContractPaymentTerm] = useState<PaymentTerm>('credit_30');
+  const [contractSiteNotes, setContractSiteNotes] = useState('');
+  const [contractOrderItems, setContractOrderItems] = useState<OrderItem[]>([]);
+
+  // Order List Filters (ประเภทบิล + สถานะการชำระเงิน)
+  const [orderBillingTypeFilter, setOrderBillingTypeFilter] = useState<'all' | BillingBadgeKey>('all');
+  const [orderPaymentStatusFilter, setOrderPaymentStatusFilter] = useState<'all' | 'pending' | 'billed'>('all');
+
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isCatalogModalOpen, setIsCatalogModalOpen] = useState(false);
-  const [catalogTarget, setCatalogTarget] = useState<'order' | 'project_equipment' | 'project_consumable' | 'addon'>('order');
+  const [catalogTarget, setCatalogTarget] = useState<'order' | 'contract_order' | 'project_equipment' | 'project_consumable' | 'addon'>('order');
   const [detailOrder, setDetailOrder] = useState<Order | null>(null);
   const [printTarget, setPrintTarget] = useState<{ order?: Order | null; project?: Project | null } | null>(null);
 
@@ -310,15 +338,210 @@ export const SalesView: React.FC = () => {
     };
   }, [anyModalOpen]);
 
-  // ---- Create Order Modal ----
-  const handleOpenCreateModal = () => {
-    setSalesRef(`SO-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`);
+  // ---- Helper: Default Billing Period & Dates for Contract ----
+  const getDefaultBillingPeriod = (cycle: Contract['billing_cycle']) => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = now.getMonth() + 1;
+    const pad = (n: number) => String(n).padStart(2, '0');
+    if (cycle === 'yearly') {
+      return {
+        period: `${y}`,
+        start: `${y}-01-01`,
+        end: `${y}-12-31`
+      };
+    }
+    if (cycle === 'quarterly') {
+      const q = Math.floor((m - 1) / 3) + 1;
+      const startMonth = (q - 1) * 3 + 1;
+      const endMonth = q * 3;
+      const lastDay = new Date(y, endMonth, 0).getDate();
+      return {
+        period: `${y}-Q${q}`,
+        start: `${y}-${pad(startMonth)}-01`,
+        end: `${y}-${pad(endMonth)}-${pad(lastDay)}`
+      };
+    }
+    const lastDay = new Date(y, m, 0).getDate();
+    return {
+      period: `${y}-${pad(m)}`,
+      start: `${y}-${pad(m)}-01`,
+      end: `${y}-${pad(m)}-${pad(lastDay)}`
+    };
+  };
+
+  // Active contracts matching current contractBillingMode ('rental' | 'ma')
+  const matchingActiveContracts = useMemo(
+    () => contracts.filter(c => c.status === 'active' && c.contract_type === contractBillingMode),
+    [contracts, contractBillingMode]
+  );
+
+  // Customers who have active contracts of matching type
+  const contractCustomers = useMemo(() => {
+    const map = new Map<string, { customer_id: string; customer_name: string; customer_phone?: string }>();
+    matchingActiveContracts.forEach(c => {
+      if (!map.has(c.customer_id)) {
+        map.set(c.customer_id, {
+          customer_id: c.customer_id,
+          customer_name: c.customer_name,
+          customer_phone: c.customer_phone
+        });
+      }
+    });
+    return Array.from(map.values());
+  }, [matchingActiveContracts]);
+
+  const customerActiveContracts = useMemo(
+    () =>
+      selectedContractCustomerId
+        ? matchingActiveContracts.filter(c => c.customer_id === selectedContractCustomerId)
+        : matchingActiveContracts,
+    [matchingActiveContracts, selectedContractCustomerId]
+  );
+
+  const selectedContract = useMemo(
+    () => matchingActiveContracts.find(c => c.id === selectedContractId) || null,
+    [matchingActiveContracts, selectedContractId]
+  );
+
+  // Duplicate Period Check: same contract_id + billing_period
+  const duplicatePeriodOrder = useMemo(() => {
+    if (!selectedContractId || !contractBillingPeriod.trim()) return null;
+    const normPeriod = contractBillingPeriod.trim().toLowerCase();
+    return (
+      orders.find(
+        o =>
+          o.contract_id === selectedContractId &&
+          (o.billing_period || '').trim().toLowerCase() === normPeriod
+      ) || null
+    );
+  }, [orders, selectedContractId, contractBillingPeriod]);
+
+  const applySelectedContract = (ctr: Contract | null) => {
+    if (!ctr) {
+      setSelectedContractId('');
+      setContractOrderItems([]);
+      return;
+    }
+    setSelectedContractCustomerId(ctr.customer_id);
+    setSelectedContractId(ctr.id);
+    const defaults = getDefaultBillingPeriod(ctr.billing_cycle);
+    setContractBillingPeriod(defaults.period);
+    setContractPeriodStart(defaults.start);
+    setContractPeriodEnd(defaults.end);
+    const todayStr = new Date().toISOString().split('T')[0];
+    const dueObj = new Date();
+    dueObj.setDate(dueObj.getDate() + 30);
+    setContractIssueDate(todayStr);
+    setContractDueDate(dueObj.toISOString().split('T')[0]);
+    setContractSiteNotes(ctr.notes || '');
+    setContractOrderItems(
+      (ctr.items || []).map(ci => ({
+        model_name: ci.model_name,
+        item_type: ci.item_type,
+        quantity: ci.quantity,
+        unit: ci.unit,
+        unit_price: ci.unit_price,
+        unit_cost: ci.unit_cost,
+        warranty_years: 0
+      }))
+    );
+  };
+
+  const handleOpenContractBillingModal = (mode: 'rental' | 'ma') => {
+    setIsBillingTypeModalOpen(false);
+    setContractBillingMode(mode);
+    const prefix = mode === 'rental' ? 'RN' : 'MA';
+    setContractSalesRef(`${prefix}-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`);
+    setContractBillType('tax_invoice');
+    setContractPaymentTerm('credit_30');
+    const firstActive = contracts.find(c => c.status === 'active' && c.contract_type === mode) || null;
+    if (firstActive) {
+      applySelectedContract(firstActive);
+    } else {
+      setSelectedContractCustomerId('');
+      setSelectedContractId('');
+      setContractBillingPeriod('');
+      setContractPeriodStart('');
+      setContractPeriodEnd('');
+      setContractIssueDate(new Date().toISOString().split('T')[0]);
+      setContractDueDate('');
+      setContractSiteNotes('');
+      setContractOrderItems([]);
+    }
+    setIsContractBillingOpen(true);
+  };
+
+  const handleSubmitContractBilling = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedContract) {
+      alert('กรุณาเลือกลูกค้าและสัญญาที่ใช้งานอยู่');
+      return;
+    }
+    if (!contractBillingPeriod.trim()) {
+      alert('กรุณาระบุงวดการวางบิล (Billing Period)');
+      return;
+    }
+    if (duplicatePeriodOrder) {
+      alert(`พบการออกบิลซ้ำในงวด ${contractBillingPeriod} สำหรับสัญญา ${selectedContract.contract_no} แล้ว (${duplicatePeriodOrder.sales_ref || duplicatePeriodOrder.id})`);
+      return;
+    }
+    if (contractOrderItems.length === 0) {
+      alert('กรุณามีรายการอย่างน้อย 1 รายการในบิล');
+      return;
+    }
+
+    const totalQty = contractOrderItems.reduce((acc, curr) => acc + (curr.quantity || 0), 0);
+    createOrder({
+      sales_ref: contractSalesRef,
+      salesperson: salespersonName,
+      customer_id: selectedContract.customer_id,
+      customer_name: selectedContract.customer_name,
+      customer_phone: selectedContract.customer_phone || '',
+      delivery_location: selectedContract.delivery_location || `อ.${selectedContract.district || 'เมืองสุราษฎร์ธานี'}`,
+      district: selectedContract.district || 'เมืองสุราษฎร์ธานี',
+      route_code: getRouteByDistrict(selectedContract.district || 'เมืองสุราษฎร์ธานี'),
+      delivery_date: contractIssueDate || new Date().toISOString().split('T')[0],
+      issue_date: contractIssueDate || new Date().toISOString().split('T')[0],
+      due_date: contractDueDate || null,
+      bill_type: contractBillType,
+      payment_term: contractPaymentTerm,
+      delivery_mode: 'install',
+      site_notes: contractSiteNotes.trim(),
+      items_list: contractOrderItems,
+      extra_cost: 0,
+      deposit_amount: 0,
+      planned_model: contractOrderItems[0]?.model_name || '',
+      planned_quantity: totalQty,
+      bill_no: null,
+      billing_type: contractBillingMode,
+      sub_type: selectedContract.sub_type,
+      contract_id: selectedContract.id,
+      billing_period: contractBillingPeriod.trim(),
+      period_start: contractPeriodStart || null,
+      period_end: contractPeriodEnd || null,
+      billing_status: 'pending'
+    });
+
+    setToast(`เปิดบิล ${contractSalesRef} (${selectedContract.contract_no} • งวด ${contractBillingPeriod}) เรียบร้อยแล้ว`);
+    setIsContractBillingOpen(false);
+    setTimeout(() => setToast(''), 4500);
+  };
+
+  // ---- Create Order Modal (Sales / Addon) ----
+  const handleOpenCreateModal = (mode: 'sales' | 'addon' = 'sales') => {
+    setIsBillingTypeModalOpen(false);
+    setOrderBillingType(mode);
+    setOrderContractId('');
+    setOrderCustomerId('');
+    setSalesRef(`${mode === 'addon' ? 'ADD' : 'SO'}-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`);
     setCustomerName('');
     setCustomerPhone('');
     setDistrict('เมืองสุราษฎร์ธานี');
     setProvinceCustom('');
     setDeliveryLoc('');
     setDeliveryDate('');
+    setOrderDueDate('');
     setBillType('tax_invoice');
     setPaymentTerm('cash');
     setDeliveryMode('install');
@@ -334,7 +557,7 @@ export const SalesView: React.FC = () => {
   const handleCloseCreateModal = () => setIsCreateModalOpen(false);
 
   // Open Catalog Modal
-  const handleOpenCatalogModal = (target: 'order' | 'project_equipment' | 'project_consumable' | 'addon' = 'order') => {
+  const handleOpenCatalogModal = (target: 'order' | 'contract_order' | 'project_equipment' | 'project_consumable' | 'addon' = 'order') => {
     setCatalogTarget(target);
     setModalSelectedMap({});
     setSearchQuery('');
@@ -508,7 +731,11 @@ export const SalesView: React.FC = () => {
       }
     });
 
-    setOrderItems(prev => [...prev, ...itemsToAdd]);
+    if (catalogTarget === 'contract_order') {
+      setContractOrderItems(prev => [...prev, ...itemsToAdd]);
+    } else {
+      setOrderItems(prev => [...prev, ...itemsToAdd]);
+    }
 
     setIsCatalogModalOpen(false);
     setToast(`เพิ่ม ${itemsToAdd.length} รายการเข้าบิลเรียบร้อยแล้ว`);
@@ -551,6 +778,7 @@ export const SalesView: React.FC = () => {
     createOrder({
       sales_ref: salesRef,
       salesperson: salespersonName,
+      customer_id: orderCustomerId || null,
       customer_name: customerName.trim(),
       customer_phone: customerPhone.trim(),
       delivery_location: deliveryLoc.trim() || `อ.${district}`,
@@ -558,6 +786,8 @@ export const SalesView: React.FC = () => {
       route_code: currentRouteCode,
       province_custom: currentRouteCode === 'route_6' ? provinceCustom.trim() : undefined,
       delivery_date: deliveryDate,
+      issue_date: deliveryDate || new Date().toISOString().split('T')[0],
+      due_date: orderDueDate || null,
       bill_type: billType,
       payment_term: paymentTerm,
       delivery_mode: deliveryMode,
@@ -567,7 +797,11 @@ export const SalesView: React.FC = () => {
       deposit_amount: Math.max(0, depositAmount),
       planned_model: orderItems[0]?.model_name || '',
       planned_quantity: totalQty,
-      bill_no: null
+      bill_no: null,
+      billing_type: orderBillingType,
+      sub_type: orderBillingType === 'addon' ? 'addon_service' : 'standard',
+      contract_id: orderContractId || null,
+      billing_status: 'pending'
     });
 
     setToast(`สร้างใบสั่งขายรหัส ${salesRef} รวม ${totalQty} ชิ้น ส่งต่อจัดซื้อ & สต๊อกแล้ว`);
@@ -656,16 +890,28 @@ export const SalesView: React.FC = () => {
     }
   }, [filteredCatalogBase, stockByName, sortBy]);
 
-  // Filter orders by search (customer / ref) BEFORE pagination
+  // Filter orders by search, ประเภทบิล (billing category), and สถานะการชำระเงิน (billing_status) BEFORE pagination
   const filteredOrders = useMemo(() => {
     const q = orderSearch.trim().toLowerCase();
-    if (!q) return orders;
-    return orders.filter(o =>
-      (o.customer_name || '').toLowerCase().includes(q) ||
-      (o.sales_ref || '').toLowerCase().includes(q) ||
-      (o.bill_no || '').toLowerCase().includes(q)
-    );
-  }, [orders, orderSearch]);
+    return orders.filter(o => {
+      if (orderBillingTypeFilter !== 'all' && getOrderBillingBadgeKey(o) !== orderBillingTypeFilter) {
+        return false;
+      }
+      if (orderPaymentStatusFilter === 'pending' && o.billing_status === 'billed') {
+        return false;
+      }
+      if (orderPaymentStatusFilter === 'billed' && o.billing_status !== 'billed') {
+        return false;
+      }
+      if (!q) return true;
+      return (
+        (o.customer_name || '').toLowerCase().includes(q) ||
+        (o.sales_ref || '').toLowerCase().includes(q) ||
+        (o.bill_no || '').toLowerCase().includes(q) ||
+        (o.billing_period || '').toLowerCase().includes(q)
+      );
+    });
+  }, [orders, orderSearch, orderBillingTypeFilter, orderPaymentStatusFilter]);
 
   // Sort + pagination สำหรับการ์ดติดตามออเดอร์
   const ordersList = useListControls(filteredOrders, {
@@ -834,19 +1080,11 @@ export const SalesView: React.FC = () => {
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 flex-wrap">
             <button
               type="button"
-              onClick={handleOpenCreateModal}
-              className="px-4 py-2.5 min-h-[44px] rounded-xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] hover:brightness-105 text-black font-extrabold text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-[#FF6B00]/25 border border-white/20 active:scale-[0.97]"
+              onClick={() => setIsBillingTypeModalOpen(true)}
+              className="px-5 py-2.5 min-h-[44px] rounded-xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] hover:brightness-105 text-black font-extrabold text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-[#FF6B00]/25 border border-white/20 active:scale-[0.97]"
             >
               <Plus className="w-4 h-4" />
-              <span>เปิดบิลขายใหม่ (New Sales Order)</span>
-            </button>
-            <button
-              type="button"
-              onClick={handleOpenCreateProjectModal}
-              className="px-4 py-2.5 min-h-[44px] rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-extrabold text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-purple-500/25 border border-white/20 active:scale-[0.97]"
-            >
-              <Sparkles className="w-4 h-4" />
-              <span>เปิดงานรับเหมา / ติดตั้ง (Project Site)</span>
+              <span>เปิดบิล</span>
             </button>
             <button
               type="button"
@@ -1022,21 +1260,72 @@ export const SalesView: React.FC = () => {
 
       {/* ================= COMPACT ORDER CARDS ================= */}
       <div className="liquid-glass rounded-3xl p-5 sm:p-6 shadow-2xl border border-white/[0.08]">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
-          <h3 className="text-sm font-bold text-white flex items-center gap-2">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+          <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
             <ListOrdered className="w-4 h-4 text-[#FF6B00]" />
-            <span>รายการออเดอร์ฝ่ายขาย</span>
-            <span className="text-[11px] font-normal text-slate-400">({orders.length})</span>
+            <span>รายการออเดอร์ / บิลฝ่ายขาย</span>
+            <span className="text-[11px] font-normal text-slate-500 dark:text-slate-400">({filteredOrders.length}/{orders.length})</span>
           </h3>
           <div className="relative w-full sm:w-64">
             <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
             <input
               type="text"
-              placeholder="ค้นหาลูกค้า / เลขที่บิล..."
+              placeholder="ค้นหาลูกค้า / เลขที่บิล / งวด..."
               value={orderSearch}
               onChange={(e) => setOrderSearch(e.target.value)}
-              className="w-full liquid-glass-input rounded-xl pl-9 pr-3 py-2 text-xs text-white focus:outline-none"
+              className="w-full liquid-glass-input rounded-xl pl-9 pr-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none"
             />
+          </div>
+        </div>
+
+        {/* Filter Controls: ประเภทบิล & สถานะการชำระเงิน */}
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-2.5 mb-4 p-3 rounded-2xl bg-slate-100/80 dark:bg-white/[0.03] border border-slate-200 dark:border-white/[0.08]">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[11px] font-bold text-slate-600 dark:text-slate-400 mr-1">ประเภทบิล:</span>
+            {([
+              { id: 'all', label: 'ทั้งหมด' },
+              { id: 'sales', label: 'ขาย' },
+              { id: 'internet_rental', label: 'เช่าเน็ต' },
+              { id: 'system_rental', label: 'เช่าระบบ' },
+              { id: 'equipment_rental', label: 'เช่าอุปกรณ์' },
+              { id: 'ma', label: 'ดูแลระบบ MA' },
+              { id: 'addon', label: 'นอกสัญญา / เพิ่มเติม' }
+            ] as const).map(tab => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setOrderBillingTypeFilter(tab.id)}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer ${
+                  orderBillingTypeFilter === tab.id
+                    ? 'bg-[#FF6B00] text-black shadow-sm'
+                    : 'bg-white dark:bg-white/[0.05] text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-white/[0.08] hover:bg-slate-50 dark:hover:bg-white/[0.1]'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[11px] font-bold text-slate-600 dark:text-slate-400 mr-1">สถานะชำระเงิน:</span>
+            {([
+              { id: 'all', label: 'ทั้งหมด' },
+              { id: 'pending', label: 'รอวางบิล / รอชำระ' },
+              { id: 'billed', label: 'วางบิล / ชำระแล้ว' }
+            ] as const).map(st => (
+              <button
+                key={st.id}
+                type="button"
+                onClick={() => setOrderPaymentStatusFilter(st.id)}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer ${
+                  orderPaymentStatusFilter === st.id
+                    ? 'bg-slate-900 dark:bg-white text-white dark:text-black shadow-sm'
+                    : 'bg-white dark:bg-white/[0.05] text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-white/[0.08] hover:bg-slate-50 dark:hover:bg-white/[0.1]'
+                }`}
+              >
+                {st.label}
+              </button>
+            ))}
           </div>
         </div>
 
@@ -1066,6 +1355,7 @@ export const SalesView: React.FC = () => {
               const total = orderTotal(ord);
               const gp = orderGp(ord);
               const modeMeta = ord.delivery_mode ? DELIVERY_MODE_META[ord.delivery_mode] : null;
+              const billingBadge = BILLING_BADGE_META[getOrderBillingBadgeKey(ord)];
               return (
                 <button
                   key={ord.id}
@@ -1080,21 +1370,38 @@ export const SalesView: React.FC = () => {
                     {getOrderStatusBadge(ord.order_status)}
                   </div>
 
-                  <div className="text-white font-bold text-sm truncate">{ord.customer_name}</div>
+                  <div className="text-slate-900 dark:text-white font-bold text-sm truncate">{ord.customer_name}</div>
 
                   <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold border ${billingBadge.cls}`}>
+                      {billingBadge.label}
+                    </span>
+                    {ord.billing_period && (
+                      <span className="px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-slate-100 text-slate-800 border border-slate-300 dark:bg-white/[0.06] dark:text-slate-200 dark:border-white/[0.12]">
+                        งวด {ord.billing_period}
+                      </span>
+                    )}
+                    {ord.billing_status === 'billed' ? (
+                      <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 dark:bg-emerald-500/15 dark:text-emerald-300 dark:border-emerald-500/30">
+                        วางบิลแล้ว
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300 dark:bg-amber-500/15 dark:text-amber-300 dark:border-amber-500/30">
+                        รอวางบิล
+                      </span>
+                    )}
                     {modeMeta && (
                       <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold border ${modeMeta.cls}`}>
                         {modeMeta.label}
                       </span>
                     )}
-                    <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-white/[0.05] text-slate-300 border border-white/[0.08]">
+                    <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-white/[0.05] text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-white/[0.08]">
                       {orderItemCount(ord)} ชิ้น
                     </span>
                   </div>
 
-                  <div className="mt-auto flex items-center justify-between gap-2 pt-2 border-t border-white/[0.06]">
-                    <span className="font-mono font-extrabold text-white text-sm tabular-nums">฿{fmt(total)}</span>
+                  <div className="mt-auto flex items-center justify-between gap-2 pt-2 border-t border-slate-200 dark:border-white/[0.06]">
+                    <span className="font-mono font-extrabold text-slate-900 dark:text-white text-sm tabular-nums">฿{fmt(total)}</span>
                     <span className={`px-2 py-0.5 rounded-md text-[10px] font-extrabold font-mono tabular-nums border ${gp >= 0
                       ? 'bg-[#FF6B00]/15 text-[#FF6B00] border-[#FF6B00]/30'
                       : 'bg-rose-500/15 text-rose-300 border-rose-500/30'
@@ -1126,7 +1433,16 @@ export const SalesView: React.FC = () => {
                   <FilePlus2 className="w-5 h-5" />
                 </div>
                 <div className="min-w-0">
-                  <h3 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white leading-tight">เปิดบิลขายใหม่ (New Sales Order)</h3>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white leading-tight">
+                      {orderBillingType === 'addon'
+                        ? 'เปิดบิลค่าใช้จ่ายเพิ่มเติม / นอกสัญญา (Add-on)'
+                        : 'เปิดบิลขายใหม่ (New Sales Order)'}
+                    </h3>
+                    <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold border ${BILLING_BADGE_META[orderBillingType === 'addon' ? 'addon' : 'sales'].cls}`}>
+                      {BILLING_BADGE_META[orderBillingType === 'addon' ? 'addon' : 'sales'].label}
+                    </span>
+                  </div>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400 font-mono">เลขที่เอกสาร: <strong className="text-[#E65A00] dark:text-[#FF6B00]">{salesRef}</strong></p>
                 </div>
               </div>
@@ -1148,6 +1464,56 @@ export const SalesView: React.FC = () => {
                   <span>ผู้เปิดบิล: <strong className="text-emerald-950 dark:text-emerald-200">{salespersonName}</strong></span>
                 </span>
               </div>
+
+              {/* Optional Contract Reference for Add-on Bills */}
+              {orderBillingType === 'addon' && (
+                <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-amber-900 dark:text-amber-200 mb-1">
+                      อ้างอิงสัญญาเดิมที่ใช้งานอยู่ (ไม่บังคับ)
+                    </label>
+                    <select
+                      value={orderContractId}
+                      onChange={(e) => {
+                        const cid = e.target.value;
+                        setOrderContractId(cid);
+                        const ctr = contracts.find(c => c.id === cid);
+                        if (ctr) {
+                          setOrderCustomerId(ctr.customer_id);
+                          setCustomerName(ctr.customer_name);
+                          if (ctr.customer_phone) setCustomerPhone(ctr.customer_phone);
+                          if (ctr.district && DISTRICT_OPTIONS.some(d => d.district === ctr.district)) {
+                            setDistrict(ctr.district);
+                          }
+                          if (ctr.delivery_location) setDeliveryLoc(ctr.delivery_location);
+                          setAutoFilledCustomer(ctr.customer_name);
+                        } else {
+                          setOrderCustomerId('');
+                        }
+                      }}
+                      className="w-full rounded-xl px-3 py-2 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-amber-300 dark:border-amber-500/40 focus:outline-none"
+                    >
+                      <option value="">-- ไม่ผูกสัญญา (เปิดบิลนอกสัญญาทั่วไป) --</option>
+                      {contracts.filter(c => c.status === 'active').map(c => (
+                        <option key={c.id} value={c.id}>
+                          {c.contract_no} — {c.customer_name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-amber-900 dark:text-amber-200 mb-1">
+                      วันครบกำหนดชำระ (Due Date)
+                    </label>
+                    <input
+                      type="date"
+                      value={orderDueDate}
+                      onChange={(e) => setOrderDueDate(e.target.value)}
+                      className="w-full rounded-xl px-3 py-2 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-amber-300 dark:border-amber-500/40 font-mono focus:outline-none"
+                    />
+                  </div>
+                </div>
+              )}
 
               {/* Section 1: Customer Details */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1896,6 +2262,19 @@ export const SalesView: React.FC = () => {
             <div className="flex-1 overflow-y-auto overscroll-contain p-4 sm:p-5 space-y-4">
               {/* Status + meta badges */}
               <div className="flex items-center gap-2 flex-wrap">
+                <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold border ${BILLING_BADGE_META[getOrderBillingBadgeKey(detailOrder)].cls}`}>
+                  {BILLING_BADGE_META[getOrderBillingBadgeKey(detailOrder)].label}
+                </span>
+                {detailOrder.billing_period && (
+                  <span className="px-2.5 py-1 rounded-full text-[10px] font-mono font-bold bg-slate-100 text-slate-800 border border-slate-300 dark:bg-white/[0.06] dark:text-slate-200 dark:border-white/[0.12]">
+                    งวด {detailOrder.billing_period}
+                  </span>
+                )}
+                {detailOrder.due_date && (
+                  <span className="px-2.5 py-1 rounded-full text-[10px] font-mono font-semibold bg-amber-100 text-amber-900 border border-amber-300 dark:bg-amber-500/15 dark:text-amber-300 dark:border-amber-500/30">
+                    ครบกำหนด {detailOrder.due_date}
+                  </span>
+                )}
                 {getOrderStatusBadge(detailOrder.order_status)}
                 {detailOrder.delivery_mode && (
                   <span className={`px-2.5 py-1 rounded-full text-[10px] font-semibold border ${DELIVERY_MODE_META[detailOrder.delivery_mode].cls}`}>
@@ -2720,6 +3099,507 @@ export const SalesView: React.FC = () => {
                 >
                   <Check className="w-4 h-4" />
                   <span>บันทึกแอดเพิ่ม ({addonItems.length} รายการ)</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* ========================================================================= */}
+      {/* BILLING TYPE SELECTION PORTAL MODAL (z-[9999])                            */}
+      {/* ========================================================================= */}
+      {isBillingTypeModalOpen && createPortal(
+        <div
+          className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-4 animate-fade-in overscroll-contain"
+          onClick={() => setIsBillingTypeModalOpen(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-t-3xl sm:rounded-3xl w-full sm:w-[92vw] max-w-2xl overflow-hidden pb-[env(safe-area-inset-bottom)] animate-modal-pop"
+          >
+            <div className="sm:hidden flex justify-center pt-2.5 pb-1">
+              <span className="h-1.5 w-10 rounded-full bg-slate-300 dark:bg-white/20" />
+            </div>
+            <div className="p-4 sm:p-5 bg-slate-50/90 dark:bg-slate-900/95 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 rounded-2xl bg-[#FF6B00]/15 text-[#E65A00] dark:text-[#FF6B00] border border-[#FF6B00]/30">
+                  <Receipt className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm sm:text-base font-extrabold text-slate-900 dark:text-white">เลือกประเภทการเปิดบิล</h3>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">เลือกรูปแบบบิลที่ต้องการสร้างเพื่อเข้าสู่ขั้นตอนที่เหมาะสม</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsBillingTypeModalOpen(false)}
+                aria-label="ปิดหน้าต่างเลือกประเภทบิล"
+                className="p-2 rounded-xl bg-slate-100 dark:bg-white/[0.06] text-slate-500 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-4 sm:p-6 grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* 1. Sales */}
+              <button
+                type="button"
+                onClick={() => handleOpenCreateModal('sales')}
+                className="text-left p-4 rounded-2xl bg-sky-50/80 hover:bg-sky-100/80 dark:bg-sky-500/10 dark:hover:bg-sky-500/20 border border-sky-200 dark:border-sky-500/30 transition cursor-pointer group active:scale-[0.98]"
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <div className="p-2.5 rounded-xl bg-sky-500/20 text-sky-700 dark:text-sky-300">
+                    <ShoppingBag className="w-5 h-5" />
+                  </div>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-100 text-sky-800 dark:bg-sky-500/20 dark:text-sky-300">ขาย</span>
+                </div>
+                <div className="text-sm font-extrabold text-slate-900 dark:text-white">บิลขายสินค้า / งานทั่วไป</div>
+                <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-1">
+                  ขายอุปกรณ์ฮาร์ดแวร์ คอมพิวเตอร์ ปริ้นเตอร์ และงานติดตั้งทั่วไป
+                </p>
+              </button>
+
+              {/* 2. Rental */}
+              <button
+                type="button"
+                onClick={() => handleOpenContractBillingModal('rental')}
+                className="text-left p-4 rounded-2xl bg-indigo-50/80 hover:bg-indigo-100/80 dark:bg-indigo-500/10 dark:hover:bg-indigo-500/20 border border-indigo-200 dark:border-indigo-500/30 transition cursor-pointer group active:scale-[0.98]"
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <div className="p-2.5 rounded-xl bg-indigo-500/20 text-indigo-700 dark:text-indigo-300">
+                    <Wifi className="w-5 h-5" />
+                  </div>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 text-indigo-800 dark:bg-indigo-500/20 dark:text-indigo-300">เช่าเน็ต / ระบบ / อุปกรณ์</span>
+                </div>
+                <div className="text-sm font-extrabold text-slate-900 dark:text-white">บิลงานเช่า (Rental)</div>
+                <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-1">
+                  เช่าอินเทอร์เน็ต เช่าระบบ POS/Cloud และเช่าอุปกรณ์ตามสัญญาที่ใช้งานอยู่
+                </p>
+              </button>
+
+              {/* 3. MA */}
+              <button
+                type="button"
+                onClick={() => handleOpenContractBillingModal('ma')}
+                className="text-left p-4 rounded-2xl bg-emerald-50/80 hover:bg-emerald-100/80 dark:bg-emerald-500/10 dark:hover:bg-emerald-500/20 border border-emerald-200 dark:border-emerald-500/30 transition cursor-pointer group active:scale-[0.98]"
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <div className="p-2.5 rounded-xl bg-emerald-500/20 text-emerald-700 dark:text-emerald-300">
+                    <FileCheck2 className="w-5 h-5" />
+                  </div>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300">ดูแลระบบ MA</span>
+                </div>
+                <div className="text-sm font-extrabold text-slate-900 dark:text-white">บิลดูแลระบบ (MA)</div>
+                <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-1">
+                  วางบิลสัญญาดูแลรักษาระบบรายเดือน รายไตรมาส หรือรายปี (PM & Support)
+                </p>
+              </button>
+
+              {/* 4. Add-on */}
+              <button
+                type="button"
+                onClick={() => handleOpenCreateModal('addon')}
+                className="text-left p-4 rounded-2xl bg-amber-50/80 hover:bg-amber-100/80 dark:bg-amber-500/10 dark:hover:bg-amber-500/20 border border-amber-200 dark:border-amber-500/30 transition cursor-pointer group active:scale-[0.98]"
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <div className="p-2.5 rounded-xl bg-amber-500/20 text-amber-700 dark:text-amber-300">
+                    <Wrench className="w-5 h-5" />
+                  </div>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300">นอกสัญญา / เพิ่มเติม</span>
+                </div>
+                <div className="text-sm font-extrabold text-slate-900 dark:text-white">บิลค่าใช้จ่ายเพิ่มเติม / นอกสัญญา</div>
+                <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-1">
+                  งานเดินจุดเพิ่ม อุปกรณ์เสริม หรือบริการนอกขอบเขตสัญญาเดิม
+                </p>
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* ========================================================================= */}
+      {/* RENTAL & MA RECURRING CONTRACT BILLING MODAL (z-[9999])                   */}
+      {/* ========================================================================= */}
+      {isContractBillingOpen && createPortal(
+        <div
+          className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-4 animate-fade-in overscroll-contain"
+          onClick={() => setIsContractBillingOpen(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-t-3xl sm:rounded-3xl w-full sm:w-[92vw] max-w-4xl max-h-[94dvh] sm:max-h-[90vh] flex flex-col overflow-hidden pb-[env(safe-area-inset-bottom)] animate-modal-pop"
+          >
+            <div className="sm:hidden flex justify-center pt-2.5 pb-1 flex-shrink-0">
+              <span className="h-1.5 w-10 rounded-full bg-slate-300 dark:bg-white/20" />
+            </div>
+
+            <div className="p-4 sm:p-5 bg-slate-50/90 dark:bg-slate-900/95 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 flex-shrink-0">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className={`p-2.5 rounded-2xl border ${
+                  contractBillingMode === 'rental'
+                    ? 'bg-indigo-500/15 text-indigo-600 dark:text-indigo-400 border-indigo-500/30'
+                    : 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
+                }`}>
+                  {contractBillingMode === 'rental' ? <Server className="w-5 h-5" /> : <FileCheck2 className="w-5 h-5" />}
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-sm sm:text-base font-extrabold text-slate-900 dark:text-white leading-tight">
+                    {contractBillingMode === 'rental' ? 'เปิดบิลงานเช่าตามสัญญา (Rental Billing)' : 'เปิดบิลดูแลระบบตามสัญญา (MA Billing)'}
+                  </h3>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 font-mono">
+                    เลขที่เอกสาร: <strong className="text-[#FF6B00]">{contractSalesRef}</strong>
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsContractBillingOpen(false)}
+                aria-label="ปิดหน้าต่างเปิดบิลตามสัญญา"
+                className="p-2 rounded-xl bg-slate-100 dark:bg-white/[0.06] text-slate-500 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmitContractBilling} className="flex-1 overflow-y-auto overscroll-contain p-4 sm:p-6 space-y-5">
+              {matchingActiveContracts.length === 0 ? (
+                <div className="p-8 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 text-center space-y-2">
+                  <AlertTriangle className="w-8 h-8 text-amber-500 mx-auto" />
+                  <p className="text-sm font-bold text-slate-800 dark:text-slate-200">
+                    ไม่พบสัญญา{contractBillingMode === 'rental' ? 'งานเช่า' : 'ดูแลระบบ MA'} ที่สถานะ Active
+                  </p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    กรุณาตรวจสอบข้อมูลสัญญาในระบบ หรือใช้การเปิดบิลแบบทั่วไป/นอกสัญญา
+                  </p>
+                </div>
+              ) : (
+                <>
+                  {/* 1. เลือกลูกค้า & สัญญา Active */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                        1. เลือกลูกค้า (ที่มีสัญญา Active) *
+                      </label>
+                      <select
+                        value={selectedContractCustomerId}
+                        onChange={(e) => {
+                          const cid = e.target.value;
+                          setSelectedContractCustomerId(cid);
+                          const firstCtr = matchingActiveContracts.find(c => c.customer_id === cid) || null;
+                          applySelectedContract(firstCtr);
+                        }}
+                        className="w-full rounded-xl px-3 py-2.5 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 focus:outline-none focus:border-[#FF6B00]"
+                      >
+                        {contractCustomers.map(c => (
+                          <option key={c.customer_id} value={c.customer_id}>
+                            {c.customer_name} {c.customer_phone ? `(${c.customer_phone})` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                        2. เลือกสัญญาที่ใช้งานอยู่ (Active Contract) *
+                      </label>
+                      <select
+                        value={selectedContractId}
+                        onChange={(e) => {
+                          const ctr = matchingActiveContracts.find(c => c.id === e.target.value) || null;
+                          applySelectedContract(ctr);
+                        }}
+                        className="w-full rounded-xl px-3 py-2.5 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 focus:outline-none focus:border-[#FF6B00]"
+                      >
+                        {customerActiveContracts.map(c => {
+                          const subLabel =
+                            c.sub_type === 'internet_rental' ? 'เช่าเน็ต' :
+                            c.sub_type === 'system_rental' ? 'เช่าระบบ' :
+                            c.sub_type === 'equipment_rental' ? 'เช่าอุปกรณ์' :
+                            c.sub_type === 'ma_monthly' ? 'MA รายเดือน' :
+                            c.sub_type === 'ma_quarterly' ? 'MA รายไตรมาส' : 'MA รายปี';
+                          return (
+                            <option key={c.id} value={c.id}>
+                              [{subLabel}] {c.contract_no} ({c.start_date} ถึง {c.end_date})
+                            </option>
+                          );
+                        })}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Contract Summary Strip */}
+                  {selectedContract && (
+                    <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 flex flex-wrap items-center justify-between gap-2 text-xs">
+                      <div className="space-y-0.5">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-mono font-extrabold text-[#FF6B00]">{selectedContract.contract_no}</span>
+                          <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold border ${BILLING_BADGE_META[getOrderBillingBadgeKey({ billing_type: contractBillingMode, sub_type: selectedContract.sub_type })].cls}`}>
+                            {BILLING_BADGE_META[getOrderBillingBadgeKey({ billing_type: contractBillingMode, sub_type: selectedContract.sub_type })].label}
+                          </span>
+                          <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300">
+                            Active ({selectedContract.billing_cycle})
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                          {selectedContract.delivery_location || `อ.${selectedContract.district || '-'}`}
+                        </div>
+                      </div>
+                      <div className="text-[11px] font-mono text-slate-600 dark:text-slate-300">
+                        อายุสัญญา: {selectedContract.start_date} → {selectedContract.end_date}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 2. งวดการวางบิล & วันที่ */}
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                        งวดวางบิล (Period) *
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={contractBillingPeriod}
+                        onChange={(e) => setContractBillingPeriod(e.target.value)}
+                        placeholder="เช่น 2026-11 หรือ Q4/2026"
+                        className="w-full rounded-xl px-3 py-2 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 font-mono focus:outline-none focus:border-[#FF6B00]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">เริ่มรอบบริการ</label>
+                      <input
+                        type="date"
+                        value={contractPeriodStart}
+                        onChange={(e) => setContractPeriodStart(e.target.value)}
+                        className="w-full rounded-xl px-2.5 py-2 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 font-mono focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">สิ้นสุดรอบบริการ</label>
+                      <input
+                        type="date"
+                        value={contractPeriodEnd}
+                        onChange={(e) => setContractPeriodEnd(e.target.value)}
+                        className="w-full rounded-xl px-2.5 py-2 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 font-mono focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">วันที่ออกบิล</label>
+                      <input
+                        type="date"
+                        value={contractIssueDate}
+                        onChange={(e) => setContractIssueDate(e.target.value)}
+                        className="w-full rounded-xl px-2.5 py-2 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 font-mono focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">วันครบกำหนดชำระ</label>
+                      <input
+                        type="date"
+                        value={contractDueDate}
+                        onChange={(e) => setContractDueDate(e.target.value)}
+                        className="w-full rounded-xl px-2.5 py-2 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 font-mono focus:outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Duplicate Period Guard Warning */}
+                  {duplicatePeriodOrder && (
+                    <div className="p-3.5 rounded-2xl bg-rose-100 border border-rose-300 text-rose-900 dark:bg-rose-500/15 dark:border-rose-500/40 dark:text-rose-200 flex items-start gap-2.5">
+                      <AlertTriangle className="w-5 h-5 text-rose-600 dark:text-rose-400 flex-shrink-0 mt-0.5" />
+                      <div className="text-xs space-y-0.5">
+                        <p className="font-extrabold">
+                          พบการเปิดบิลซ้ำในงวด &quot;{contractBillingPeriod}&quot; ของสัญญา {selectedContract?.contract_no} แล้ว!
+                        </p>
+                        <p className="text-[11px]">
+                          อ้างอิงบิลเดิม: <strong className="font-mono">{duplicatePeriodOrder.sales_ref || duplicatePeriodOrder.bill_no || duplicatePeriodOrder.id}</strong> • สถานะ: {duplicatePeriodOrder.billing_status === 'billed' ? 'วางบิลแล้ว' : 'รอวางบิล'} — กรุณาเปลี่ยนงวดการวางบิลก่อนบันทึก
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Bill Type & Payment Term & Notes */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">ประเภทเอกสาร</label>
+                      <select
+                        value={contractBillType}
+                        onChange={(e) => setContractBillType(e.target.value as BillType)}
+                        className="w-full rounded-xl px-3 py-2 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700"
+                      >
+                        <option value="tax_invoice">ใบกำกับภาษี / ใบแจ้งหนี้</option>
+                        <option value="cash_bill_quotation">บิลเงินสด / ใบเสนอราคา</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">เงื่อนไขชำระเงิน</label>
+                      <select
+                        value={contractPaymentTerm}
+                        onChange={(e) => setContractPaymentTerm(e.target.value as PaymentTerm)}
+                        className="w-full rounded-xl px-3 py-2 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700"
+                      >
+                        <option value="credit_30">เครดิต 30 วัน</option>
+                        <option value="cash">เงินสด / โอนทันที</option>
+                        <option value="project">วางบิลตามงวด</option>
+                        <option value="government">งานราชการ</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">หมายเหตุเพิ่มเติม (Prorate / ฯลฯ)</label>
+                      <input
+                        type="text"
+                        value={contractSiteNotes}
+                        onChange={(e) => setContractSiteNotes(e.target.value)}
+                        placeholder="เช่น คิดค่าบริการเฉลี่ยตามวันเริ่มใช้งานจริง"
+                        className="w-full rounded-xl px-3 py-2 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700"
+                      />
+                    </div>
+                  </div>
+
+                  {/* 3. Auto-populated Line Items (Editable + Append Sub-items) */}
+                  <div className="space-y-2.5 pt-2 border-t border-slate-200 dark:border-slate-800">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <label className="text-xs font-extrabold text-slate-900 dark:text-white flex items-center gap-1.5">
+                        <Package className="w-4 h-4 text-[#FF6B00]" />
+                        <span>รายการในสัญญา (ปรับราคา/จำนวนสำหรับ Prorate หรือเพิ่มรายการย่อยได้)</span>
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenCatalogModal('contract_order')}
+                          className="px-3 py-1.5 rounded-xl bg-[#FF6B00]/15 hover:bg-[#FF6B00]/25 border border-[#FF6B00]/40 text-[#C2410C] dark:text-[#FF6B00] text-[11px] font-bold cursor-pointer flex items-center gap-1"
+                        >
+                          <Layers className="w-3.5 h-3.5" />
+                          <span>เพิ่มจากแคตตาล็อก</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setContractOrderItems(prev => [
+                              ...prev,
+                              {
+                                model_name: 'รายการค่าบริการเพิ่มเติม',
+                                item_type: 'service',
+                                quantity: 1,
+                                unit: 'รายการ',
+                                unit_price: 0,
+                                unit_cost: 0,
+                                warranty_years: 0
+                              }
+                            ])
+                          }
+                          className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-white/[0.06] hover:bg-slate-200 dark:hover:bg-white/[0.12] border border-slate-300 dark:border-white/[0.1] text-slate-800 dark:text-white text-[11px] font-bold cursor-pointer flex items-center gap-1"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>เพิ่มรายการย่อย</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {contractOrderItems.map((it, idx) => (
+                      <div key={idx} className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 space-y-2">
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={it.model_name}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setContractOrderItems(prev => prev.map((row, i) => i === idx ? { ...row, model_name: val } : row));
+                            }}
+                            className="flex-1 rounded-lg px-2.5 py-1.5 text-xs font-bold bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setContractOrderItems(prev => prev.filter((_, i) => i !== idx))}
+                            className="p-1.5 rounded-lg text-rose-600 dark:text-rose-400 bg-rose-100 dark:bg-rose-500/10 hover:bg-rose-200 cursor-pointer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                          <div>
+                            <label className="block text-[10px] text-slate-500 dark:text-slate-400 mb-0.5">จำนวน</label>
+                            <input
+                              type="number"
+                              min={0.1}
+                              step="0.1"
+                              value={it.quantity}
+                              onChange={(e) => {
+                                const val = Math.max(0.1, parseFloat(e.target.value) || 1);
+                                setContractOrderItems(prev => prev.map((row, i) => i === idx ? { ...row, quantity: val } : row));
+                              }}
+                              className="w-full rounded-lg px-2 py-1.5 text-xs font-mono bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] text-slate-500 dark:text-slate-400 mb-0.5">ต้นทุน/หน่วย</label>
+                            <input
+                              type="number"
+                              min={0}
+                              step="0.01"
+                              value={it.unit_cost ?? 0}
+                              onChange={(e) => {
+                                const val = Math.max(0, parseFloat(e.target.value) || 0);
+                                setContractOrderItems(prev => prev.map((row, i) => i === idx ? { ...row, unit_cost: val } : row));
+                              }}
+                              className="w-full rounded-lg px-2 py-1.5 text-xs font-mono bg-white dark:bg-slate-900 text-amber-700 dark:text-amber-300 border border-slate-300 dark:border-slate-700"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] text-slate-500 dark:text-slate-400 mb-0.5">ราคาขาย/หน่วย</label>
+                            <input
+                              type="number"
+                              min={0}
+                              step="0.01"
+                              value={it.unit_price ?? 0}
+                              onChange={(e) => {
+                                const val = Math.max(0, parseFloat(e.target.value) || 0);
+                                setContractOrderItems(prev => prev.map((row, i) => i === idx ? { ...row, unit_price: val } : row));
+                              }}
+                              className="w-full rounded-lg px-2 py-1.5 text-xs font-mono bg-white dark:bg-slate-900 text-emerald-700 dark:text-emerald-300 border border-slate-300 dark:border-slate-700"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] text-slate-500 dark:text-slate-400 mb-0.5">รวมรายการ</label>
+                            <div className="w-full rounded-lg px-2 py-1.5 text-xs font-mono font-bold bg-slate-100 dark:bg-slate-900/60 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-700">
+                              ฿{fmt((it.unit_price || 0) * (it.quantity || 0))}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Summary + Submit */}
+                  <div className="p-3.5 rounded-2xl bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/30 flex items-center justify-between flex-wrap gap-2">
+                    <div className="text-xs text-emerald-900 dark:text-emerald-200">
+                      ยอดรวมบิลรอบ <strong>{contractBillingPeriod || '-'}</strong> ({contractOrderItems.length} รายการ)
+                    </div>
+                    <div className="font-mono font-extrabold text-base text-emerald-800 dark:text-emerald-300">
+                      ฿{fmt(contractOrderItems.reduce((s, it) => s + (it.unit_price || 0) * (it.quantity || 0), 0))}
+                    </div>
+                  </div>
+                </>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsContractBillingOpen(false)}
+                  className="px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-white/[0.04] text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700 text-xs font-bold cursor-pointer"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="submit"
+                  disabled={!selectedContract || !!duplicatePeriodOrder || contractOrderItems.length === 0}
+                  className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] disabled:opacity-40 disabled:cursor-not-allowed text-black text-xs font-extrabold shadow-lg shadow-[#FF6B00]/25 cursor-pointer flex items-center gap-1.5"
+                >
+                  <Send className="w-4 h-4" />
+                  <span>บันทึกเปิดบิล{contractBillingMode === 'rental' ? 'งานเช่า' : 'ดูแลระบบ MA'}</span>
                 </button>
               </div>
             </form>

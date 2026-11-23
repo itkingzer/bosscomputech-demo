@@ -420,8 +420,103 @@ export type OrderStatus =
   | 'approved_for_prep'     // ตัดสต๊อกแล้ว ส่งต่อให้ช่างเตรียม
   | 'fulfilled';            // ส่งมอบสมบูรณ์
 
-// ประเภทบิล
+// ประเภทบิลเอกสาร (ใบกำกับภาษี / ใบเสนอราคา)
 export type BillType = 'tax_invoice' | 'cash_bill_quotation';
+
+// หมวดหมู่การเปิดบิล (Sales / Rental / MA / Add-on)
+export type BillingCategoryType = 'sales' | 'rental' | 'ma' | 'addon';
+
+export type BillingSubType =
+  | 'standard'
+  | 'internet_rental'
+  | 'system_rental'
+  | 'equipment_rental'
+  | 'ma_monthly'
+  | 'ma_quarterly'
+  | 'ma_yearly'
+  | 'addon_service';
+
+export type BillingCycle = 'monthly' | 'quarterly' | 'yearly';
+export type ContractStatus = 'active' | 'expired' | 'cancelled';
+
+export interface ContractItem {
+  id: string;
+  contract_id: string;
+  product_id?: string;
+  model_name: string;
+  item_type: 'hardware' | 'service';
+  unit: ProductUnit;
+  quantity: number;
+  unit_price: number;
+  unit_cost: number;
+  description?: string;
+}
+
+export interface Contract {
+  id: string;
+  contract_no: string;
+  customer_id: string;
+  customer_name: string;
+  customer_phone?: string;
+  district?: string;
+  delivery_location?: string;
+  contract_type: 'rental' | 'ma';
+  sub_type: Exclude<BillingSubType, 'standard' | 'addon_service'>;
+  billing_cycle: BillingCycle;
+  start_date: string;
+  end_date: string;
+  status: ContractStatus;
+  notes?: string;
+  items: ContractItem[];
+  created_at: string;
+  updated_at?: string;
+}
+
+export type BillingBadgeKey =
+  | 'sales'
+  | 'internet_rental'
+  | 'system_rental'
+  | 'equipment_rental'
+  | 'ma'
+  | 'addon';
+
+export const BILLING_BADGE_META: Record<BillingBadgeKey, { label: string; cls: string }> = {
+  sales: {
+    label: 'ขาย',
+    cls: 'bg-sky-100 text-sky-800 border-sky-300 dark:bg-sky-500/15 dark:text-sky-300 dark:border-sky-500/30'
+  },
+  internet_rental: {
+    label: 'เช่าเน็ต',
+    cls: 'bg-indigo-100 text-indigo-800 border-indigo-300 dark:bg-indigo-500/15 dark:text-indigo-300 dark:border-indigo-500/30'
+  },
+  system_rental: {
+    label: 'เช่าระบบ',
+    cls: 'bg-violet-100 text-violet-800 border-violet-300 dark:bg-violet-500/15 dark:text-violet-300 dark:border-violet-500/30'
+  },
+  equipment_rental: {
+    label: 'เช่าอุปกรณ์',
+    cls: 'bg-cyan-100 text-cyan-800 border-cyan-300 dark:bg-cyan-500/15 dark:text-cyan-300 dark:border-cyan-500/30'
+  },
+  ma: {
+    label: 'ดูแลระบบ MA',
+    cls: 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-500/15 dark:text-emerald-300 dark:border-emerald-500/30'
+  },
+  addon: {
+    label: 'นอกสัญญา / เพิ่มเติม',
+    cls: 'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-500/15 dark:text-amber-300 dark:border-amber-500/30'
+  }
+};
+
+export function getOrderBillingBadgeKey(order: Pick<Order, 'billing_type' | 'sub_type'>): BillingBadgeKey {
+  if (order.billing_type === 'rental') {
+    if (order.sub_type === 'internet_rental') return 'internet_rental';
+    if (order.sub_type === 'system_rental') return 'system_rental';
+    return 'equipment_rental';
+  }
+  if (order.billing_type === 'ma') return 'ma';
+  if (order.billing_type === 'addon') return 'addon';
+  return 'sales';
+}
 
 // เงื่อนไขชำระเงิน
 export type PaymentTerm = 'cash' | 'credit_30' | 'project' | 'government';
@@ -511,6 +606,16 @@ export interface Order {
   billed_at?: string | null;
   billed_by?: string | null;
   tax_invoice_no?: string | null;
+  // --- Recurring Contract & Billing Category ---
+  customer_id?: string | null;
+  contract_id?: string | null;
+  billing_type?: BillingCategoryType;
+  sub_type?: BillingSubType | null;
+  billing_period?: string | null;
+  period_start?: string | null;
+  period_end?: string | null;
+  issue_date?: string | null;
+  due_date?: string | null;
 }
 
 export type ItemStatus =

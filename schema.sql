@@ -488,3 +488,79 @@ DROP TRIGGER IF EXISTS trg_users_updated_at ON public.users;
 CREATE TRIGGER trg_users_updated_at
 BEFORE UPDATE ON public.users
 FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+-- ==============================================================================
+-- 7. Contracts & Contract Items (Rental / MA Recurring Billing)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.contracts (
+    id TEXT PRIMARY KEY,
+    contract_no TEXT UNIQUE NOT NULL,
+    customer_id TEXT NOT NULL,
+    customer_name TEXT NOT NULL,
+    customer_phone TEXT,
+    district TEXT,
+    delivery_location TEXT,
+    contract_type TEXT NOT NULL CHECK (contract_type IN ('rental', 'ma')),
+    sub_type TEXT NOT NULL CHECK (sub_type IN (
+        'internet_rental', 'system_rental', 'equipment_rental',
+        'ma_monthly', 'ma_quarterly', 'ma_yearly'
+    )),
+    billing_cycle TEXT NOT NULL DEFAULT 'monthly' CHECK (billing_cycle IN ('monthly', 'quarterly', 'yearly')),
+    start_date DATE NOT NULL,
+    end_date DATE NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'expired', 'cancelled')),
+    notes TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public.contract_items (
+    id TEXT PRIMARY KEY,
+    contract_id TEXT NOT NULL REFERENCES public.contracts(id) ON DELETE CASCADE,
+    product_id TEXT,
+    model_name TEXT NOT NULL,
+    item_type TEXT NOT NULL DEFAULT 'service' CHECK (item_type IN ('hardware', 'service')),
+    unit TEXT NOT NULL DEFAULT 'รายการ',
+    quantity NUMERIC(10,2) NOT NULL DEFAULT 1,
+    unit_price NUMERIC(12,2) NOT NULL DEFAULT 0,
+    unit_cost NUMERIC(12,2) NOT NULL DEFAULT 0,
+    description TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Migration: Orders billing_type, sub_type, contract_id, billing_period, period_start, period_end, due_date, issue_date, customer_id
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS customer_id TEXT;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS contract_id TEXT REFERENCES public.contracts(id) ON DELETE SET NULL;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS billing_type TEXT NOT NULL DEFAULT 'sales' CHECK (billing_type IN ('sales', 'rental', 'ma', 'addon'));
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS sub_type TEXT;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS billing_period TEXT;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS period_start DATE;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS period_end DATE;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS issue_date DATE;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS due_date DATE;
+
+CREATE INDEX IF NOT EXISTS idx_contracts_customer_id ON public.contracts(customer_id);
+CREATE INDEX IF NOT EXISTS idx_contracts_status ON public.contracts(status);
+CREATE INDEX IF NOT EXISTS idx_contract_items_contract_id ON public.contract_items(contract_id);
+CREATE INDEX IF NOT EXISTS idx_orders_contract_period ON public.orders(contract_id, billing_period);
+CREATE INDEX IF NOT EXISTS idx_orders_billing_type ON public.orders(billing_type);
+
+ALTER TABLE public.contracts DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.contract_items DISABLE ROW LEVEL SECURITY;
+
+DO $$
+BEGIN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.contracts;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$
+BEGIN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.contract_items;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DROP TRIGGER IF EXISTS trg_contracts_updated_at ON public.contracts;
+CREATE TRIGGER trg_contracts_updated_at
+BEFORE UPDATE ON public.contracts
+FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
