@@ -434,6 +434,14 @@ CREATE TABLE IF NOT EXISTS public.projects (
 ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS handover_photo_urls JSONB DEFAULT '[]'::jsonb;
 ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS handover_note TEXT;
 ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS site_visits JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE public.items ADD COLUMN IF NOT EXISTS site_visit_id TEXT;
+ALTER TABLE public.items ADD COLUMN IF NOT EXISTS scheduled_date DATE;
+ALTER TABLE public.items ADD COLUMN IF NOT EXISTS scheduled_time_slot TEXT;
+ALTER TABLE public.items ADD COLUMN IF NOT EXISTS dispatch_route_zone TEXT;
+ALTER TABLE public.repair_tickets ADD COLUMN IF NOT EXISTS scheduled_date DATE;
+ALTER TABLE public.repair_tickets ADD COLUMN IF NOT EXISTS scheduled_time_slot TEXT;
+ALTER TABLE public.repair_tickets ADD COLUMN IF NOT EXISTS dispatch_route_zone TEXT;
 ALTER TABLE public.projects DROP CONSTRAINT IF EXISTS projects_status_check;
 ALTER TABLE public.projects ADD CONSTRAINT projects_status_check CHECK (
     status IN ('planning', 'active', 'in_progress', 'handover_pending', 'completed', 'cancelled')

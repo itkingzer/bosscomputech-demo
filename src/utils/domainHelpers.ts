@@ -2,8 +2,28 @@ import type { Item, Order, Project, StockPO, UserRole } from '../types';
 
 export const LOW_MARGIN_THRESHOLD = 10;
 
+/**
+ * ตรวจสอบว่าเป็นสายสัญญาณ สายไฟ สายเน็ต สาย Fiber ตู้ Rack หรือวัสดุสิ้นเปลืองที่ไม่ต้องส่งให้ช่างเตรียมเทส/ติดโลโก้
+ * (รับเข้าคลังพร้อมใช้ได้ทันที และตัดสต๊อกส่งตรง Onsite ได้เลย)
+ */
+export const isNonPrepCableOrConsumable = (modelName?: string | null): boolean => {
+  const name = (modelName || '').trim();
+  if (!name) return false;
+  return /สายไฟ|สายเน็ต|สายแลน|สาย\s*lan|สายสัญญาณ|สาย\s*fiber|fiber\s*optic|สาย\s*hdmi|สาย\s*vga|สาย\s*usb|cat5|cat6|cat7|utp|ftp|patch\s*cord|power\s*cord|ท่อร้อยสาย|ปลั๊กพ่วง|รางปลั๊ก|ตู้\s*rack|rack|pdu|rj45|หัว\s*lan|หัว\s*rj|รางสาย/i.test(
+    name
+  );
+};
+
 export const fmtCurrency = (n: number): string =>
   n.toLocaleString('th-TH', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+
+/**
+ * แปลงเบอร์โทรศัพท์เป็นลิงก์ tel: เพื่อกดโทรออกผ่านแอปโทรศัพท์ได้ทันที
+ */
+export const toTelHref = (phone?: string | null): string | null => {
+  const cleaned = (phone || '').replace(/[^0-9+]/g, '');
+  return cleaned.length >= 6 ? `tel:${cleaned}` : null;
+};
 
 export const DISTRICT_OPTIONS: string[] = [
   'เมืองสุราษฎร์ธานี',

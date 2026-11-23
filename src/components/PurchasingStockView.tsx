@@ -8,12 +8,13 @@ import {
   Timer, ChevronRight, ClipboardList, PackageSearch,
   Search, Trash2, Plus, History, Hash, Camera, Printer
 } from 'lucide-react';
-import { ROUTE_DEFINITIONS, Order, Item, ProductCategory, PRODUCT_CATEGORY_LABELS, Product, StockPO, Project, formatThaiDateTime } from '../types';
+import { ROUTE_DEFINITIONS, Order, Item, ProductCategory, PRODUCT_CATEGORY_LABELS, Product, StockPO, Project, formatThaiDateTime, formatDateDMY, getLocalDateStr } from '../types';
 import { ListControls, useListControls } from './ListControls';
 import { ActivityTimeline } from './ActivityTimeline';
 import { EvidencePhotoUploader } from './EvidencePhotoUploader';
 import { ToastBanner } from './ui/ToastBanner';
 import { OrderFormPrintModal } from './OrderFormPrintModal';
+import { isNonPrepCableOrConsumable } from '../utils/domainHelpers';
 
 const DOA_WARRANTY_DAYS = 7;
 
@@ -51,7 +52,8 @@ export const PurchasingStockView: React.FC = () => {
     stockPOs, createStockPO, receiveStockPOToStorage,
     sendRawStockToPrep, products,
     markDoaSentToSupplier, receiveDoaReplacement,
-    projects, releaseProjectBatch, updateProjectMaterialRequestStatus
+    projects, releaseProjectBatch, removeProjectItem, updateProjectMaterialRequestStatus,
+    cutStockForSiteVisit
   } = useApp();
   const [billInputs, setBillInputs] = useState<Record<string, string>>({});
   const [supplierInputs, setSupplierInputs] = useState<Record<string, string>>({});
@@ -72,7 +74,7 @@ export const PurchasingStockView: React.FC = () => {
   // ตัวกรองสถานะ DOA
   const [doaStageFilter, setDoaStageFilter] = useState<'all' | 'doa_reported' | 'doa_sent_supplier' | 'doa_replaced'>('all');
   // ตัวกรองหมวดหมู่ของรายการสต๊อกคงเหลือ (Inventory List)
-  const [stockCategoryFilter, setStockCategoryFilter] = useState<'all' | ProductCategory>('all');
+  const [stockCategoryFilter, setStockCategoryFilter] = useState<'all' | ProductCategory | 'cables_consumables'>('all');
 
   // ---- Proactive Stock Replenishment (Stock PO) ----
   // รายการสินค้าใน Stock PO (ดึงจากแคตตาล็อกกลางที่ฝ่ายขายบันทึกไว้เท่านั้น)
@@ -194,9 +196,9 @@ export const PurchasingStockView: React.FC = () => {
     const rows = (project.items || []).map(it => {
       const remainingToAllocate = Math.max(0, (it.qty_required || 0) - (it.qty_allocated || 0));
       const isLabor = /ค่าบริการ|ค่าแรง/.test(it.model_name);
-      const available = isLabor ? remainingToAllocate : getAvailableStock(it.model_name);
+      const available = isLabor ? 0 : getAvailableStock(it.model_name);
       const shortage = isLabor ? 0 : Math.max(0, remainingToAllocate - available);
-      const releasableNow = isLabor ? remainingToAllocate : Math.min(remainingToAllocate, available);
+      const releasableNow = isLabor ? 0 : Math.min(remainingToAllocate, available);
       totalShortage += shortage;
       return {
         item: it,
@@ -208,6 +210,8 @@ export const PurchasingStockView: React.FC = () => {
         sufficient: shortage === 0
       };
     });
+    const physicalRows = rows.filter(r => !r.isLabor);
+    const allPhysicalAllocated = physicalRows.length > 0 && physicalRows.every(r => r.remainingToAllocate === 0);
     const shortageItems = rows.filter(r => r.shortage > 0);
     const totalReleasableNow = rows.reduce((s, r) => s + r.releasableNow, 0);
     const linkedPOs = stockPOs.filter(po => po.project_id === project.id);
@@ -215,6 +219,8 @@ export const PurchasingStockView: React.FC = () => {
     const pendingFieldRequests = (project.material_requests || []).filter(r => r.status === 'pending');
     return {
       rows,
+      physicalRows,
+      allPhysicalAllocated,
       shortageItems,
       shortageItemCount: shortageItems.length,
       totalShortage,
@@ -413,8 +419,16 @@ export const PurchasingStockView: React.FC = () => {
 
   const handleReceiveStockPo = (poId: string, productName: string, qty: number) => {
     receiveStockPOToStorage(poId);
-    setToast(`รับของ Stock PO "${productName}" ${qty} ชิ้น เข้าห้องสต๊อกแล้ว (raw_stock) - นับถอยหลังเทส 7 วัน DOA`);
-    setTimeout(() => setToast(''), 4500);
+    const key = (productName || '').trim().toLowerCase();
+    const waitingOrder = allIncomingOrders.find(o =>
+      (o.items_list || []).some(it => (it.model_name || '').trim().toLowerCase() === key)
+    );
+    if (waitingOrder) {
+      setToast(`รับของ "${productName}" ${qty} ชิ้นเข้าคลังแล้ว — บิล ${waitingOrder.sales_ref || waitingOrder.id} พร้อมเช็ก/ตัดสต๊อกส่งช่างได้ที่แท็บ 1`);
+    } else {
+      setToast(`รับของ Stock PO "${productName}" ${qty} ชิ้น เข้าคลังเรียบร้อยแล้ว`);
+    }
+    setTimeout(() => setToast(''), 5000);
   };
 
   const handleSendRawToPrep = (itemId: string, modelName: string) => {
@@ -504,8 +518,19 @@ export const PurchasingStockView: React.FC = () => {
         p => p.status === 'ordered' && (p.po_number === orderPoNo || p.po_number.startsWith(`${orderPoNo}-`))
       );
     const isOrderWaitingPo =
-      order.order_status === 'waiting_po' && !(allLinkedStockPosReceived && stockStatus.allSufficient);
-    const hasActivePo = isOrderWaitingPo || pendingLinkedStockPOs.length > 0;
+      pendingLinkedStockPOs.length > 0 &&
+      order.order_status === 'waiting_po' &&
+      !(allLinkedStockPosReceived && stockStatus.allSufficient);
+    const hasActivePo = pendingLinkedStockPOs.length > 0;
+    const orderedQtyByModel: Record<string, number> = {};
+    pendingLinkedStockPOs.forEach(po => {
+      const k = (po.product_name || '').trim().toLowerCase();
+      orderedQtyByModel[k] = (orderedQtyByModel[k] || 0) + po.qty;
+    });
+    const unorderedShortageCount = stockStatus.shortageItems.reduce((sum, row) => {
+      const k = row.model_name.trim().toLowerCase();
+      return sum + Math.max(0, row.shortage - (orderedQtyByModel[k] || 0));
+    }, 0);
     const activePoLabel = pendingLinkedStockPOs.length > 0
       ? (pendingLinkedStockPOs.length === 1
         ? pendingLinkedStockPOs[0].po_number
@@ -524,6 +549,7 @@ export const PurchasingStockView: React.FC = () => {
       isOrderWaitingPo,
       hasActivePo,
       hasPendingPo: hasActivePo,
+      unorderedShortageCount,
       activePoLabel,
       canSendToPrep,
       stateCase
@@ -614,18 +640,24 @@ export const PurchasingStockView: React.FC = () => {
 
   const inventoryCategoryCounts = inventoryGroups.reduce<Record<string, number>>((acc, g) => {
     acc[g.category] = (acc[g.category] || 0) + 1;
+    if (isNonPrepCableOrConsumable(g.model_name)) {
+      acc.cables_consumables = (acc.cables_consumables || 0) + 1;
+    }
     return acc;
   }, {});
 
   const filteredInventoryGroups = stockCategoryFilter === 'all'
     ? inventoryGroups
-    : inventoryGroups.filter(g => g.category === stockCategoryFilter);
+    : stockCategoryFilter === 'cables_consumables'
+      ? inventoryGroups.filter(g => isNonPrepCableOrConsumable(g.model_name))
+      : inventoryGroups.filter(g => g.category === stockCategoryFilter);
 
-  const inventoryCategoryOptions: { value: 'all' | ProductCategory; label: string }[] = [
+  const inventoryCategoryOptions: { value: 'all' | ProductCategory | 'cables_consumables'; label: string }[] = [
     { value: 'all', label: 'ทั้งหมด' },
     { value: 'pc_notebook', label: 'PC / Notebook' },
     { value: 'printer', label: 'Printer' },
     { value: 'cctv_network', label: 'CCTV / Network' },
+    { value: 'cables_consumables', label: 'สายแลน / กล่องสาย / วัสดุสิ้นเปลือง' },
     { value: 'general', label: 'อะไหล่ / อุปกรณ์เสริม' }
   ];
 
@@ -701,7 +733,7 @@ export const PurchasingStockView: React.FC = () => {
   };
 
   // Step 3: ปล่อยของ / ตัดสต๊อกให้ช่างเตรียมสินค้า
-  const handleCutStockAndSendPrep = (orderId: string) => {
+  const handleCutStockAndSendPrep = (orderId: string, overridePrepNote?: string) => {
     const order = orders.find(o => o.id === orderId);
     if (!order) return;
 
@@ -716,7 +748,7 @@ export const PurchasingStockView: React.FC = () => {
     const billNo = (billInputs[orderId] || defaultBill).trim();
     const supplier = supplierInputs[orderId] || 'สต๊อกร้าน (Main Store)';
     const poNo = poInputs[orderId] || `PO-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`;
-    const prepNote = prepNoteInputs[orderId] || '';
+    const prepNote = (overridePrepNote ?? prepNoteInputs[orderId] ?? '').trim();
 
     // Convert items_list or fallback to planned model
     const itemsToCut = order.items_list && order.items_list.length > 0
@@ -863,8 +895,25 @@ export const PurchasingStockView: React.FC = () => {
   };
 
   const activeProjectsList = useMemo(
-    () => projects.filter(p => p.status !== 'completed'),
-    [projects]
+    () =>
+      projects.filter(p => {
+        if (p.status === 'completed') return false;
+        const st = getProjectStockStatus(p);
+        const hasPendingSiteVisit = (p.site_visits || []).some(sv => {
+          if (sv.prep_status !== 'pending_stock' || sv.visit_status === 'completed') return false;
+          // นับเฉพาะรอบเข้าไซต์ที่ยังมีรายการที่ Stock ยังไม่ได้ตัดให้โปรเจกต์
+          return (sv.items_to_take || []).some(it => {
+            if (/ค่าบริการ|ค่าแรง/.test(it.name || '')) return false;
+            const pi =
+              (it.project_item_id && p.items.find(i => i.id === it.project_item_id)) ||
+              p.items.find(i => i.model_name === it.name);
+            if (!pi) return true;
+            return (pi.qty_allocated || 0) < (pi.qty_required || 0);
+          });
+        });
+        return !st.allPhysicalAllocated || st.pendingFieldRequests.length > 0 || hasPendingSiteVisit;
+      }),
+    [projects, items, stockPOs]
   );
   const pendingProjectMaterialReqsCount = useMemo(
     () => projects.reduce((s, p) => s + (p.material_requests || []).filter(r => r.status === 'pending').length, 0),
@@ -874,16 +923,16 @@ export const PurchasingStockView: React.FC = () => {
   const mainTabs: { key: 'incoming' | 'projects' | 'po_tracking' | 'inventory' | 'doa_claims'; label: string; sub: string; count: number; icon: React.ElementType; accent: string; pulseAlert?: boolean }[] = [
     {
       key: 'incoming',
-      label: 'ออเดอร์รอดำเนินการ',
-      sub: 'Incoming',
+      label: '1. บิลขายรอตัดสต๊อก',
+      sub: 'บิลขายใหม่',
       count: newOrders.length + waitingPoOrders.length + poReceivedOrders.length,
       icon: ClipboardList,
       accent: 'blue'
     },
     {
       key: 'projects',
-      label: 'งานโปรเจกต์ / ติดตั้ง (PRJ)',
-      sub: 'โปรเจกต์ PRJ',
+      label: '2. โปรเจกต์ & คิวเข้าไซต์',
+      sub: 'งานโปรเจกต์',
       count: activeProjectsList.length,
       icon: Layers,
       accent: 'purple',
@@ -891,24 +940,24 @@ export const PurchasingStockView: React.FC = () => {
     },
     {
       key: 'po_tracking',
-      label: 'รอรับของ PO',
-      sub: 'รอรับ PO',
+      label: '3. รอรับของเข้า (PO)',
+      sub: 'ติดตามใบสั่งซื้อ',
       count: orderedStockPOs.length,
       icon: Truck,
       accent: 'purple'
     },
     {
       key: 'inventory',
-      label: 'คลังสต๊อก & ห้อง DOA',
-      sub: 'คลัง/DOA',
+      label: '4. เช็คคลังสินค้า & ห้องเทส',
+      sub: 'ยอดคงเหลือ',
       count: inventoryGroups.length,
       icon: Warehouse,
       accent: 'emerald'
     },
     {
       key: 'doa_claims',
-      label: 'เคลมของเสีย DOA (แจ้งจากช่าง)',
-      sub: 'เคลม DOA',
+      label: '5. เคลมของเสีย (DOA)',
+      sub: 'แจ้งจากช่าง',
       count: activeDoaItems.length,
       icon: AlertTriangle,
       accent: 'rose',
@@ -1017,41 +1066,94 @@ export const PurchasingStockView: React.FC = () => {
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="p-2.5 rounded-2xl bg-amber-100 dark:bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-300 dark:border-amber-500/30">
-              <Boxes className="w-5 h-5" />
+              <Boxes className="w-6 h-6" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-slate-900 dark:text-white">จัดซื้อ & ควบคุมสต๊อก</h2>
-              <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5">ตรวจสอบของขาดอัตโนมัติ เปิดใบสั่งซื้อ (PO) รับของเข้าคลัง และส่งช่างเตรียม</p>
+              <h2 className="text-lg sm:text-xl font-black text-slate-900 dark:text-white">จัดซื้อ &amp; ควบคุมสต๊อก</h2>
+              <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 mt-0.5">เช็กของขาด • เปิดใบสั่งซื้อ (PO) • รับของเข้าคลัง • ตัดสต๊อกส่งช่างเตรียม</p>
             </div>
           </div>
           <button
             type="button"
             onClick={openStockPoModal}
-            className="w-full lg:w-auto px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 text-black font-extrabold text-xs transition cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20 border border-white/20 active:scale-[0.97]"
+            className="w-full lg:w-auto px-5 py-3 min-h-[48px] rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 text-black font-black text-sm transition cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20 border border-white/20 active:scale-[0.97]"
           >
-            <PackagePlus className="w-4 h-4" />
-            <span>+ สั่งซื้อเข้าสต๊อก (สร้างใบ Stock PO)</span>
+            <PackagePlus className="w-5 h-5" />
+            <span>+ สั่งซื้อของเข้าสต๊อก (เปิดใบ PO)</span>
           </button>
         </div>
 
-        {/* Compact KPI Pills */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4">
-          <div className="px-3 py-2 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/25 flex items-center justify-between gap-2">
-            <span className="text-[10px] font-medium text-emerald-900 dark:text-slate-300 leading-tight">พร้อมขาย<br />(in_stock)</span>
-            <span className="text-base font-extrabold font-mono text-emerald-700 dark:text-emerald-400 tabular-nums">{readyStockCount}</span>
-          </div>
-          <div className="px-3 py-2 rounded-xl bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/25 flex items-center justify-between gap-2">
-            <span className="text-[10px] font-medium text-amber-900 dark:text-slate-300 leading-tight">ในห้องสต๊อก<br />(raw_stock)</span>
-            <span className="text-base font-extrabold font-mono text-amber-700 dark:text-amber-400 tabular-nums">{rawStockItems.length}</span>
-          </div>
-          <div className="px-3 py-2 rounded-xl bg-purple-50 dark:bg-purple-500/10 border border-purple-200 dark:border-purple-500/25 flex items-center justify-between gap-2">
-            <span className="text-[10px] font-medium text-purple-900 dark:text-slate-300 leading-tight">Stock PO<br />รอของเข้า</span>
-            <span className="text-base font-extrabold font-mono text-purple-700 dark:text-purple-400 tabular-nums">{orderedStockPOs.length}</span>
-          </div>
-          <div className="px-3 py-2 rounded-xl bg-teal-50 dark:bg-teal-500/10 border border-teal-200 dark:border-teal-500/25 flex items-center justify-between gap-2">
-            <span className="text-[10px] font-medium text-teal-900 dark:text-slate-300 leading-tight">รอช่างเทส<br />(Prep)</span>
-            <span className="text-base font-extrabold font-mono text-teal-700 dark:text-teal-400 tabular-nums">{pendingPrepStockCount}</span>
-          </div>
+        {/* 3-Step Workflow Guide Strip (Zero-Confusion Flow) */}
+        <div className="mt-4 px-3.5 py-2.5 rounded-2xl bg-slate-50 dark:bg-white/[0.03] border border-slate-200 dark:border-white/[0.06] flex flex-wrap items-center gap-2 text-[11px] font-bold text-slate-700 dark:text-slate-300">
+          <span className="text-slate-500 dark:text-slate-400 mr-1">ขั้นตอนทำงาน:</span>
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-rose-100/80 text-rose-900 dark:bg-rose-500/15 dark:text-rose-300 border border-rose-200 dark:border-rose-500/30">
+            <span className="w-4 h-4 rounded-full bg-rose-600 text-white text-[10px] font-black inline-flex items-center justify-center">1</span>
+            <span>ขาดของ → สั่งซื้อ PO</span>
+          </span>
+          <ChevronRight className="w-3.5 h-3.5 text-slate-400 hidden sm:inline" />
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-purple-100/80 text-purple-900 dark:bg-purple-500/15 dark:text-purple-300 border border-purple-200 dark:border-purple-500/30">
+            <span className="w-4 h-4 rounded-full bg-purple-600 text-white text-[10px] font-black inline-flex items-center justify-center">2</span>
+            <span>ของมาส่ง → กดรับเข้าคลัง</span>
+          </span>
+          <ChevronRight className="w-3.5 h-3.5 text-slate-400 hidden sm:inline" />
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-100/80 text-emerald-900 dark:bg-emerald-500/15 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-500/30">
+            <span className="w-4 h-4 rounded-full bg-emerald-600 text-white text-[10px] font-black inline-flex items-center justify-center">3</span>
+            <span>ของครบ → ตัดสต๊อกส่งช่างเตรียม / Onsite</span>
+          </span>
+        </div>
+
+        {/* Clickable Action-Oriented KPI Cards */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mt-3">
+          <button
+            type="button"
+            onClick={() => { setMainTab('incoming'); setActiveTab('case_a'); }}
+            className={`text-left px-3.5 py-3 rounded-2xl border transition-all duration-150 active:scale-[0.98] cursor-pointer flex items-center justify-between gap-2 ${
+              caseACount > 0
+                ? 'bg-rose-50 dark:bg-rose-500/10 border-rose-300 dark:border-rose-500/35 hover:border-rose-500'
+                : 'bg-slate-50 dark:bg-white/[0.03] border-slate-200 dark:border-white/[0.08] hover:border-slate-400'
+            }`}
+          >
+            <span className="text-xs font-bold text-rose-900 dark:text-slate-200 leading-tight">
+              ขาดของ<br />
+              <span className="text-[10px] font-semibold opacity-75">ต้องสั่ง PO</span>
+            </span>
+            <span className={`text-xl font-black font-mono tabular-nums ${caseACount > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-400'}`}>
+              {caseACount}
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setMainTab('po_tracking')}
+            className="text-left px-3.5 py-3 rounded-2xl bg-purple-50 dark:bg-purple-500/10 border border-purple-200 dark:border-purple-500/25 hover:border-purple-500 transition-all duration-150 active:scale-[0.98] cursor-pointer flex items-center justify-between gap-2"
+          >
+            <span className="text-xs font-bold text-purple-900 dark:text-slate-200 leading-tight">
+              รอรับของเข้า<br />
+              <span className="text-[10px] font-semibold opacity-75">ใบสั่งซื้อ PO</span>
+            </span>
+            <span className="text-xl font-black font-mono text-purple-700 dark:text-purple-400 tabular-nums">{orderedStockPOs.length}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => { setMainTab('incoming'); setActiveTab('case_c'); }}
+            className="text-left px-3.5 py-3 rounded-2xl bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/25 hover:border-emerald-500 transition-all duration-150 active:scale-[0.98] cursor-pointer flex items-center justify-between gap-2"
+          >
+            <span className="text-xs font-bold text-emerald-900 dark:text-slate-200 leading-tight">
+              พร้อมส่งช่าง<br />
+              <span className="text-[10px] font-semibold opacity-75">รอตัดสต๊อก</span>
+            </span>
+            <span className="text-xl font-black font-mono text-emerald-700 dark:text-emerald-400 tabular-nums">{caseCCount}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setMainTab('inventory')}
+            className="text-left px-3.5 py-3 rounded-2xl bg-teal-50 dark:bg-teal-500/10 border border-teal-200 dark:border-teal-500/25 hover:border-teal-500 transition-all duration-150 active:scale-[0.98] cursor-pointer flex items-center justify-between gap-2"
+          >
+            <span className="text-xs font-bold text-teal-900 dark:text-slate-200 leading-tight">
+              สต๊อกพร้อมใช้<br />
+              <span className="text-[10px] font-semibold text-amber-700 dark:text-amber-300">+{rawStockItems.length} รอตรวจรับ</span>
+            </span>
+            <span className="text-xl font-black font-mono text-teal-700 dark:text-teal-400 tabular-nums">{readyStockCount}</span>
+          </button>
         </div>
 
         {/* Compact Segmented Tab Bar */}
@@ -1182,18 +1284,26 @@ export const PurchasingStockView: React.FC = () => {
                   const itemCount = (order.items_list && order.items_list.length > 0)
                     ? order.items_list.reduce((sum, it) => sum + (it.quantity || 1), 0)
                     : (order._planned_quantity || 1);
-                  const { stateCase } = getOrderPrepReadiness(order);
+                  const { stateCase, pendingLinkedStockPOs } = getOrderPrepReadiness(order);
                   const borderAccent = stateCase === 'case_a'
-                    ? 'hover:border-rose-500/50 border-rose-200 dark:border-rose-500/20'
+                    ? 'border-l-4 border-l-rose-500 hover:border-rose-500/60 border-rose-200 dark:border-rose-500/25'
                     : stateCase === 'case_b'
-                      ? 'hover:border-purple-500/50 border-purple-200 dark:border-purple-500/20'
-                      : 'hover:border-emerald-500/50 border-emerald-200 dark:border-emerald-500/20';
+                      ? 'border-l-4 border-l-purple-500 hover:border-purple-500/60 border-purple-200 dark:border-purple-500/25'
+                      : 'border-l-4 border-l-emerald-500 hover:border-emerald-500/60 border-emerald-200 dark:border-emerald-500/25';
+                  const previewItems = (order.items_list || []).slice(0, 2);
                   return (
-                    <button
+                    <div
                       key={order.id}
-                      type="button"
+                      role="button"
+                      tabIndex={0}
                       onClick={() => setActionOrder(order)}
-                      className={`text-left p-3.5 rounded-2xl liquid-glass-card border ${borderAccent} transition active:scale-[0.98] cursor-pointer flex flex-col gap-2.5 min-h-[126px]`}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          setActionOrder(order);
+                        }
+                      }}
+                      className={`text-left p-4 rounded-2xl liquid-glass-card border ${borderAccent} transition-all duration-150 hover:shadow-lg cursor-pointer flex flex-col gap-2.5 min-h-[156px]`}
                     >
                       <div className="flex items-center justify-between gap-2">
                         <span className="px-2 py-0.5 rounded-lg text-[11px] bg-[#FF6B00] text-black font-extrabold font-mono data-key">
@@ -1207,13 +1317,57 @@ export const PurchasingStockView: React.FC = () => {
                           {rMeta ? `${rMeta.shortName} • ${order.district || '-'}` : order.delivery_location} · {itemCount} ชิ้น
                         </div>
                       </div>
+                      {previewItems.length > 0 && (
+                        <div className="text-[11px] text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-white/[0.03] rounded-xl px-2.5 py-1.5 border border-slate-200/80 dark:border-white/[0.06] space-y-0.5">
+                          {previewItems.map((it, idx) => (
+                            <div key={idx} className="truncate font-medium">
+                              • {it.model_name} <span className="font-mono font-bold text-[#FF6B00]">×{it.quantity}</span>
+                            </div>
+                          ))}
+                          {(order.items_list || []).length > 2 && (
+                            <div className="text-[10px] text-slate-400">+ อีก {(order.items_list || []).length - 2} รายการ</div>
+                          )}
+                        </div>
+                      )}
                       <div className="flex items-center justify-between gap-2 mt-auto pt-1">
                         {renderStockStatusBadge(order)}
-                        <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 shrink-0 flex items-center gap-0.5">
-                          จัดการ <ChevronRight className="w-3.5 h-3.5" />
-                        </span>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {stateCase === 'case_a' && (
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); openStockPoFromOrder(order); }}
+                              className="px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] text-black text-[11px] font-extrabold cursor-pointer active:scale-95 transition flex items-center gap-1 shadow-sm"
+                            >
+                              <ShoppingCart className="w-3 h-3" />
+                              <span>สั่ง PO</span>
+                            </button>
+                          )}
+                          {stateCase === 'case_b' && pendingLinkedStockPOs.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); setMainTab('po_tracking'); }}
+                              className="px-2.5 py-1.5 rounded-xl bg-purple-100 hover:bg-purple-200 dark:bg-purple-500/20 dark:hover:bg-purple-500/30 text-purple-900 dark:text-purple-200 border border-purple-300 dark:border-purple-500/40 text-[11px] font-extrabold cursor-pointer active:scale-95 transition flex items-center gap-1"
+                            >
+                              <Truck className="w-3 h-3" />
+                              <span>ดูใบ PO</span>
+                            </button>
+                          )}
+                          {stateCase === 'case_c' && (
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); handleCutStockAndSendPrep(order.id); }}
+                              className="px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 text-black text-[11px] font-extrabold cursor-pointer active:scale-95 transition flex items-center gap-1 shadow-sm"
+                            >
+                              <Send className="w-3 h-3" />
+                              <span>ตัดสต๊อก</span>
+                            </button>
+                          )}
+                          <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 flex items-center">
+                            <ChevronRight className="w-4 h-4" />
+                          </span>
+                        </div>
                       </div>
-                    </button>
+                    </div>
                   );
                 })}
               </div>
@@ -1221,47 +1375,233 @@ export const PurchasingStockView: React.FC = () => {
           </div>
         )}
 
-        {/* ================= TAB 1.5: PROJECTS / SITE INSTALLATION (PRJ-...) ================= */}
-        {(mainTab === 'projects' || mainTab === 'incoming') && projects.length > 0 && (
+        {/* ================= TAB 2: PROJECTS / SITE INSTALLATION (PRJ-...) ================= */}
+        {mainTab === 'projects' && projects.length > 0 && (
           <div className="space-y-3 mt-5 pt-4 border-t border-slate-200 dark:border-white/[0.08]">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div>
                 <h3 className="text-sm font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
                   <Layers className="w-4 h-4 text-purple-600 dark:text-purple-400" />
-                  <span>งานโปรเจกต์ / ติดตั้ง (`PRJ-...`) — เช็กของขาด, สั่ง PO ผูกโปรเจกต์ & ปล่อยของเป็นงวดเบิก</span>
+                  <span>งานโปรเจกต์ / ติดตั้ง (PRJ) — เช็กของขาด, สั่ง PO &amp; ปล่อยของเข้าไซต์</span>
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-purple-100 text-purple-900 border border-purple-300 dark:bg-purple-500/20 dark:text-purple-300 dark:border-purple-500/40">
                     {projects.length} โปรเจกต์
                   </span>
                 </h3>
                 <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5">
-                  ปล่อยของที่มีในคลังออกเป็นงวดเบิก (Batch #1, #2...) โดยไม่ต้องรอของครบ 100% — อุปกรณ์หลักส่งช่าง Prep, วัสดุสิ้นเปลืองส่งตรงทีมช่าง Onsite
+                  แยกให้เห็นชัดว่า <strong>รายการไหนต้องส่งช่าง Prep (เทส/ติดวอย)</strong> และ <strong>รายการไหนส่งตรงทีมช่าง Onsite เข้าไซต์</strong> — ปล่อยเบิกทีละงวดได้ไม่ต้องรอครบ 100%
                 </p>
               </div>
             </div>
+
+            {/* Highlighted Queue: เบิกของสำหรับคิวเข้าไซต์ (พรุ่งนี้ / นัดหมาย) */}
+            {(() => {
+              const tomorrowStr = getLocalDateStr(1);
+              const todayStr = getLocalDateStr(0);
+              const pendingVisits = projects
+                .flatMap(prj =>
+                  (prj.site_visits || [])
+                    .filter(sv => {
+                      if (sv.prep_status !== 'pending_stock' || sv.visit_status === 'completed') return false;
+                      // แสดงเฉพาะรอบที่ยังมีของที่ Stock ยังไม่ได้ตัดให้โปรเจกต์ (ลดความซ้ำซ้อน)
+                      return (sv.items_to_take || []).some(it => {
+                        if (/ค่าบริการ|ค่าแรง/.test(it.name || '')) return false;
+                        const pi =
+                          (it.project_item_id && prj.items.find(i => i.id === it.project_item_id)) ||
+                          prj.items.find(i => i.model_name === it.name);
+                        if (!pi) return true;
+                        return (pi.qty_allocated || 0) < (pi.qty_required || 0);
+                      });
+                    })
+                    .map(sv => ({ project: prj, visit: sv }))
+                )
+                .sort((a, b) => a.visit.visit_date.localeCompare(b.visit.visit_date));
+              if (pendingVisits.length === 0) return null;
+              return (
+                <div className="p-4 rounded-2xl bg-gradient-to-r from-[#FF6B00]/10 via-amber-500/10 to-purple-500/10 border border-[#FF6B00]/40 space-y-2.5">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <h4 className="text-xs font-extrabold text-slate-900 dark:text-white flex items-center gap-1.5">
+                      <Truck className="w-4 h-4 text-[#FF6B00]" />
+                      <span>เบิกของสำหรับคิวเข้าไซต์ (พรุ่งนี้ / นัดหมายล่วงหน้า) — {pendingVisits.length} รอบ</span>
+                    </h4>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                    {pendingVisits.map(({ project: prj, visit }) => {
+                      const isTomorrow = visit.visit_date === tomorrowStr;
+                      const isToday = visit.visit_date === todayStr;
+                      return (
+                        <div key={visit.id} className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-[#FF6B00]/30 flex flex-col justify-between gap-2 text-xs">
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                              <span className="font-mono font-extrabold text-purple-700 dark:text-purple-300">
+                                {prj.id} • {visit.id}
+                              </span>
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${
+                                isToday || isTomorrow
+                                  ? 'bg-rose-100 text-rose-900 border border-rose-300 dark:bg-rose-500/20 dark:text-rose-200'
+                                  : 'bg-amber-100 text-amber-900 border border-amber-300 dark:bg-amber-500/20 dark:text-amber-300'
+                              }`}>
+                                {isToday ? 'เข้าไซต์วันนี้' : isTomorrow ? 'เข้าไซต์พรุ่งนี้' : `นัดวันที่ ${formatDateDMY(visit.visit_date)}`} ({visit.time_slot})
+                              </span>
+                            </div>
+                            <div className="font-bold text-slate-900 dark:text-white">{prj.site_name}</div>
+                            <div className="text-[11px] text-slate-600 dark:text-slate-300">
+                              ทีมช่าง: <strong>{visit.assigned_techs.join(', ') || '-'}</strong> • {visit.visit_scope}
+                            </div>
+                            {visit.items_to_take.length > 0 ? (
+                              <div className="space-y-1.5 bg-slate-50 dark:bg-slate-800/70 p-2.5 rounded-xl border border-slate-200 dark:border-slate-700">
+                                <div className="text-[10px] font-bold text-slate-500 dark:text-slate-400">
+                                  รายการที่จะตัดส่งรอบนี้:
+                                </div>
+                                {visit.items_to_take.map((it, idx) => {
+                                  const key = (it.name || '').trim().toLowerCase();
+                                  const avail = stockCountByName[key] || 0;
+                                  const pi =
+                                    (it.project_item_id && prj.items.find(i => i.id === it.project_item_id)) ||
+                                    prj.items.find(i => i.model_name === it.name);
+                                  const unallocatedInPrj = pi
+                                    ? Math.max(0, (pi.qty_required || 0) - (pi.qty_allocated || 0))
+                                    : it.qty;
+                                  const needFromWarehouse = Math.min(it.qty, unallocatedInPrj);
+                                  const isAlreadyAllocated = needFromWarehouse === 0;
+                                  const isDirectOnsite = it.item_type !== 'equipment' || isNonPrepCableOrConsumable(it.name);
+                                  const isEnough = isAlreadyAllocated || avail >= needFromWarehouse;
+                                  return (
+                                    <div key={idx} className="flex items-center justify-between gap-2 text-[11px] flex-wrap">
+                                      <span className="font-semibold text-slate-800 dark:text-slate-100 truncate">
+                                        • {it.name} <span className="font-mono font-extrabold text-[#FF6B00]">×{it.qty}</span>
+                                      </span>
+                                      <div className="flex items-center gap-1 shrink-0">
+                                        <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                                          isDirectOnsite
+                                            ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300'
+                                            : 'bg-sky-100 text-sky-800 dark:bg-sky-500/20 dark:text-sky-300'
+                                        }`}>
+                                          {isDirectOnsite ? 'ส่งตรง Onsite' : 'ส่งช่าง Prep เทส'}
+                                        </span>
+                                        <span className={`px-1.5 py-0.5 rounded font-mono text-[9px] font-bold ${
+                                          isEnough
+                                            ? 'bg-teal-100 text-teal-800 dark:bg-teal-500/20 dark:text-teal-300'
+                                            : 'bg-rose-100 text-rose-800 dark:bg-rose-500/20 dark:text-rose-300'
+                                        }`}>
+                                          {isAlreadyAllocated
+                                            ? 'เบิกให้โปรเจกต์แล้ว'
+                                            : isEnough
+                                              ? `คลังมี ${avail}`
+                                              : `ขาด ${needFromWarehouse - avail}`}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            ) : (
+                              <div className="text-[11px] text-slate-500">ไม่มีรายการอุปกรณ์ที่ต้องเบิกเพิ่มในรอบนี้</div>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
+                            {(() => {
+                              let anyNeedsWarehouseCut = false;
+                              const hasAllVisitStock = visit.items_to_take.every(it => {
+                                if (/ค่าบริการ|ค่าแรง/.test(it.name || '')) return true;
+                                const pi =
+                                  (it.project_item_id && prj.items.find(i => i.id === it.project_item_id)) ||
+                                  prj.items.find(i => i.model_name === it.name);
+                                const unallocatedInPrj = pi
+                                  ? Math.max(0, (pi.qty_required || 0) - (pi.qty_allocated || 0))
+                                  : it.qty;
+                                const needFromWarehouse = Math.min(it.qty, unallocatedInPrj);
+                                if (needFromWarehouse <= 0) return true;
+                                anyNeedsWarehouseCut = true;
+                                const key = (it.name || '').trim().toLowerCase();
+                                return (stockCountByName[key] || 0) >= needFromWarehouse;
+                              });
+                              if (!hasAllVisitStock) {
+                                return (
+                                  <>
+                                    <span className="text-[11px] font-bold text-rose-700 dark:text-rose-300">
+                                      ของในคลังไม่พอ — ต้องสั่ง PO ก่อน
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => openStockPoFromProject(prj)}
+                                      className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold text-[11px] cursor-pointer flex items-center gap-1 shadow-sm"
+                                    >
+                                      <ShoppingCart className="w-3.5 h-3.5" />
+                                      <span>สั่ง PO โปรเจกต์</span>
+                                    </button>
+                                  </>
+                                );
+                              }
+                              return (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const res = cutStockForSiteVisit(prj.id, visit.id);
+                                    if (res || !anyNeedsWarehouseCut) {
+                                      setToast(
+                                        anyNeedsWarehouseCut
+                                          ? `ตัดสต๊อกรอบเข้าไซต์ ${visit.id} (${prj.id}) เรียบร้อยแล้ว`
+                                          : `ยืนยันปล่อยรอบเข้าไซต์ ${visit.id} (${prj.id}) เรียบร้อยแล้ว`
+                                      );
+                                      setTimeout(() => setToast(''), 4000);
+                                    } else {
+                                      setToast('ของในคลังไม่ครบ กรุณาสั่ง PO ก่อนตัดสต๊อก');
+                                      setTimeout(() => setToast(''), 4000);
+                                    }
+                                  }}
+                                  className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold text-[11px] cursor-pointer flex items-center gap-1 shadow-sm"
+                                >
+                                  <CheckCircle className="w-3.5 h-3.5" />
+                                  <span>{anyNeedsWarehouseCut ? 'ตัดสต๊อกรอบเข้าไซต์' : 'ยืนยันปล่อยรอบเข้าไซต์ (เบิกครบแล้ว)'}</span>
+                                </button>
+                              );
+                            })()}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {projects.map((prj) => {
                 const st = getProjectStockStatus(prj);
                 const addonItems = (prj.items || []).filter(i => i.is_addon);
                 const addonSales = Array.from(new Set(addonItems.map(i => i.added_by).filter(Boolean)));
+                const pendingRows = st.physicalRows.filter(r => r.remainingToAllocate > 0);
+                const dispatchedCount = Math.max(0, st.physicalRows.length - pendingRows.length);
                 return (
-                  <button
+                  <div
                     key={prj.id}
-                    type="button"
+                    role="button"
+                    tabIndex={0}
                     onClick={() => openProjectActionModal(prj)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        openProjectActionModal(prj);
+                      }
+                    }}
                     className="text-left p-4 rounded-2xl liquid-glass-card border border-purple-300 dark:border-purple-500/35 hover:border-purple-500 transition active:scale-[0.99] cursor-pointer flex flex-col justify-between gap-3"
                   >
-                    <div className="space-y-2">
+                    <div className="space-y-2.5">
                       <div className="flex items-center justify-between gap-2 flex-wrap">
                         <div className="flex items-center gap-2">
                           <span className="px-2.5 py-0.5 rounded-lg bg-purple-600 text-white font-mono font-extrabold text-xs">
                             {prj.id}
                           </span>
                           <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 text-slate-800 border border-slate-300 dark:bg-white/[0.06] dark:text-slate-200 dark:border-white/[0.1]">
-                            งวดเบิกแล้ว {prj.batches?.length || 0} งวด
+                            เบิกส่งไซต์แล้ว {dispatchedCount}/{st.physicalRows.length} รายการสินค้า
                           </span>
                         </div>
-                        {st.allSufficient ? (
+                        {pendingRows.length === 0 && st.rows.length > 0 ? (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-600 text-white shadow-sm">
+                            <CheckCircle className="w-3 h-3" />
+                            Site นี้เบิกของครบแล้ว
+                          </span>
+                        ) : st.allSufficient ? (
                           <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-100 text-emerald-900 border border-emerald-300 dark:bg-emerald-500/20 dark:text-emerald-300 dark:border-emerald-500/40">
                             <CheckCircle className="w-3 h-3" />
                             ครบพร้อมเบิก
@@ -1280,6 +1620,53 @@ export const PurchasingStockView: React.FC = () => {
                           ลูกค้า: <strong className="text-slate-900 dark:text-white">{prj.customer_name}</strong> • เปิดโดย {prj.created_by}
                         </div>
                       </div>
+
+                      {pendingRows.length === 0 && st.rows.length > 0 && (
+                        <div className="px-3 py-2 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/30 text-xs font-extrabold text-emerald-800 dark:text-emerald-300 flex items-center gap-1.5">
+                          <CheckCircle className="w-4 h-4 shrink-0" />
+                          <span>Site นี้เบิกของครบทุกรายการตามที่ Sale เปิดบิลแล้ว</span>
+                        </div>
+                      )}
+
+                      {/* สรุปสินค้าค้างส่งเข้าไซต์ & เส้นทาง (ช่าง Prep vs ส่งตรง Onsite) */}
+                      {pendingRows.length > 0 && (
+                        <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-white/[0.03] border border-slate-200 dark:border-white/[0.06] space-y-1.5">
+                          <div className="text-[10px] font-bold text-slate-500 dark:text-slate-400">
+                            รายการที่รอเบิกส่งเข้าไซต์ ({pendingRows.length} รายการ):
+                          </div>
+                          {pendingRows.slice(0, 3).map((r) => {
+                            const isDirectOnsite = r.item.item_type !== 'equipment' || isNonPrepCableOrConsumable(r.item.model_name);
+                            return (
+                              <div key={r.item.id} className="flex items-center justify-between gap-2 text-[11px]">
+                                <span className="font-semibold text-slate-800 dark:text-slate-200 truncate">
+                                  • {r.item.model_name} <span className="font-mono font-bold text-[#FF6B00]">×{r.remainingToAllocate}</span>
+                                </span>
+                                <div className="flex items-center gap-1 shrink-0">
+                                  <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                                    isDirectOnsite
+                                      ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300'
+                                      : 'bg-sky-100 text-sky-800 dark:bg-sky-500/20 dark:text-sky-300'
+                                  }`}>
+                                    {isDirectOnsite ? 'ส่งตรง Onsite' : 'ส่งช่าง Prep'}
+                                  </span>
+                                  <span className={`px-1.5 py-0.5 rounded font-mono text-[9px] font-bold ${
+                                    r.shortage > 0
+                                      ? 'bg-rose-100 text-rose-800 dark:bg-rose-500/20 dark:text-rose-300'
+                                      : 'bg-teal-100 text-teal-800 dark:bg-teal-500/20 dark:text-teal-300'
+                                  }`}>
+                                    {r.shortage > 0 ? `ขาด ${r.shortage}` : `พร้อม (มี ${r.available})`}
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                          {pendingRows.length > 3 && (
+                            <div className="text-[10px] text-slate-500 dark:text-slate-400">
+                              + อีก {pendingRows.length - 3} รายการ (คลิกเพื่อดูทั้งหมด)
+                            </div>
+                          )}
+                        </div>
+                      )}
 
                       <div className="flex items-center gap-1.5 flex-wrap">
                         {addonSales.map(s => (
@@ -1302,13 +1689,13 @@ export const PurchasingStockView: React.FC = () => {
 
                     <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-200 dark:border-white/[0.08] text-xs">
                       <span className="text-[11px] text-slate-600 dark:text-slate-400">
-                        รายการทั้งหมด {prj.items.length} รายการ
+                        งวดเบิกแล้ว {prj.batches?.length || 0} งวด • ทั้งหมด {prj.items.length} รายการ
                       </span>
                       <span className="font-extrabold text-purple-700 dark:text-purple-300 flex items-center gap-1">
-                        เปิดจัดการงวดเบิก / สั่ง PO <ChevronRight className="w-4 h-4" />
+                        จัดการเบิกของ / สั่ง PO <ChevronRight className="w-4 h-4" />
                       </span>
                     </div>
-                  </button>
+                  </div>
                 );
               })}
             </div>
@@ -1360,34 +1747,65 @@ export const PurchasingStockView: React.FC = () => {
                     className="mb-2"
                   />
                   <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2.5">
-                    {orderedStockPoList.pageItems.map((po) => (
-                      <button
-                        key={po.id}
-                        type="button"
-                        onClick={() => setPoDetail(po)}
-                        className="text-left p-3.5 rounded-2xl liquid-glass-card border border-purple-200 dark:border-purple-500/25 hover:border-purple-500/60 transition active:scale-[0.98] cursor-pointer flex flex-col gap-2 min-h-[120px]"
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="px-2 py-0.5 rounded-md bg-purple-100 text-purple-900 border border-purple-300 dark:bg-purple-500/15 dark:text-purple-300 dark:border-purple-500/30 font-mono text-[10px] font-bold truncate">
-                            {po.po_number}
-                          </span>
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-900 border border-purple-300 dark:bg-purple-500/15 dark:text-purple-300 dark:border-purple-500/30 whitespace-nowrap">
-                            รอของเข้า
-                          </span>
-                        </div>
-                        <div className="min-w-0">
-                          <div className="text-sm font-bold text-slate-900 dark:text-white truncate">{po.product_name}</div>
-                          <div className="text-[10px] text-slate-600 dark:text-slate-400 truncate">
-                            {PRODUCT_CATEGORY_LABELS[po.category]} • {po.supplier || '-'}
-                            {po.project_id ? ` • ผูก ${po.project_id}` : ''}
+                    {orderedStockPoList.pageItems.map((po) => {
+                      const poKey = (po.product_name || '').trim().toLowerCase();
+                      const linkedWaitingOrder = allIncomingOrders.find(o =>
+                        (o.items_list || []).some(it => (it.model_name || '').trim().toLowerCase() === poKey)
+                      );
+                      return (
+                        <div
+                          key={po.id}
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => setPoDetail(po)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              setPoDetail(po);
+                            }
+                          }}
+                          className="text-left p-3.5 rounded-2xl liquid-glass-card border border-purple-200 dark:border-purple-500/25 hover:border-purple-500/60 transition active:scale-[0.99] cursor-pointer flex flex-col gap-2 min-h-[136px]"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="px-2 py-0.5 rounded-md bg-purple-100 text-purple-900 border border-purple-300 dark:bg-purple-500/15 dark:text-purple-300 dark:border-purple-500/30 font-mono text-[10px] font-bold truncate">
+                              {po.po_number}
+                            </span>
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-900 border border-purple-300 dark:bg-purple-500/15 dark:text-purple-300 dark:border-purple-500/30 whitespace-nowrap">
+                              รอของเข้า
+                            </span>
+                          </div>
+                          <div className="min-w-0">
+                            <div className="text-sm font-bold text-slate-900 dark:text-white truncate">{po.product_name}</div>
+                            <div className="text-[10px] text-slate-600 dark:text-slate-400 truncate">
+                              {PRODUCT_CATEGORY_LABELS[po.category]} • {po.supplier || '-'}
+                              {po.project_id ? ` • ผูก ${po.project_id}` : ''}
+                            </div>
+                            {linkedWaitingOrder && (
+                              <div className="text-[10px] font-bold text-[#C2410C] dark:text-[#FF8A24] truncate mt-0.5">
+                                รอส่งต่อบิล: {linkedWaitingOrder.sales_ref || linkedWaitingOrder.id} ({linkedWaitingOrder.customer_name})
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex items-center justify-between gap-1.5 flex-wrap mt-auto pt-1">
+                            <div className="flex items-center gap-1.5">
+                              <span className="px-2 py-0.5 rounded-md bg-[#FF6B00]/15 text-[#C2410C] dark:text-[#FF6B00] font-mono font-extrabold text-[11px] data-key">x{po.qty}</span>
+                              <span className="text-[10px] text-rose-700 dark:text-rose-300/80 font-mono font-bold data-key">ทุน ฿{fmt(po.unit_cost)}/หน่วย</span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleReceiveStockPo(po.id, po.product_name, po.qty);
+                              }}
+                              className="px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-teal-500 to-emerald-600 hover:from-teal-400 text-black text-[11px] font-extrabold cursor-pointer active:scale-95 transition flex items-center gap-1 shadow-sm"
+                            >
+                              <ShieldCheck className="w-3.5 h-3.5" />
+                              <span>รับของเข้าคลัง</span>
+                            </button>
                           </div>
                         </div>
-                        <div className="flex items-center gap-1.5 flex-wrap mt-auto">
-                          <span className="px-2 py-0.5 rounded-md bg-[#FF6B00]/15 text-[#C2410C] dark:text-[#FF6B00] font-mono font-extrabold text-[11px] data-key">x{po.qty}</span>
-                          <span className="text-[10px] text-rose-700 dark:text-rose-300/80 font-mono font-bold data-key">ทุน ฿{fmt(po.unit_cost)}/หน่วย</span>
-                        </div>
-                      </button>
-                    ))}
+                      );
+                    })}
                   </div>
                 </>
               )}
@@ -2011,7 +2429,7 @@ export const PurchasingStockView: React.FC = () => {
                   );
                 }
 
-                // Case B — Stock Is Insufficient & PO Has Already Been Ordered (waiting_po)
+                // Case B — Stock Is Insufficient & PO Has Already Been Ordered
                 if (stateCase === 'case_b') {
                   return (
                     <>
@@ -2026,28 +2444,56 @@ export const PurchasingStockView: React.FC = () => {
                           </span>
                         )}
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => { handleReceivePO(actionOrder); setActionOrder(null); }}
-                        className="w-full px-5 py-3 bg-gradient-to-r from-teal-500 to-emerald-600 hover:from-teal-400 text-black font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-teal-500/25 border border-white/20 active:scale-95"
-                      >
-                        <ShieldCheck className="w-4 h-4" />
-                        <span>ยืนยันรับของเข้าคลัง</span>
-                      </button>
+                      {readiness.unorderedShortageCount > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => openStockPoFromOrder(actionOrder)}
+                          className="w-full px-5 py-2.5 bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-2 shadow-md shadow-[#FF6B00]/20 border border-white/20 active:scale-95"
+                        >
+                          <ShoppingCart className="w-4 h-4" />
+                          <span>สั่งซื้อ PO ส่วนที่ยังขาด ({readiness.unorderedShortageCount} ชิ้น)</span>
+                        </button>
+                      )}
+                      {pendingLinkedStockPOs.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => { setActionOrder(null); setMainTab('po_tracking'); }}
+                          className="w-full px-5 py-3 bg-purple-600 hover:bg-purple-500 text-white font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-purple-600/25 active:scale-95"
+                        >
+                          <Truck className="w-4 h-4" />
+                          <span>ไปหน้ารอรับของเข้า (3. รอรับของเข้า PO)</span>
+                        </button>
+                      )}
                     </>
                   );
                 }
 
                 // Case C — Stock Is Sufficient (ขาด 0 ชิ้น & PO received)
                 return (
-                  <button
-                    type="button"
-                    onClick={() => { handleCutStockAndSendPrep(actionOrder.id); setActionOrder(null); }}
-                    className="w-full px-5 py-3 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 text-black font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-500/25 border border-white/20 active:scale-95"
-                  >
-                    <Send className="w-4 h-4" />
-                    <span>ตัดสต๊อกส่งช่างเตรียมติดวอย/จัดส่ง</span>
-                  </button>
+                  <div className="space-y-2">
+                    <button
+                      type="button"
+                      onClick={() => { handleCutStockAndSendPrep(actionOrder.id); setActionOrder(null); }}
+                      className="w-full px-5 py-3 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 text-black font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-500/25 border border-white/20 active:scale-95"
+                    >
+                      <Send className="w-4 h-4" />
+                      <span>ตัดสต๊อกส่งช่างเตรียมติดวอย/จัดส่ง</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleCutStockAndSendPrep(
+                          actionOrder.id,
+                          'ด่วน! รับของวันนี้ ส่งพรุ่งนี้ — ขอช่างเตรียมเทส & ติดวอยประกันวันนี้เลย'
+                        );
+                        setActionOrder(null);
+                      }}
+                      className="w-full px-4 py-2.5 bg-amber-100 hover:bg-amber-200 dark:bg-amber-500/20 dark:hover:bg-amber-500/30 text-amber-900 dark:text-amber-200 border border-amber-300 dark:border-amber-500/40 font-extrabold rounded-xl text-[11px] transition cursor-pointer flex items-center justify-center gap-1.5 active:scale-95"
+                    >
+                      <Timer className="w-3.5 h-3.5" />
+                      <span>ด่วน! ตัดสต๊อก + แจ้งช่างเทส &amp; ติดวอยวันนี้ (ส่งพรุ่งนี้)</span>
+                    </button>
+                  </div>
                 );
               })()}
             </div>
@@ -2842,7 +3288,7 @@ export const PurchasingStockView: React.FC = () => {
                                 เหตุผล: {req.reason} • ขอโดย <strong>{req.requested_by}</strong>
                               </div>
                             </div>
-                            <div className="flex items-center gap-1.5">
+                            <div className="flex items-center gap-1.5 flex-wrap">
                               {req.status === 'pending' && (
                                 <button
                                   type="button"
@@ -2852,15 +3298,50 @@ export const PurchasingStockView: React.FC = () => {
                                   อนุมัติ / สั่งของ
                                 </button>
                               )}
-                              {req.status !== 'fulfilled' ? (
+                              {req.status !== 'fulfilled' && (
                                 <button
                                   type="button"
-                                  onClick={() => updateProjectMaterialRequestStatus(actionProject.id, req.id, 'fulfilled')}
-                                  className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-bold cursor-pointer"
+                                  onClick={() => {
+                                    const catProduct = products.find(p => p.name.trim().toLowerCase() === req.item_name.trim().toLowerCase());
+                                    setStockPoSourceOrderId(null);
+                                    setStockPoSourceProjectId(actionProject.id);
+                                    setStockPoLines([{
+                                      product_id: catProduct ? catProduct.id : `req-${req.id}`,
+                                      product_name: catProduct ? catProduct.name : req.item_name,
+                                      category: catProduct ? catProduct.category : 'cctv_network',
+                                      qty: Math.max(1, req.qty || 1),
+                                      unit_cost: catProduct ? Math.max(0, catProduct.cost_price) : 0
+                                    }]);
+                                    setStockPoMeta({
+                                      supplier: SUPPLIER_PRESETS[1],
+                                      po_number: `PO-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`,
+                                      notes: `สั่งซื้อตามคำขอหน้างาน ${actionProject.id}: ${req.item_name} x${req.qty}`
+                                    });
+                                    setActionProjectId(null);
+                                    setIsStockPoModalOpen(true);
+                                  }}
+                                  className="px-2.5 py-1 rounded-lg bg-[#FF6B00] hover:bg-[#FF8A24] text-black text-[10px] font-extrabold cursor-pointer"
                                 >
-                                  จัดส่งเข้าไซต์แล้ว
+                                  + สั่ง PO รายการนี้
                                 </button>
-                              ) : (
+                              )}
+                              {req.status !== 'fulfilled' ? (() => {
+                                const reqAvail = stockCountByName[(req.item_name || '').trim().toLowerCase()] || 0;
+                                const canFulfillReq = reqAvail >= (req.qty || 1);
+                                return canFulfillReq ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => updateProjectMaterialRequestStatus(actionProject.id, req.id, 'fulfilled')}
+                                    className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-bold cursor-pointer"
+                                  >
+                                    จัดส่งเข้าไซต์แล้ว (มี {reqAvail})
+                                  </button>
+                                ) : (
+                                  <span className="px-2.5 py-1 rounded-lg bg-rose-100 text-rose-800 dark:bg-rose-500/20 dark:text-rose-300 border border-rose-300 dark:border-rose-500/30 text-[10px] font-bold">
+                                    คลังมี {reqAvail} (ขาด {(req.qty || 1) - reqAvail})
+                                  </span>
+                                );
+                              })() : (
                                 <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-900 dark:bg-emerald-500/20 dark:text-emerald-300">
                                   จัดส่งเข้าไซต์แล้ว
                                 </span>
@@ -2878,7 +3359,12 @@ export const PurchasingStockView: React.FC = () => {
                           <Boxes className="w-4 h-4 text-purple-600 dark:text-purple-400" />
                           <span>เปรียบเทียบสต๊อกจริง (in_stock + raw_stock) & กำหนดจำนวนปล่อยของ งวดที่ {nextBatchNo}</span>
                         </span>
-                        {st.allSufficient ? (
+                        {st.allPhysicalAllocated ? (
+                          <span className="px-3 py-1 rounded-full text-[11px] font-black bg-emerald-600 text-white shadow-sm inline-flex items-center gap-1">
+                            <CheckCircle className="w-3.5 h-3.5" />
+                            <span>Site นี้เบิกของครบแล้ว</span>
+                          </span>
+                        ) : st.allSufficient ? (
                           <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-100 text-emerald-900 border border-emerald-300 dark:bg-emerald-500/20 dark:text-emerald-300">
                             ครบพร้อมเบิก
                           </span>
@@ -2890,19 +3376,41 @@ export const PurchasingStockView: React.FC = () => {
                       </div>
 
                       <div className="p-3 space-y-2.5">
-                        {st.rows.map((row) => {
+                        {[...st.rows]
+                          .sort((a, b) => {
+                            const aDone = a.isLabor || a.remainingToAllocate === 0 ? 1 : 0;
+                            const bDone = b.isLabor || b.remainingToAllocate === 0 ? 1 : 0;
+                            return aDone - bDone;
+                          })
+                          .map((row) => {
                           const it = row.item;
                           const releaseVal = batchReleaseQtyMap[it.id] ?? 0;
+                          const isCompleted = !row.isLabor && row.remainingToAllocate === 0;
                           return (
-                            <div key={it.id} className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                            <div
+                              key={it.id}
+                              className={`p-3 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition ${
+                                isCompleted
+                                  ? 'bg-emerald-50/50 dark:bg-emerald-500/[0.04] border-emerald-200 dark:border-emerald-500/25'
+                                  : row.isLabor
+                                    ? 'bg-slate-50/80 dark:bg-white/[0.02] border-slate-200 dark:border-white/[0.08]'
+                                    : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700'
+                              }`}
+                            >
                               <div className="min-w-0 space-y-1 flex-1">
                                 <div className="flex items-center gap-1.5 flex-wrap">
                                   <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
-                                    it.item_type === 'equipment'
-                                      ? 'bg-blue-100 text-blue-900 border-blue-300 dark:bg-blue-500/20 dark:text-blue-300 dark:border-blue-500/30'
-                                      : 'bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-500/20 dark:text-amber-300 dark:border-amber-500/30'
+                                    row.isLabor
+                                      ? 'bg-slate-100 text-slate-800 border-slate-300 dark:bg-white/[0.08] dark:text-slate-200 dark:border-white/15'
+                                      : it.item_type === 'equipment'
+                                        ? 'bg-blue-100 text-blue-900 border-blue-300 dark:bg-blue-500/20 dark:text-blue-300 dark:border-blue-500/30'
+                                        : 'bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-500/20 dark:text-amber-300 dark:border-amber-500/30'
                                   }`}>
-                                    {it.item_type === 'equipment' ? 'อุปกรณ์หลัก → ส่งช่าง Prep' : 'วัสดุสิ้นเปลือง/ค่าแรง → ส่งตรง Onsite'}
+                                    {row.isLabor
+                                      ? 'ค่าบริการ / ค่าแรง (รวมในบิลแล้ว)'
+                                      : it.item_type === 'equipment'
+                                        ? 'อุปกรณ์หลัก → ส่งช่าง Prep'
+                                        : 'วัสดุสิ้นเปลือง → ส่งตรง Onsite'}
                                   </span>
                                   {it.is_addon && (
                                     <span className="px-2 py-0.5 rounded-md text-[10px] font-extrabold bg-purple-100 text-purple-900 border border-purple-300 dark:bg-purple-500/20 dark:text-purple-200 dark:border-purple-500/40">
@@ -2912,39 +3420,103 @@ export const PurchasingStockView: React.FC = () => {
                                 </div>
                                 <div className="font-bold text-slate-900 dark:text-white">{it.model_name}</div>
                                 <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono">
-                                  <span className="text-slate-600 dark:text-slate-400">
-                                    สัญญาทั้งหมด: <strong>{it.qty_required}</strong> • เบิกแล้ว: <strong>{it.qty_allocated}</strong> • ค้างเบิก: <strong>{row.remainingToAllocate}</strong>
-                                  </span>
-                                  {!row.isLabor && (
+                                  {row.isLabor ? (
+                                    <span className="text-slate-600 dark:text-slate-400">
+                                      จำนวนในบิล: <strong>{it.qty_required}</strong> • ไม่ต้องเบิกจากสต๊อก (ออกบิลอัตโนมัติ)
+                                    </span>
+                                  ) : (
+                                    <span className="text-slate-600 dark:text-slate-400">
+                                      สัญญาทั้งหมด: <strong>{it.qty_required}</strong> • เบิกแล้ว: <strong>{it.qty_allocated}</strong> • ค้างเบิก: <strong>{row.remainingToAllocate}</strong>
+                                    </span>
+                                  )}
+                                  {!row.isLabor && !isCompleted && (
                                     <span className={`px-2 py-0.5 rounded-md font-bold border ${
-                                      row.sufficient
+                                      row.shortage === 0 && row.available > 0
                                         ? 'bg-emerald-50 text-emerald-900 border-emerald-300 dark:bg-emerald-500/15 dark:text-emerald-300 dark:border-emerald-500/30'
                                         : 'bg-rose-50 text-rose-900 border-rose-300 dark:bg-rose-500/15 dark:text-rose-300 dark:border-rose-500/35'
                                     }`}>
-                                      ในคลังมี {row.available} ชิ้น {row.shortage > 0 ? `(ขาด ${row.shortage})` : '(พร้อมเบิก)'}
+                                      {row.shortage > 0
+                                        ? `ในคลังมี ${row.available} ชิ้น (ขาด ${row.shortage})`
+                                        : `ในคลังมี ${row.available} ชิ้น (พร้อมเบิก)`}
                                     </span>
                                   )}
                                 </div>
                               </div>
 
                               <div className="flex items-center gap-2 shrink-0">
-                                <label className="text-[11px] font-bold text-slate-600 dark:text-slate-400">
-                                  เบิกงวดที่ {nextBatchNo}:
-                                </label>
-                                <input
-                                  type="number"
-                                  min={0}
-                                  max={row.releasableNow}
-                                  disabled={row.releasableNow === 0}
-                                  value={Math.min(releaseVal, row.releasableNow)}
-                                  onChange={(e) =>
-                                    setBatchReleaseQtyMap(prev => ({
-                                      ...prev,
-                                      [it.id]: Math.max(0, Math.min(row.releasableNow, parseInt(e.target.value) || 0))
-                                    }))
-                                  }
-                                  className="w-20 rounded-xl px-2.5 py-1.5 text-xs bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 font-mono font-bold text-center disabled:opacity-40"
-                                />
+                                {row.isLabor ? (
+                                  <span className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-100 text-slate-700 border border-slate-300 dark:bg-white/[0.06] dark:text-slate-200 dark:border-white/15 text-[11px] font-bold">
+                                    ไม่ต้องเบิกสต๊อก (ลงบิลแล้ว)
+                                  </span>
+                                ) : isCompleted ? (
+                                  <span className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-100 text-emerald-900 border border-emerald-300 dark:bg-emerald-500/20 dark:text-emerald-300 dark:border-emerald-500/40 text-xs font-black shadow-sm">
+                                    <CheckCircle className="w-4 h-4" />
+                                    <span>เบิกครบแล้ว</span>
+                                  </span>
+                                ) : (
+                                  <>
+                                    {!row.isLabor && row.shortage > 0 && (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const catProduct = products.find(p => p.name.trim().toLowerCase() === it.model_name.trim().toLowerCase());
+                                          setStockPoSourceOrderId(null);
+                                          setStockPoSourceProjectId(actionProject.id);
+                                          setStockPoLines([{
+                                            product_id: catProduct ? catProduct.id : it.id,
+                                            product_name: catProduct ? catProduct.name : it.model_name,
+                                            category: catProduct ? catProduct.category : 'cctv_network',
+                                            qty: Math.max(1, row.shortage),
+                                            unit_cost: it.unit_cost > 0 ? it.unit_cost : (catProduct ? Math.max(0, catProduct.cost_price) : 0)
+                                          }]);
+                                          setStockPoMeta({
+                                            supplier: SUPPLIER_PRESETS[1],
+                                            po_number: `PO-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`,
+                                            notes: `สั่งซื้อเติมสต๊อกโปรเจกต์ ${actionProject.id} (${actionProject.site_name})`
+                                          });
+                                          setActionProjectId(null);
+                                          setIsStockPoModalOpen(true);
+                                        }}
+                                        className="px-2.5 py-1.5 rounded-lg bg-[#FF6B00] hover:bg-[#FF8A24] text-black font-extrabold text-[11px] cursor-pointer whitespace-nowrap"
+                                      >
+                                        + สั่ง PO
+                                      </button>
+                                    )}
+                                    {it.qty_allocated === 0 && (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          if (confirm(`ต้องการลบ "${it.model_name}" ออกจากโปรเจกต์ ${actionProject.id} หรือไม่? (ใช้กรณีไม่มีของ/ยกเลิกรายการ)`)) {
+                                            removeProjectItem(actionProject.id, it.id);
+                                            setToast(`ลบ "${it.model_name}" ออกจากโปรเจกต์แล้ว`);
+                                            setTimeout(() => setToast(''), 3500);
+                                          }
+                                        }}
+                                        title="ลบรายการที่ยังไม่เบิกออก (กรณีไม่มีของ/ยกเลิก)"
+                                        className="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 dark:bg-rose-500/15 dark:hover:bg-rose-500/25 dark:text-rose-300 dark:border-rose-500/30 transition cursor-pointer"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    )}
+                                    <label className="text-[11px] font-bold text-slate-600 dark:text-slate-400">
+                                      เบิกงวดที่ {nextBatchNo}:
+                                    </label>
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      max={row.releasableNow}
+                                      disabled={row.releasableNow === 0}
+                                      value={Math.min(releaseVal, row.releasableNow)}
+                                      onChange={(e) =>
+                                        setBatchReleaseQtyMap(prev => ({
+                                          ...prev,
+                                          [it.id]: Math.max(0, Math.min(row.releasableNow, parseInt(e.target.value) || 0))
+                                        }))
+                                      }
+                                      className="w-20 rounded-xl px-2.5 py-1.5 text-xs bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 font-mono font-bold text-center disabled:opacity-40"
+                                    />
+                                  </>
+                                )}
                               </div>
                             </div>
                           );
@@ -3002,6 +3574,12 @@ export const PurchasingStockView: React.FC = () => {
 
                   {/* Footer Buttons: แสดงปุ่มปล่อยงวดเบิกเฉพาะเมื่อมีของในสต๊อกพร้อมปล่อยจริงเท่านั้น */}
                   <div className="p-3.5 sm:p-4 bg-slate-50/95 dark:bg-slate-900/95 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 flex-shrink-0">
+                    {st.allPhysicalAllocated && (
+                      <div className="flex-1 py-2.5 px-4 rounded-xl bg-emerald-100 text-emerald-900 border border-emerald-300 dark:bg-emerald-500/20 dark:text-emerald-300 dark:border-emerald-500/40 font-black text-xs flex items-center justify-center gap-2">
+                        <CheckCircle className="w-4 h-4 shrink-0" />
+                        <span>Site นี้เบิกของครบทุกรายการตามที่ Sale เปิดบิลแล้ว</span>
+                      </div>
+                    )}
                     {!st.allSufficient && (
                       st.orderedLinkedPOs.length > 0 && !st.hasReleasableStock ? (
                         <button

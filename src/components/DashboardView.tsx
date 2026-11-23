@@ -19,6 +19,7 @@ import {
 import { SnDetailModal } from './SnDetailModal';
 import { DocumentDetailModal, DocumentDetailTarget } from './DocumentDetailModal';
 import { BarcodeScannerModal } from './BarcodeScannerModal';
+import { ListControls, useListControls } from './ListControls';
 
 type UnifiedSearchFilter = 'all' | 'sn' | 'so' | 'po' | 'repair';
 
@@ -29,6 +30,12 @@ export const DashboardView: React.FC = () => {
   const [selectedMatch, setSelectedMatch] = useState<SnSearchMatch | null>(null);
   const [selectedDoc, setSelectedDoc] = useState<DocumentDetailTarget>(null);
   const [scannerOpen, setScannerOpen] = useState(false);
+
+  const liveItemsList = useListControls(items, {
+    getDate: (i) => i.updated_at || i.created_at,
+    initialSort: 'newest',
+    initialPageSize: 10
+  });
 
   const pendingPurchasing = orders.filter(o => o.order_status === 'pending_purchasing' || o.order_status === 'waiting_po' || o.order_status === 'po_received_in_stock').length;
   const pendingPrep = items.filter(i => i.status === 'pending_prep').length;
@@ -590,10 +597,25 @@ export const DashboardView: React.FC = () => {
 
       {/* Live Units Table in Liquid Glass */}
       <div className="liquid-glass rounded-3xl p-6 shadow-2xl border border-white/[0.08]">
-        <h3 className="text-sm font-bold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
+        <h3 className="text-sm font-bold text-slate-900 dark:text-white mb-3 flex items-center gap-2">
           <Package className="w-4 h-4 text-[#FF6B00]" />
           รายการสินค้าหมุนเวียนในระบบล่าสุด ({items.length} ชิ้น)
         </h3>
+        <ListControls
+          from={liveItemsList.from}
+          to={liveItemsList.to}
+          total={liveItemsList.total}
+          page={liveItemsList.page}
+          totalPages={liveItemsList.totalPages}
+          pageSize={liveItemsList.pageSize}
+          sort={liveItemsList.sort}
+          onSortChange={liveItemsList.setSort}
+          onPageSizeChange={liveItemsList.setPageSize}
+          onPageChange={liveItemsList.setPage}
+          pageSizeOptions={[10, 20, 50]}
+          unit="ชิ้น"
+          className="mb-3"
+        />
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead className="bg-slate-100 dark:bg-white/[0.03] text-slate-600 dark:text-slate-400 border-b border-slate-200 dark:border-white/[0.06]">
@@ -607,7 +629,7 @@ export const DashboardView: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200 dark:divide-white/[0.05]">
-              {items.map((i) => {
+              {liveItemsList.pageItems.map((i) => {
                 const ord = i.order_id ? orders.find(o => o.id === i.order_id) || null : null;
                 const linkedRepairs = repairTickets.filter(
                   t => t.item_id === i.id || (i.serial_number && (t.walkin_sn === i.serial_number || t.replacement_sn === i.serial_number))

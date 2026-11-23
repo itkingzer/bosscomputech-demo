@@ -528,7 +528,7 @@ export type DeliveryMode = 'install' | 'drop_off' | 'customer_pickup' | 'project
 export type ProductCategory = 'pc_notebook' | 'printer' | 'cctv_network' | 'service' | 'general';
 
 // หน่วยนับของสินค้า/บริการ
-export type ProductUnit = 'เครื่อง' | 'ชุด' | 'จุด' | 'เมตร' | 'รายการ';
+export type ProductUnit = 'เครื่อง' | 'ชุด' | 'กล่อง' | 'ม้วน' | 'มัด' | 'เส้น' | 'แพ็ค' | 'อัน' | 'จุด' | 'เมตร' | 'รายการ';
 
 export const PRODUCT_CATEGORY_LABELS: Record<ProductCategory, string> = {
   pc_notebook: 'คอมพิวเตอร์ / โน้ตบุ๊ก',
@@ -538,7 +538,7 @@ export const PRODUCT_CATEGORY_LABELS: Record<ProductCategory, string> = {
   general: 'สินค้าทั่วไป'
 };
 
-export const PRODUCT_UNIT_OPTIONS: ProductUnit[] = ['เครื่อง', 'ชุด', 'จุด', 'เมตร', 'รายการ'];
+export const PRODUCT_UNIT_OPTIONS: ProductUnit[] = ['เครื่อง', 'ชุด', 'กล่อง', 'ม้วน', 'มัด', 'เส้น', 'แพ็ค', 'อัน', 'จุด', 'เมตร', 'รายการ'];
 
 // สินค้า/บริการที่ใช้ซ้ำได้ (Product Catalog) - เก็บใน localStorage (Demo) และ sync กับ Supabase `products`
 export interface Product {
@@ -727,6 +727,99 @@ export interface ProjectDailyLog {
   photo_urls: string[];
 }
 
+export type SiteVisitPrepStatus = 'pending_stock' | 'prepping' | 'ready_for_pickup' | 'dispatched';
+export type SiteVisitStatus = 'scheduled' | 'in_progress' | 'completed';
+
+export interface SiteVisitItemRef {
+  product_id?: string;
+  project_item_id?: string;
+  name: string;
+  item_type: ProjectItemType;
+  qty: number;
+}
+
+export interface SiteVisit {
+  id: string; // VST-...
+  visit_date: string; // YYYY-MM-DD
+  time_slot: string;
+  assigned_techs: string[];
+  visit_scope: string;
+  items_to_take: SiteVisitItemRef[];
+  prep_status: SiteVisitPrepStatus;
+  visit_status: SiteVisitStatus;
+  progress_note?: string;
+  photo_urls?: string[];
+  batch_no?: number | null;
+  created_by?: string;
+  created_at: string;
+  completed_at?: string | null;
+}
+
+export interface ProjectDeadlineRisk {
+  tier: 'safe' | 'warning' | 'critical';
+  daysRemaining: number;
+  label: string;
+  badgeCls: string;
+}
+
+export function getProjectDeadlineRisk(dueDate?: string | null, status?: ProjectStatus): ProjectDeadlineRisk {
+  if (status === 'completed') {
+    return {
+      tier: 'safe',
+      daysRemaining: 999,
+      label: 'ส่งมอบปิดงานแล้ว',
+      badgeCls: 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-500/15 dark:text-emerald-300 dark:border-emerald-500/30'
+    };
+  }
+  const urgency = getDeliveryUrgency(dueDate);
+  if (!urgency.hasDate) {
+    return {
+      tier: 'safe',
+      daysRemaining: 999,
+      label: 'ไม่ระบุกำหนดส่ง',
+      badgeCls: 'bg-slate-100 text-slate-700 border-slate-300 dark:bg-white/[0.06] dark:text-slate-300 dark:border-white/[0.1]'
+    };
+  }
+  const days = urgency.daysRemaining;
+  if (days <= 2) {
+    const label =
+      days < 0
+        ? `เกินกำหนด ${Math.abs(days)} วัน • เสี่ยงโดนค่าปรับ!`
+        : days === 0
+          ? 'ครบกำหนดวันนี้ • เสี่ยงโดนค่าปรับ!'
+          : `เหลือ ${days} วัน • เสี่ยงโดนค่าปรับ!`;
+    return {
+      tier: 'critical',
+      daysRemaining: days,
+      label,
+      badgeCls: 'bg-rose-100 text-rose-900 border-rose-300 dark:bg-rose-500/20 dark:text-rose-200 dark:border-rose-500/40'
+    };
+  }
+  if (days <= 5) {
+    return {
+      tier: 'warning',
+      daysRemaining: days,
+      label: `เหลือ ${days} วัน`,
+      badgeCls: 'bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-500/20 dark:text-amber-300 dark:border-amber-500/35'
+    };
+  }
+  return {
+    tier: 'safe',
+    daysRemaining: days,
+    label: `เหลือ ${days} วัน`,
+    badgeCls: 'bg-emerald-100 text-emerald-900 border-emerald-300 dark:bg-emerald-500/15 dark:text-emerald-300 dark:border-emerald-500/30'
+  };
+}
+
+export function getLocalDateStr(offsetDays = 0): string {
+  const d = new Date();
+  d.setDate(d.getDate() + offsetDays);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 export interface Project {
   id: string; // PRJ-2026-XXX
   site_name: string;
@@ -744,6 +837,7 @@ export interface Project {
   batches: ProjectBatch[];
   material_requests: ProjectMaterialRequest[];
   daily_logs: ProjectDailyLog[];
+  site_visits?: SiteVisit[];
   handover_photo_urls?: string[];
   handover_note?: string;
   completed_at?: string | null;
@@ -777,6 +871,11 @@ export interface Item {
   project_id?: string | null;         // รหัสโปรเจกต์ PRJ-2026-XXX (กรณีเบิกเข้าไซต์งานติดตั้ง)
   project_batch_no?: number | null;   // งวดเบิกที่ X ของโปรเจกต์
   project_item_id?: string | null;    // อ้างอิงรายการใน Project.items
+  site_visit_id?: string | null;      // อ้างอิงรอบเข้าไซต์ VST-... (นัดหมายโดยหน้าร้าน)
+  // --- Front-Desk 1-Day Advance Scheduling ---
+  scheduled_date?: string | null;       // YYYY-MM-DD วันที่นัดวิ่งงานล่วงหน้า
+  scheduled_time_slot?: string | null;  // เช้า / บ่าย / ทั้งวัน
+  dispatch_route_zone?: string | null;  // สายรถ / โซนที่จัดลงตาราง
   model_name: string;
   serial_number: string | null;
   status: ItemStatus;
@@ -1032,6 +1131,10 @@ export interface RepairTicket {
   repair_status?: RepairLifecycleStatus;   // สถานะวงจรชีวิตงานซ่อม/RMA
   // --- Evidence Photos (Onsite Pickup / Service Sheet / Return Proof) ---
   photo_urls?: string[] | null;            // URLs (Supabase Storage) หรือ Data URLs (Demo) สูงสุด 3 รูป
+  // --- Front-Desk 1-Day Advance Scheduling ---
+  scheduled_date?: string | null;          // YYYY-MM-DD วันที่นัดวิ่งงานล่วงหน้า
+  scheduled_time_slot?: string | null;     // เช้า / บ่าย / ทั้งวัน
+  dispatch_route_zone?: string | null;     // สายรถ / โซนที่จัดลงตาราง
 }
 
 export type DeliveryUrgencyTier = 'overdue' | 'today' | 'soon' | 'future' | 'none';

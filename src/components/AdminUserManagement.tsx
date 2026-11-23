@@ -98,15 +98,15 @@ export const AdminUserManagement: React.FC = () => {
           </button>
           <button
             onClick={() => {
-              if (confirm('คุณต้องการรีเซ็ตข้อมูลตัวอย่างทั้งหมดหรือไม่?')) {
-                resetAllDemoData();
-                showNotice('รีเซ็ตข้อมูลตัวอย่างทั้งหมดเรียบร้อยแล้ว');
+              if (confirm('ต้องการรีเซ็ตข้อมูลทดสอบ Demo ใหม่ (โดยเก็บ Catalog สินค้าไว้) หรือไม่?')) {
+                resetAllDemoData({ preserveCatalog: true });
+                showNotice('รีเซ็ตข้อมูลตัวอย่างเรียบร้อยแล้ว (เก็บ Catalog ไว้เหมือนเดิม)');
               }
             }}
             className="px-3.5 py-2.5 rounded-2xl liquid-glass-card hover:border-rose-500/50 hover:text-rose-500 dark:hover:text-rose-400 text-slate-600 dark:text-slate-400 text-xs transition-all duration-150 active:scale-[0.97] cursor-pointer flex items-center gap-1.5"
           >
             <Database className="w-4 h-4" />
-            <span>รีเซ็ตเดโม่</span>
+            <span>รีเซ็ตเดโม่ (เก็บ Catalog)</span>
           </button>
         </div>
       </div>

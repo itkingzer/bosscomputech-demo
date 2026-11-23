@@ -1,10 +1,11 @@
 import React, { useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useApp } from '../context/AppContext';
 import {
   Wrench, Truck, PackageCheck, PhoneCall, Plus, Search, Printer,
   MapPin, Phone, User, CheckCircle2, ScanLine,
   Package, RotateCcw, ClipboardList, ArrowRight, AlertCircle,
-  Building2, Hash, Check, ChevronRight, FileText, Store, Send, X
+  Building2, Hash, Check, ChevronRight, FileText, Store, Send, X, Calendar
 } from 'lucide-react';
 import {
   Modal, modalInputClass, modalLabelClass,
@@ -14,7 +15,8 @@ import {
   RepairTicket, RepairLifecycleStatus, REPAIR_LIFECYCLE_META,
   ROUTE_DEFINITIONS, RouteCode, getRouteByDistrict, getElapsedDays,
   formatDateDMY, formatThaiDateTime, JobCategory,
-  getDeliveryUrgency, DeliveryUrgencyInfo
+  getDeliveryUrgency, DeliveryUrgencyInfo,
+  getProjectDeadlineRisk, getLocalDateStr, Project, SiteVisitItemRef, Item
 } from '../types';
 import { ListControls, useListControls } from './ListControls';
 import { ActivityTimeline, LatestUpdateBadge } from './ActivityTimeline';
@@ -23,6 +25,9 @@ import { ToastBanner } from './ui/ToastBanner';
 import { RepairReceiptPrintModal } from './RepairReceiptPrintModal';
 import { RepairIntakeModal } from './RepairIntakeModal';
 import { OnsiteDailyReportPrintModal, OnsiteCompletedReportRow } from './OnsiteDailyReportPrintModal';
+import { MorningBriefingPrintModal, MorningBriefingRow } from './MorningBriefingPrintModal';
+import { OnsiteDispatchRosterModal } from './OnsiteDispatchRosterModal';
+import { toTelHref } from '../utils/domainHelpers';
 
 // ---------------------------------------------------------------------------
 // Static option data
@@ -261,7 +266,7 @@ const QueueSection: React.FC<{
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
-type TabId = 'counter' | 'prep_ready' | 'tracker' | 'onsite_summary';
+type TabId = 'counter' | 'scheduler' | 'prep_ready' | 'tracker' | 'onsite_summary';
 
 const toLocalDateKey = (iso?: string | null): string => {
   if (!iso) return '';
@@ -279,7 +284,10 @@ export const FrontdeskView: React.FC = () => {
     createOnsiteServiceCall,
     assignOnsite, confirmCustomerPickup, updateOrderRoute,
     selfPickupRepairTicket, dispatchRepairReturnOnsite, queueRepairTicketForDispatch,
-    updateOrderDeliveryDate, updateRepairTicketDueDate
+    updateOrderDeliveryDate, updateRepairTicketDueDate,
+    scheduleSiteVisit,
+    scheduleItemDispatch, unscheduleItemDispatch,
+    scheduleRepairDispatch, unscheduleRepairDispatch, removeSiteVisit
   } = useApp();
 
   const [activeTab, setActiveTab] = useState<TabId>('counter');
@@ -776,11 +784,287 @@ export const FrontdeskView: React.FC = () => {
     initialPageSize: 10
   });
 
-  const projectsProgressList = useListControls(projects, {
+  // Sort projects by Deadline Risk urgency (critical/closest due_date first)
+  const urgentSortedProjects = useMemo(
+    () =>
+      [...projects].sort(
+        (a, b) =>
+          getProjectDeadlineRisk(a.due_date, a.status).daysRemaining -
+          getProjectDeadlineRisk(b.due_date, b.status).daysRemaining
+      ),
+    [projects]
+  );
+
+  const projectsProgressList = useListControls(urgentSortedProjects, {
     getDate: (p) => p.updated_at || p.created_at,
     initialSort: 'newest',
     initialPageSize: 10
   });
+
+  // ---- 1-Day Advance Job & Route Scheduler State ----
+  const [rosterDate, setRosterDate] = useState<string>(() => getLocalDateStr(1));
+  const [morningBriefingOpen, setMorningBriefingOpen] = useState(false);
+  const [dispatchRosterOpen, setDispatchRosterOpen] = useState(false);
+  const [vehicleMap, setVehicleMap] = useState<Record<string, string>>(() => {
+    try {
+      const raw = localStorage.getItem('boss_dispatch_vehicles');
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  });
+  const [customTeamBlocks, setCustomTeamBlocks] = useState<{ teamKey: string; techs: string[]; vehiclePlate: string }[]>([]);
+  const handleUpdateVehiclePlate = (teamKey: string, plate: string) => {
+    setVehicleMap(prev => {
+      const next = { ...prev, [teamKey]: plate };
+      try { localStorage.setItem('boss_dispatch_vehicles', JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
+  const handleAddCustomTeamBlock = (techs: string[], vehiclePlate: string) => {
+    const teamKey = techs.join('+');
+    handleUpdateVehiclePlate(teamKey, vehiclePlate);
+    setCustomTeamBlocks(prev => (prev.some(b => b.teamKey === teamKey) ? prev : [...prev, { teamKey, techs, vehiclePlate }]));
+  };
+  const [scheduleTarget, setScheduleTarget] = useState<
+    | { kind: 'item'; item: Item; title: string; subtitle: string; defaultRoute: string }
+    | { kind: 'repair'; ticket: RepairTicket; title: string; subtitle: string; defaultRoute: string }
+    | null
+  >(null);
+  const [schedDate, setSchedDate] = useState<string>(() => getLocalDateStr(1));
+  const [schedTimeSlot, setSchedTimeSlot] = useState<'เช้า' | 'บ่าย' | 'ทั้งวัน'>('ทั้งวัน');
+  const ROUTE_ZONE_OPTIONS = Object.values(ROUTE_DEFINITIONS).map(r => r.name);
+  const [schedRouteZone, setSchedRouteZone] = useState<string>(ROUTE_DEFINITIONS.route_5.name);
+  const [schedTechs, setSchedTechs] = useState<string[]>([]);
+
+  // Unscheduled Ready Pool: Sales/Project items in ready_for_dispatch (or assigned_onsite without scheduled_date)
+  const unscheduledReadyItems = useMemo(() => {
+    return items
+      .filter(i => {
+        if (i.status === 'ready_for_dispatch') return true;
+        if (i.status === 'assigned_onsite' && !i.scheduled_date && !i.project_id) return true;
+        return false;
+      })
+      .sort((a, b) => {
+        const ordA = orders.find(o => o.id === a.order_id);
+        const ordB = orders.find(o => o.id === b.order_id);
+        const prjA = projects.find(p => p.id === a.project_id);
+        const prjB = projects.find(p => p.id === b.project_id);
+        const uA = getDeliveryUrgency(prjA?.due_date || ordA?.delivery_date).daysRemaining;
+        const uB = getDeliveryUrgency(prjB?.due_date || ordB?.delivery_date).daysRemaining;
+        return uA - uB;
+      });
+  }, [items, orders, projects]);
+
+  // Unscheduled Ready Repairs: ready_pickup or awaiting_dispatch (not yet scheduled onto a date)
+  const unscheduledReadyRepairs = useMemo(() => {
+    return repairTickets
+      .filter(t => {
+        if (t.status === 'returned_closed' || t.repair_status === 'completed') return false;
+        if (t.scheduled_date) return false;
+        return t.repair_status === 'ready_pickup' || t.status === 'awaiting_dispatch' || (t.status === 'dispatched_onsite' && !t.scheduled_date);
+      })
+      .sort((a, b) => getDeliveryUrgency(a.due_date).daysRemaining - getDeliveryUrgency(b.due_date).daysRemaining);
+  }, [repairTickets]);
+
+  const [step1Page, setStep1Page] = useState(1);
+  const STEP1_PAGE_SIZE = 4;
+  const step1Combined = useMemo(
+    () => [
+      ...unscheduledReadyItems.map(it => ({ kind: 'item' as const, item: it })),
+      ...unscheduledReadyRepairs.map(t => ({ kind: 'repair' as const, ticket: t }))
+    ],
+    [unscheduledReadyItems, unscheduledReadyRepairs]
+  );
+  const step1TotalPages = Math.max(1, Math.ceil(step1Combined.length / STEP1_PAGE_SIZE));
+  const safeStep1Page = Math.min(step1Page, step1TotalPages);
+  const step1Start = (safeStep1Page - 1) * STEP1_PAGE_SIZE;
+  const step1PageEntries = step1Combined.slice(step1Start, step1Start + STEP1_PAGE_SIZE);
+
+  // Daily Dispatch Roster for selected rosterDate (Items + Site Visits + Repairs)
+  const dailyRosterItems = useMemo(
+    () => items.filter(i => i.scheduled_date === rosterDate && i.status !== 'delivered'),
+    [items, rosterDate]
+  );
+  const dailyRosterRepairs = useMemo(
+    () => repairTickets.filter(t => t.scheduled_date === rosterDate && t.status !== 'returned_closed'),
+    [repairTickets, rosterDate]
+  );
+  const dailyRosterVisits = useMemo(() => {
+    const out: { project: Project; visit: NonNullable<Project['site_visits']>[number] }[] = [];
+    projects.forEach(prj => {
+      (prj.site_visits || []).forEach(sv => {
+        if (sv.visit_date === rosterDate && sv.visit_status !== 'completed') {
+          out.push({ project: prj, visit: sv });
+        }
+      });
+    });
+    return out;
+  }, [projects, rosterDate]);
+
+  const morningBriefingRows: MorningBriefingRow[] = useMemo(() => {
+    const rows: MorningBriefingRow[] = [];
+    dailyRosterItems.forEach(it => {
+      const ord = orders.find(o => o.id === it.order_id);
+      const prj = projects.find(p => p.id === it.project_id);
+      rows.push({
+        id: `item-${it.id}`,
+        kindLabel: prj ? 'โปรเจกต์' : 'บิลขาย',
+        routeZone: it.dispatch_route_zone || (ord?.route_code ? ROUTE_DEFINITIONS[ord.route_code].shortName : 'สาย 1 ในเมือง'),
+        techs: it.assigned_techs || [],
+        timeSlot: it.scheduled_time_slot || 'ทั้งวัน',
+        refNo: prj ? prj.id : (ord?.bill_no || ord?.sales_ref || it.id),
+        customerName: prj ? prj.customer_name : (ord?.customer_name || '-'),
+        location: prj ? `${prj.site_name} (${prj.location})` : (ord?.delivery_location || '-'),
+        detail: `${it.model_name}${it.serial_number ? ` (S/N: ${it.serial_number})` : ''}`,
+        prepStatusLabel: it.void_date ? `พร้อมส่ง (วอย ${it.void_date})` : 'พร้อมส่ง',
+        note: it.prep_note || ord?.site_notes
+      });
+    });
+    dailyRosterVisits.forEach(({ project: prj, visit: sv }) => {
+      rows.push({
+        id: `visit-${sv.id}`,
+        kindLabel: 'เข้าไซต์ PRJ',
+        routeZone: prj.route_code ? ROUTE_DEFINITIONS[prj.route_code].shortName : 'สาย 1 ในเมือง',
+        techs: sv.assigned_techs || [],
+        timeSlot: sv.time_slot || 'ทั้งวัน',
+        refNo: `${prj.id} (${sv.id})`,
+        customerName: prj.customer_name,
+        location: `${prj.site_name} — ${prj.location}`,
+        detail: `${sv.visit_scope}${sv.items_to_take.length > 0 ? ` | เบิก: ${sv.items_to_take.map(x => `${x.name} x${x.qty}`).join(', ')}` : ''}`,
+        prepStatusLabel: sv.prep_status === 'ready_for_pickup' ? 'ของพร้อมขึ้นรถ' : sv.prep_status === 'prepping' ? 'กำลังเทส/ติดวอย' : 'รอตัดสต๊อก'
+      });
+    });
+    dailyRosterRepairs.forEach(t => {
+      rows.push({
+        id: `rep-${t.id}`,
+        kindLabel: 'ส่งคืนซ่อม',
+        routeZone: t.dispatch_route_zone || (t.route_code ? ROUTE_DEFINITIONS[t.route_code].shortName : 'สาย 1 ในเมือง'),
+        techs: t.assigned_techs || [],
+        timeSlot: t.scheduled_time_slot || 'ทั้งวัน',
+        refNo: t.ticket_no,
+        customerName: t.customer_name,
+        location: t.delivery_location || t.district || '-',
+        detail: `${t.device_model || 'เครื่องซ่อม'} (S/N: ${t.walkin_sn || '-'})`,
+        prepStatusLabel: 'ซ่อมเสร็จพร้อมส่งคืน',
+        note: t.repair_detail || undefined
+      });
+    });
+    return rows;
+  }, [dailyRosterItems, dailyRosterVisits, dailyRosterRepairs, orders, projects]);
+
+  const openScheduleJobModal = (
+    target:
+      | { kind: 'item'; item: Item; title: string; subtitle: string; defaultRoute: string }
+      | { kind: 'repair'; ticket: RepairTicket; title: string; subtitle: string; defaultRoute: string }
+  ) => {
+    setScheduleTarget(target);
+    setSchedDate(rosterDate || getLocalDateStr(1));
+    setSchedTimeSlot('ทั้งวัน');
+    let autoRoute = target.defaultRoute;
+    if (target.kind === 'repair') {
+      const rc = target.ticket.route_code || getRouteByDistrict(target.ticket.district || '');
+      autoRoute = ROUTE_DEFINITIONS[rc]?.name || ROUTE_DEFINITIONS.route_5.name;
+    } else {
+      const ord = orders.find(o => o.id === target.item.order_id);
+      const prj = projects.find(p => p.id === target.item.project_id);
+      const dist = prj?.district || ord?.district || '';
+      const rc = ord?.route_code || (dist ? getRouteByDistrict(dist) : 'route_5');
+      autoRoute = ROUTE_DEFINITIONS[rc]?.name || ROUTE_DEFINITIONS.route_5.name;
+    }
+    setSchedRouteZone(ROUTE_ZONE_OPTIONS.includes(autoRoute) ? autoRoute : ROUTE_DEFINITIONS.route_5.name);
+    setSchedTechs([]);
+  };
+
+  const handleConfirmScheduleJob = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!scheduleTarget) return;
+    if (schedTechs.length === 0) {
+      alert('กรุณาเลือกช่าง Onsite อย่างน้อย 1 คน');
+      return;
+    }
+    if (scheduleTarget.kind === 'item') {
+      await scheduleItemDispatch(scheduleTarget.item.id, {
+        scheduled_date: schedDate,
+        scheduled_time_slot: schedTimeSlot,
+        dispatch_route_zone: schedRouteZone,
+        assigned_techs: schedTechs,
+        job_category: scheduleTarget.item.project_id ? 'installation' : 'delivery'
+      });
+      showToast(`ลงตารางวิ่งงาน ${scheduleTarget.title} วันที่ ${formatDateDMY(schedDate)} เรียบร้อย`);
+    } else {
+      await scheduleRepairDispatch(scheduleTarget.ticket.id, {
+        scheduled_date: schedDate,
+        scheduled_time_slot: schedTimeSlot,
+        dispatch_route_zone: schedRouteZone,
+        assigned_techs: schedTechs
+      });
+      showToast(`ลงตารางส่งคืน ${scheduleTarget.ticket.ticket_no} วันที่ ${formatDateDMY(schedDate)} เรียบร้อย`);
+    }
+    setScheduleTarget(null);
+  };
+
+  // ---- Site Visit Dispatch Modal State (PRJ-...) ----
+  const [dispatchProjectId, setDispatchProjectId] = useState<string | null>(null);
+  const [showScheduleForm, setShowScheduleForm] = useState(false);
+  const [visitDate, setVisitDate] = useState(() => getLocalDateStr(1));
+  const [visitTimeSlot, setVisitTimeSlot] = useState('09:00 - 17:00');
+  const [visitTechs, setVisitTechs] = useState<string[]>([]);
+  const [visitScope, setVisitScope] = useState('');
+  const [visitItemQtyMap, setVisitItemQtyMap] = useState<Record<string, number>>({});
+
+  const dispatchProject = useMemo(
+    () => (dispatchProjectId ? projects.find(p => p.id === dispatchProjectId) || null : null),
+    [projects, dispatchProjectId]
+  );
+
+  const openSiteVisitDispatchModal = (prj: Project, openForm = false) => {
+    setDispatchProjectId(prj.id);
+    setShowScheduleForm(openForm);
+    setVisitDate(getLocalDateStr(1));
+    setVisitTimeSlot('09:00 - 17:00');
+    setVisitTechs([]);
+    setVisitScope('');
+    const initQty: Record<string, number> = {};
+    (prj.items || []).forEach(it => {
+      initQty[it.id] = 0;
+    });
+    setVisitItemQtyMap(initQty);
+  };
+
+  const handleSubmitScheduleSiteVisit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!dispatchProject) return;
+    if (visitTechs.length === 0) {
+      alert('กรุณาเลือกช่าง Onsite อย่างน้อย 1 คนสำหรับรอบเข้าไซต์นี้');
+      return;
+    }
+    if (!visitScope.trim()) {
+      alert('กรุณาระบุขอบเขตงานที่จะทำในวันเข้าไซต์');
+      return;
+    }
+    const itemsToTake: SiteVisitItemRef[] = (dispatchProject.items || [])
+      .map(pi => ({
+        product_id: pi.product_id,
+        project_item_id: pi.id,
+        name: pi.model_name,
+        item_type: pi.item_type,
+        qty: Math.max(0, visitItemQtyMap[pi.id] || 0)
+      }))
+      .filter(it => it.qty > 0);
+
+    const created = scheduleSiteVisit(dispatchProject.id, {
+      visit_date: visitDate,
+      time_slot: visitTimeSlot,
+      assigned_techs: visitTechs,
+      visit_scope: visitScope.trim(),
+      items_to_take: itemsToTake
+    });
+    if (created) {
+      showToast(`นัดเข้าไซต์ ${dispatchProject.id} วันที่ ${formatDateDMY(visitDate)} (${visitTechs.join(', ')}) — ส่งคิวเบิกของแล้ว`);
+      setShowScheduleForm(false);
+    }
+  };
 
   const [trackerTicketId, setTrackerTicketId] = useState<string | null>(null);
   const trackerTicket = trackerTicketId ? repairTickets.find(t => t.id === trackerTicketId) : null;
@@ -810,12 +1094,19 @@ export const FrontdeskView: React.FC = () => {
     showToast('ลูกค้ารับเครื่องซ่อมเองที่หน้าร้าน — ปิดงานเรียบร้อยแล้ว');
   };
 
-  // 2) ส่งเข้าคิวจัดสายรถ (ให้ช่าง Onsite ส่งคืน)
+  // 2) ส่งเข้าคิวจัดสายรถ (ให้ช่าง Onsite ส่งคืน) -> เปิด Modal ลงตารางวิ่งงานทันที
   const confirmQueueForDispatch = async () => {
     if (!trackerTicket) return;
-    await queueRepairTicketForDispatch(trackerTicket.id);
+    const targetTicket = trackerTicket;
+    await queueRepairTicketForDispatch(targetTicket.id);
     closeTracker();
-    showToast('ส่งเครื่องซ่อมเข้าคิวจัดสายรถเรียบร้อยแล้ว');
+    openScheduleJobModal({
+      kind: 'repair',
+      ticket: targetTicket,
+      title: `${targetTicket.ticket_no} — ${targetTicket.device_model || 'เครื่องซ่อม'}`,
+      subtitle: targetTicket.customer_name,
+      defaultRoute: 'สาย 1 ในเมือง'
+    });
   };
 
 
@@ -848,65 +1139,482 @@ export const FrontdeskView: React.FC = () => {
       <ToastBanner message={toast} onClose={() => setToast('')} />
 
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div>
-          <h2 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white flex items-center gap-2">
-            <ClipboardList className="w-6 h-6 text-[#FF6B00]" />
-            ฝ่ายหน้าร้าน · รับแจ้ง & จัดส่ง
-          </h2>
-          <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-0.5">
-            รับเครื่องซ่อม · รับแจ้งเหตุ Onsite · จัดส่งมอบ · ติดตามงานซ่อม/RMA
-          </p>
+      <div className="space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div>
+            <h2 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white flex items-center gap-2.5">
+              <ClipboardList className="w-7 h-7 text-[#FF6B00]" />
+              <span>หน้างานหน้าร้าน (รับซ่อม · จัดคิวรถ · ตามงาน)</span>
+            </h2>
+            <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">
+              กดเลือกเมนูด้านล่างตามงานที่ต้องการทำได้เลยครับ
+            </p>
+          </div>
         </div>
-        <div className="flex items-center gap-1 p-1 rounded-2xl bg-slate-100 dark:bg-white/[0.04] border border-slate-200 dark:border-white/[0.08] self-start flex-wrap">
+
+        {/* "วันนี้ต้องทำอะไรบ้าง?" 3-Card Quick Action Guide (Elderly-friendly) */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <button
             type="button"
             onClick={() => setActiveTab('counter')}
-            className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold transition-colors cursor-pointer ${activeTab === 'counter'
-              ? 'bg-white dark:bg-white/[0.1] text-[#FF6B00] shadow-sm'
-              : 'text-slate-500 dark:text-slate-400'
+            className="text-left p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-500/10 border-2 border-emerald-300 dark:border-emerald-500/35 hover:border-emerald-500 transition cursor-pointer flex items-center justify-between gap-3 min-h-[76px]"
+          >
+            <div>
+              <div className="text-xs font-bold text-emerald-800 dark:text-emerald-300">1. ซ่อมเสร็จแล้ว รอโทรตามลูกค้า</div>
+              <div className="text-2xl font-black text-emerald-900 dark:text-white font-mono mt-0.5">
+                {pickupReadyTickets.length} <span className="text-sm font-bold">เครื่อง</span>
+              </div>
+            </div>
+            <PhoneCall className="w-8 h-8 text-emerald-600 dark:text-emerald-400 shrink-0" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('scheduler')}
+            className="text-left p-4 rounded-2xl bg-amber-50 dark:bg-[#FF6B00]/10 border-2 border-amber-300 dark:border-[#FF6B00]/40 hover:border-[#FF6B00] transition cursor-pointer flex items-center justify-between gap-3 min-h-[76px]"
+          >
+            <div>
+              <div className="text-xs font-bold text-amber-900 dark:text-amber-300">2. ของพร้อมส่ง รอลงตารางรถ</div>
+              <div className="text-2xl font-black text-amber-950 dark:text-white font-mono mt-0.5">
+                {unscheduledReadyItems.length + unscheduledReadyRepairs.length} <span className="text-sm font-bold">งาน</span>
+              </div>
+            </div>
+            <Calendar className="w-8 h-8 text-[#FF6B00] shrink-0" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('scheduler');
+            }}
+            className="text-left p-4 rounded-2xl bg-indigo-50 dark:bg-indigo-500/10 border-2 border-indigo-300 dark:border-indigo-500/35 hover:border-indigo-500 transition cursor-pointer flex items-center justify-between gap-3 min-h-[76px]"
+          >
+            <div>
+              <div className="text-xs font-bold text-indigo-900 dark:text-indigo-300">3. ตารางรถวันที่ {formatDateDMY(rosterDate)}</div>
+              <div className="text-2xl font-black text-indigo-950 dark:text-white font-mono mt-0.5">
+                {morningBriefingRows.length} <span className="text-sm font-bold">งาน</span>
+              </div>
+            </div>
+            <Truck className="w-8 h-8 text-indigo-600 dark:text-indigo-400 shrink-0" />
+          </button>
+        </div>
+
+        {/* 4 Large High-Contrast Navigation Tabs (Min 52px height, Clear Thai) */}
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-2 p-1.5 rounded-2xl bg-slate-100 dark:bg-white/[0.04] border border-slate-200 dark:border-white/[0.08]">
+          <button
+            type="button"
+            onClick={() => setActiveTab('counter')}
+            className={`px-4 py-3 min-h-[52px] rounded-xl text-sm font-extrabold transition-all cursor-pointer flex items-center justify-center gap-2 ${activeTab === 'counter'
+              ? 'bg-[#FF6B00] text-black shadow-md'
+              : 'text-slate-700 dark:text-slate-200 hover:bg-white/70 dark:hover:bg-white/[0.06]'
               }`}
           >
-            เคาน์เตอร์
+            <Store className="w-4 h-4 shrink-0" />
+            <span>1. รับงานหน้าร้าน</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('scheduler')}
+            className={`px-4 py-3 min-h-[52px] rounded-xl text-sm font-extrabold transition-all cursor-pointer flex items-center justify-center gap-2 ${activeTab === 'scheduler'
+              ? 'bg-[#FF6B00] text-black shadow-md'
+              : 'text-slate-700 dark:text-slate-200 hover:bg-white/70 dark:hover:bg-white/[0.06]'
+              }`}
+          >
+            <Calendar className="w-4 h-4 shrink-0" />
+            <span>2. จัดคิวส่งพรุ่งนี้</span>
+            <span className={`px-2 py-0.5 rounded-full text-xs font-mono font-black ${
+              activeTab === 'scheduler' ? 'bg-black/15 text-black' : 'bg-[#FF6B00]/20 text-[#C2410C] dark:text-[#FF6B00]'
+            }`}>
+              {unscheduledReadyItems.length + unscheduledReadyRepairs.length}
+            </span>
           </button>
           <button
             type="button"
             onClick={() => setActiveTab('tracker')}
-            className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold transition-colors cursor-pointer ${activeTab === 'tracker'
-              ? 'bg-white dark:bg-white/[0.1] text-[#FF6B00] shadow-sm'
-              : 'text-slate-500 dark:text-slate-400'
+            className={`px-4 py-3 min-h-[52px] rounded-xl text-sm font-extrabold transition-all cursor-pointer flex items-center justify-center gap-2 ${activeTab === 'tracker'
+              ? 'bg-[#FF6B00] text-black shadow-md'
+              : 'text-slate-700 dark:text-slate-200 hover:bg-white/70 dark:hover:bg-white/[0.06]'
               }`}
           >
-            ติดตามงานซ่อม & RMA
+            <Search className="w-4 h-4 shrink-0" />
+            <span>3. ตามงานซ่อม</span>
           </button>
           <button
             type="button"
             onClick={() => setActiveTab('prep_ready')}
-            className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold transition-colors cursor-pointer inline-flex items-center gap-1.5 ${activeTab === 'prep_ready'
-              ? 'bg-white dark:bg-white/[0.1] text-[#FF6B00] shadow-sm'
-              : 'text-slate-500 dark:text-slate-400'
+            className={`px-4 py-3 min-h-[52px] rounded-xl text-sm font-extrabold transition-all cursor-pointer flex items-center justify-center gap-2 ${activeTab === 'prep_ready'
+              ? 'bg-[#FF6B00] text-black shadow-md'
+              : 'text-slate-700 dark:text-slate-200 hover:bg-white/70 dark:hover:bg-white/[0.06]'
               }`}
           >
-            <span>เช็คของพร้อมปล่อย</span>
-            <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono bg-sky-500/15 text-sky-700 dark:text-sky-300">
+            <PackageCheck className="w-4 h-4 shrink-0" />
+            <span>4. เช็คของพร้อมปล่อย</span>
+            <span className={`px-2 py-0.5 rounded-full text-xs font-mono font-black ${
+              activeTab === 'prep_ready' ? 'bg-black/15 text-black' : 'bg-sky-500/20 text-sky-700 dark:text-sky-300'
+            }`}>
               {prepReadyOverviewItems.length}
             </span>
           </button>
           <button
             type="button"
             onClick={() => setActiveTab('onsite_summary')}
-            className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold transition-colors cursor-pointer inline-flex items-center gap-1.5 ${activeTab === 'onsite_summary'
-              ? 'bg-white dark:bg-white/[0.1] text-[#FF6B00] shadow-sm'
-              : 'text-slate-500 dark:text-slate-400'
+            className={`col-span-2 lg:col-span-1 px-4 py-3 min-h-[52px] rounded-xl text-sm font-extrabold transition-all cursor-pointer flex items-center justify-center gap-2 ${activeTab === 'onsite_summary'
+              ? 'bg-[#FF6B00] text-black shadow-md'
+              : 'text-slate-700 dark:text-slate-200 hover:bg-white/70 dark:hover:bg-white/[0.06]'
               }`}
           >
-            <span>สรุปงานช่าง Onsite</span>
-            <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono bg-emerald-500/15 text-emerald-700 dark:text-emerald-300">
+            <CheckCircle2 className="w-4 h-4 shrink-0" />
+            <span>5. สรุปงานวันนี้</span>
+            <span className={`px-2 py-0.5 rounded-full text-xs font-mono font-black ${
+              activeTab === 'onsite_summary' ? 'bg-black/15 text-black' : 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-300'
+            }`}>
               {todayOnsiteCount}
             </span>
           </button>
         </div>
       </div>
+
+      {/* ===================== 1-DAY ADVANCE SCHEDULER TAB ===================== */}
+      {activeTab === 'scheduler' && (
+        <div className="space-y-6">
+          {/* Panel 1: งานพร้อมรอจัดคิว */}
+          <QueueSection
+            icon={<PackageCheck className="w-6 h-6" />}
+            title="ขั้นที่ 1: เลือกงานที่พร้อมส่ง เพื่อลงตารางรถพรุ่งนี้"
+            count={unscheduledReadyItems.length + unscheduledReadyRepairs.length}
+            accent="amber"
+            emptyText="ยอดเยี่ยม! ไม่มีงานค้างรอจัดคิวแล้ว"
+          >
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {step1PageEntries.map(entry => {
+                if (entry.kind === 'item') {
+                  const it = entry.item;
+                  const ord = orders.find(o => o.id === it.order_id);
+                  const prj = projects.find(p => p.id === it.project_id);
+                  const due = prj?.due_date || ord?.delivery_date;
+                  const urg = getDeliveryUrgency(due);
+                  return (
+                    <div key={it.id} className="p-3.5 rounded-2xl bg-white dark:bg-white/[0.03] border border-slate-200 dark:border-white/[0.08] flex flex-col justify-between gap-2.5 text-xs">
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <span className="font-mono font-extrabold text-[#FF6B00]">
+                            {prj ? prj.id : (ord?.bill_no || ord?.sales_ref || it.id)}
+                          </span>
+                          {urg.hasDate && (
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${
+                              urg.daysRemaining < 0
+                                ? 'bg-rose-100 text-rose-900 dark:bg-rose-500/20 dark:text-rose-200'
+                                : urg.daysRemaining === 0
+                                  ? 'bg-orange-100 text-orange-900 dark:bg-[#FF6B00]/25 dark:text-orange-200'
+                                  : urg.daysRemaining <= 5
+                                    ? 'bg-amber-100 text-amber-900 dark:bg-amber-500/20 dark:text-amber-300'
+                                    : 'bg-emerald-100 text-emerald-900 dark:bg-emerald-500/15 dark:text-emerald-300'
+                            }`}>
+                              {urg.daysRemaining < 0
+                                ? (prj ? `เกินกำหนด ${urg.overdueDays} วัน • เสี่ยงโดนปรับ!` : `เกินกำหนด ${urg.overdueDays} วัน`)
+                                : urg.daysRemaining === 0
+                                  ? 'วันนี้'
+                                  : `เหลืออีก ${urg.daysRemaining} วัน`}
+                            </span>
+                          )}
+                        </div>
+                        <div className="font-bold text-slate-900 dark:text-white">{prj ? prj.customer_name : (ord?.customer_name || '-')}</div>
+                        <div className="text-slate-700 dark:text-slate-200">{it.model_name}</div>
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] font-mono text-slate-500 dark:text-slate-400">
+                          <span>S/N: {it.serial_number || '-'}</span>
+                          {it.void_date && <span>• วอย {it.void_date}</span>}
+                          <span className="font-sans font-bold text-[#FF6B00]">
+                            • วันส่ง: {due ? formatDateDMY(due) : 'ยังไม่ระบุ'}
+                          </span>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          openScheduleJobModal({
+                            kind: 'item',
+                            item: it,
+                            title: `${prj ? prj.id : (ord?.sales_ref || it.id)} — ${it.model_name}`,
+                            subtitle: prj ? `${prj.customer_name} (${prj.site_name})` : (ord?.customer_name || '-'),
+                            defaultRoute: 'สาย 1 ในเมือง'
+                          })
+                        }
+                        className="w-full py-2 rounded-xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold text-xs cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
+                      >
+                        <Calendar className="w-3.5 h-3.5" />
+                        <span>ลงตารางวิ่งงาน (Schedule Job)</span>
+                      </button>
+                    </div>
+                  );
+                }
+
+                const t = entry.ticket;
+                const urg = getDeliveryUrgency(t.due_date);
+                return (
+                  <div key={t.id} className="p-3.5 rounded-2xl bg-white dark:bg-white/[0.03] border border-cyan-300 dark:border-cyan-500/30 flex flex-col justify-between gap-2.5 text-xs">
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <span className="font-mono font-extrabold text-cyan-700 dark:text-cyan-300">
+                          {t.ticket_no} (ส่งคืนซ่อม)
+                        </span>
+                        {urg.hasDate && (
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${
+                            urg.daysRemaining < 0
+                              ? 'bg-rose-100 text-rose-900 dark:bg-rose-500/20 dark:text-rose-200'
+                              : urg.daysRemaining === 0
+                                ? 'bg-orange-100 text-orange-900 dark:bg-[#FF6B00]/25 dark:text-orange-200'
+                                : urg.daysRemaining <= 5
+                                  ? 'bg-amber-100 text-amber-900 dark:bg-amber-500/20 dark:text-amber-300'
+                                  : 'bg-emerald-100 text-emerald-900 dark:bg-emerald-500/15 dark:text-emerald-300'
+                          }`}>
+                            {urg.daysRemaining < 0
+                              ? `เกินกำหนด ${urg.overdueDays} วัน`
+                              : urg.daysRemaining === 0
+                                ? 'วันนี้'
+                                : `เหลืออีก ${urg.daysRemaining} วัน`}
+                          </span>
+                        )}
+                      </div>
+                      <div className="font-bold text-slate-900 dark:text-white">{t.customer_name}</div>
+                      <div className="text-slate-700 dark:text-slate-200">{t.device_model || 'เครื่องซ่อม'}</div>
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] font-mono text-slate-500 dark:text-slate-400">
+                        <span>S/N: {t.walkin_sn || '-'} • {t.district || '-'}</span>
+                        <span className="font-sans font-bold text-cyan-700 dark:text-cyan-300">
+                          • วันนัดส่ง: {t.due_date ? formatDateDMY(t.due_date) : 'ยังไม่ระบุ'}
+                        </span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        openScheduleJobModal({
+                          kind: 'repair',
+                          ticket: t,
+                          title: `${t.ticket_no} — ${t.device_model || 'เครื่องซ่อม'}`,
+                          subtitle: t.customer_name,
+                          defaultRoute: 'สาย 1 ในเมือง'
+                        })
+                      }
+                      className="w-full py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-extrabold text-xs cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
+                    >
+                      <Calendar className="w-3.5 h-3.5" />
+                      <span>ลงตารางวิ่งงาน (Schedule Job)</span>
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+            {step1TotalPages > 1 && (
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-3 mt-1 border-t border-slate-200 dark:border-white/[0.08] text-xs">
+                <span className="text-slate-600 dark:text-slate-400 font-medium">
+                  แสดง <strong>{step1Start + 1}–{Math.min(step1Start + STEP1_PAGE_SIZE, step1Combined.length)}</strong> จากทั้งหมด <strong>{step1Combined.length}</strong> งาน
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={safeStep1Page <= 1}
+                    onClick={() => setStep1Page(p => Math.max(1, p - 1))}
+                    className="px-3.5 py-2 min-h-[38px] rounded-xl bg-white dark:bg-white/[0.05] hover:bg-slate-100 dark:hover:bg-white/[0.1] disabled:opacity-40 disabled:cursor-not-allowed border border-slate-300 dark:border-white/[0.12] text-slate-800 dark:text-slate-200 font-bold transition active:scale-95 cursor-pointer"
+                  >
+                    ← ย้อนกลับ
+                  </button>
+                  <span className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-white/[0.06] font-mono font-bold text-slate-800 dark:text-white">
+                    หน้า {safeStep1Page} / {step1TotalPages}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={safeStep1Page >= step1TotalPages}
+                    onClick={() => setStep1Page(p => Math.min(step1TotalPages, p + 1))}
+                    className="px-3.5 py-2 min-h-[38px] rounded-xl bg-[#FF6B00] hover:bg-[#FF8A24] disabled:opacity-40 disabled:cursor-not-allowed text-black font-extrabold transition active:scale-95 cursor-pointer shadow-sm"
+                  >
+                    ถัดไป →
+                  </button>
+                </div>
+              </div>
+            )}
+          </QueueSection>
+
+          {/* Panel 1.5: จัดคิวนัดเข้าไซต์งานโปรเจกต์ (PRJ) */}
+          <QueueSection
+            icon={<Building2 className="w-6 h-6" />}
+            title="งานโปรเจกต์ / จัดทีมเข้าไซต์ (PRJ)"
+            count={urgentSortedProjects.filter(p => p.status !== 'completed').length}
+            accent="purple"
+            emptyText="ยังไม่มีงานโปรเจกต์ในระบบ"
+          >
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {urgentSortedProjects.filter(p => p.status !== 'completed').map((prj) => {
+                const latestLog =
+                  prj.daily_logs && prj.daily_logs.length > 0
+                    ? prj.daily_logs[prj.daily_logs.length - 1]
+                    : null;
+                const pct = latestLog ? latestLog.progress_percent : 0;
+                const risk = getProjectDeadlineRisk(prj.due_date, prj.status);
+                const visitCount = prj.site_visits?.length || 0;
+                const completedVisitCount = (prj.site_visits || []).filter(v => v.visit_status === 'completed').length;
+                return (
+                  <div
+                    key={prj.id}
+                    onClick={() => openSiteVisitDispatchModal(prj, false)}
+                    className="rounded-2xl border border-purple-300 dark:border-purple-500/30 hover:border-purple-500 bg-white dark:bg-white/[0.03] p-4 space-y-2.5 cursor-pointer transition hover:shadow-md"
+                  >
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-mono font-extrabold px-2 py-0.5 rounded-lg bg-purple-600 text-white">
+                          {prj.id}
+                        </span>
+                        <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full border ${risk.badgeCls}`}>
+                          {risk.label}
+                        </span>
+                      </div>
+                      <span className="text-xs font-mono font-extrabold text-purple-700 dark:text-purple-300">
+                        คืบหน้า {pct}%
+                      </span>
+                    </div>
+                    <div>
+                      <div className="text-sm font-extrabold text-slate-900 dark:text-white">
+                        {prj.site_name}
+                      </div>
+                      <div className="text-xs text-slate-600 dark:text-slate-300">
+                        ลูกค้า: <b>{prj.customer_name}</b>
+                        {prj.due_date ? ` · กำหนดส่ง ${formatDateDMY(prj.due_date)}` : ''}
+                      </div>
+                    </div>
+                    <div className="w-full h-2 rounded-full bg-slate-200 dark:bg-white/10 overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-r from-purple-500 to-emerald-500 transition-all"
+                        style={{ width: `${Math.min(100, Math.max(0, pct))}%` }}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between gap-2 text-[11px] pt-1">
+                      <span className="text-slate-600 dark:text-slate-300 font-semibold">
+                        นัดเข้าไซต์ {visitCount} รอบ (เสร็จ {completedVisitCount})
+                      </span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openSiteVisitDispatchModal(prj, true);
+                        }}
+                        className="px-3 py-1.5 rounded-xl bg-[#FF6B00] hover:bg-[#FF8A24] text-black font-extrabold text-xs cursor-pointer flex items-center gap-1 shadow-sm"
+                      >
+                        <Calendar className="w-3.5 h-3.5" />
+                        <span>+ นัดเข้าไซต์ &amp; จัดชุดช่าง</span>
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </QueueSection>
+
+          {/* Panel 2: ตารางจัด Job ล่วงหน้า (Daily Dispatch Roster) */}
+          <div className="liquid-glass rounded-3xl p-5 sm:p-6 border border-white/[0.08] space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h3 className="text-base sm:text-lg font-black text-slate-900 dark:text-white flex items-center gap-2">
+                  <Truck className="w-6 h-6 text-[#FF6B00]" />
+                  <span>ขั้นที่ 2: ตารางรถวิ่งงานประจำวัน</span>
+                  <span className="px-2.5 py-0.5 rounded-full text-sm font-mono font-extrabold bg-[#FF6B00]/15 text-[#C2410C] dark:text-[#FF6B00]">
+                    {morningBriefingRows.length} งาน
+                  </span>
+                </h3>
+                <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 mt-0.5">
+                  เลือกวันที่ต้องการดู แล้วกดปุ่มสีส้มด้านขวาเพื่อพิมพ์ใบประชุมเช้าได้เลยครับ
+                </p>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <input
+                  type="date"
+                  value={rosterDate}
+                  onChange={(e) => setRosterDate(e.target.value)}
+                  className="px-3.5 py-2.5 min-h-[44px] rounded-xl text-sm font-bold bg-white dark:bg-slate-800 border-2 border-slate-300 dark:border-slate-700 cursor-pointer"
+                />
+                <button
+                  type="button"
+                  onClick={() => setDispatchRosterOpen(true)}
+                  className="px-4 py-2.5 min-h-[44px] rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-black text-sm cursor-pointer flex items-center gap-2 shadow-md"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>พิมพ์ใบจัดคิวพรุ่งนี้ (Print)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMorningBriefingOpen(true)}
+                  className="px-5 py-2.5 min-h-[44px] rounded-xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-black text-sm cursor-pointer flex items-center gap-2 shadow-lg shadow-[#FF6B00]/20"
+                >
+                  <Printer className="w-5 h-5" />
+                  <span>พิมพ์ใบประชุมเช้า (A4)</span>
+                </button>
+              </div>
+            </div>
+
+            {morningBriefingRows.length === 0 ? (
+              <div className="p-8 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 text-center text-xs text-slate-500">
+                ยังไม่มีงานที่ลงตารางวิ่งงานสำหรับวันที่ {formatDateDMY(rosterDate)}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {morningBriefingRows.map(row => (
+                  <div key={row.id} className="p-3.5 rounded-2xl bg-white dark:bg-white/[0.03] border border-slate-200 dark:border-white/[0.08] flex flex-col justify-between gap-2 text-xs">
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <span className="font-mono font-extrabold text-[#FF6B00]">{row.refNo}</span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 text-indigo-800 dark:bg-indigo-500/20 dark:text-indigo-300">
+                            {row.routeZone} ({row.timeSlot})
+                          </span>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300">
+                            {row.prepStatusLabel}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="font-bold text-slate-900 dark:text-white">{row.customerName}</div>
+                      <div className="text-slate-700 dark:text-slate-200">{row.detail}</div>
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                        ทีมช่าง: <strong>{row.techs.join(', ') || '-'}</strong> • {row.location}
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-white/[0.06]">
+                      {row.id.startsWith('item-') && (
+                        <button
+                          type="button"
+                          onClick={() => unscheduleItemDispatch(row.id.replace('item-', ''))}
+                          className="px-2.5 py-1 rounded-lg bg-rose-100 dark:bg-rose-500/15 text-rose-700 dark:text-rose-300 text-[11px] font-bold cursor-pointer"
+                        >
+                          ถอดออกจากตาราง
+                        </button>
+                      )}
+                      {row.id.startsWith('rep-') && (
+                        <button
+                          type="button"
+                          onClick={() => unscheduleRepairDispatch(row.id.replace('rep-', ''))}
+                          className="px-2.5 py-1 rounded-lg bg-rose-100 dark:bg-rose-500/15 text-rose-700 dark:text-rose-300 text-[11px] font-bold cursor-pointer"
+                        >
+                          ถอดออกจากตาราง
+                        </button>
+                      )}
+                      {row.id.startsWith('visit-') && (() => {
+                        const vid = row.id.replace('visit-', '');
+                        const ownerPrj = projects.find(p => (p.site_visits || []).some(v => v.id === vid));
+                        return ownerPrj ? (
+                          <button
+                            type="button"
+                            onClick={() => removeSiteVisit(ownerPrj.id, vid)}
+                            className="px-2.5 py-1 rounded-lg bg-rose-100 dark:bg-rose-500/15 text-rose-700 dark:text-rose-300 text-[11px] font-bold cursor-pointer"
+                          >
+                            ยกเลิกรอบเข้าไซต์
+                          </button>
+                        ) : null;
+                      })()}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ===================== COUNTER TAB ===================== */}
       {activeTab === 'counter' && (
@@ -922,8 +1630,8 @@ export const FrontdeskView: React.FC = () => {
                 <Plus className="w-6 h-6" />
               </span>
               <span className="text-left flex-1">
-                <span className="block text-sm sm:text-base font-black">รับเครื่องซ่อมหน้าร้าน</span>
-                <span className="block text-[11px] sm:text-xs text-white/85">Walk-in Repair Intake</span>
+                <span className="block text-base sm:text-lg font-black">รับเครื่องซ่อมหน้าร้าน</span>
+                <span className="block text-xs sm:text-sm text-white/90">กดปุ่มนี้เมื่อลูกค้าถือเครื่องมาซ่อมที่ร้าน</span>
               </span>
               <ArrowRight className="w-5 h-5 opacity-70 group-hover:translate-x-0.5 transition-transform" />
             </button>
@@ -937,8 +1645,8 @@ export const FrontdeskView: React.FC = () => {
                 <PhoneCall className="w-6 h-6" />
               </span>
               <span className="text-left flex-1">
-                <span className="block text-sm sm:text-base font-black">รับแจ้งเหตุ / นัดช่างออกหน้างาน</span>
-                <span className="block text-[11px] sm:text-xs text-white/85">Onsite Service / Pickup Call</span>
+                <span className="block text-base sm:text-lg font-black">นัดช่างไปหาลูกค้า</span>
+                <span className="block text-xs sm:text-sm text-white/90">กดปุ่มนี้เมื่อลูกค้าโทรตามช่างไปดูหน้างาน / รับเครื่อง</span>
               </span>
               <ArrowRight className="w-5 h-5 opacity-70 group-hover:translate-x-0.5 transition-transform" />
             </button>
@@ -989,146 +1697,6 @@ export const FrontdeskView: React.FC = () => {
                   onOpen={() => openTracker(t.id)}
                 />
               ))}
-            </div>
-          </QueueSection>
-
-          {/* Prepared orders & Repair returns awaiting dispatch */}
-          <QueueSection
-            icon={<Truck className="w-5 h-5" />}
-            title="พร้อมส่งมอบ / จัดสายรถ"
-            count={readyItems.length + awaitingDispatchTickets.length}
-            accent="emerald"
-            emptyText="ยังไม่มีสินค้าหรือเครื่องซ่อมที่รอจัดส่ง"
-          >
-            <div className="space-y-3">
-              {/* Real-time search bar for Route Dispatch Queue */}
-              <div className="relative">
-                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input
-                  type="text"
-                  value={dispatchSearch}
-                  onChange={(e) => { setDispatchSearch(e.target.value); dispatchList.resetPage(); }}
-                  placeholder="ค้นหาชื่อลูกค้า / สินค้า / เลขบิล (ORD/REP) / สายรถ (1-6)..."
-                  className={`${modalInputClass} pl-9 pr-8`}
-                />
-                {dispatchSearch && (
-                  <button
-                    type="button"
-                    onClick={() => { setDispatchSearch(''); dispatchList.resetPage(); }}
-                    aria-label="ล้างคำค้นหา"
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 rounded-md text-slate-400 hover:text-slate-700 dark:hover:text-white"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                )}
-              </div>
-
-              {/* Quick Route Filter Pills */}
-              <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
-                <button
-                  type="button"
-                  onClick={() => { setDispatchRouteFilter('all'); dispatchList.resetPage(); }}
-                  className={`px-2.5 py-1 rounded-full text-[11px] font-bold whitespace-nowrap border transition cursor-pointer ${dispatchRouteFilter === 'all'
-                    ? 'bg-[#FF6B00] text-white border-[#FF6B00] shadow-sm'
-                    : 'bg-white dark:bg-white/[0.04] text-slate-600 dark:text-slate-300 border-slate-200 dark:border-white/[0.08] hover:border-[#FF6B00]/40'
-                    }`}
-                >
-                  ทุกสายรถ
-                </button>
-                {(Object.keys(ROUTE_DEFINITIONS) as RouteCode[]).map((rCode) => {
-                  const r = ROUTE_DEFINITIONS[rCode];
-                  const active = dispatchRouteFilter === rCode;
-                  return (
-                    <button
-                      key={rCode}
-                      type="button"
-                      onClick={() => { setDispatchRouteFilter(rCode); dispatchList.resetPage(); }}
-                      className={`px-2.5 py-1 rounded-full text-[11px] font-bold whitespace-nowrap border transition cursor-pointer ${active
-                        ? 'bg-[#FF6B00] text-white border-[#FF6B00] shadow-sm'
-                        : 'bg-white dark:bg-white/[0.04] text-slate-600 dark:text-slate-300 border-slate-200 dark:border-white/[0.08] hover:border-[#FF6B00]/40'
-                        }`}
-                    >
-                      {r.shortName}
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* Sort + Page Size + Pagination Controls */}
-              {sortedDispatchEntries.length > 0 && (
-                <ListControls
-                  from={dispatchList.from}
-                  to={dispatchList.to}
-                  total={dispatchList.total}
-                  page={dispatchList.page}
-                  totalPages={dispatchList.totalPages}
-                  pageSize={dispatchList.pageSize}
-                  sort={dispatchList.sort}
-                  onSortChange={dispatchList.setSort}
-                  onPageSizeChange={dispatchList.setPageSize}
-                  onPageChange={dispatchList.setPage}
-                  unit="งาน"
-                />
-              )}
-
-              {dispatchList.pageItems.length === 0 ? (
-                <p className="text-xs text-slate-500 dark:text-slate-400 italic py-4 text-center">
-                  ไม่พบรายการที่ตรงกับเงื่อนไขการค้นหา
-                </p>
-              ) : (
-                dispatchList.pageItems.map(entry => {
-                  if (entry.kind === 'item') {
-                    const { item, ord, urgency } = entry;
-                    const idLabel = ord?.sales_ref ? `${ord.sales_ref}${item.serial_number ? ` · ${item.serial_number}` : ''}` : (item.serial_number || item.id);
-                    return (
-                      <CompactCard
-                        key={entry.id}
-                        accent={urgency.tier === 'overdue' || urgency.tier === 'today' ? 'rose' : urgency.tier === 'soon' ? 'amber' : 'emerald'}
-                        cardHighlightClass={getUrgencyCardHighlight(urgency)}
-                        idLabel={idLabel}
-                        title={ord?.customer_name || 'ไม่ระบุลูกค้า'}
-                        subtitle={item.model_name}
-                        phone={ord?.customer_phone}
-                        routeCode={ord?.route_code}
-                        itemSummary={ord?.delivery_location}
-                        statusBadge={
-                          <span className="text-[10px] font-bold px-2 py-1 rounded-lg border bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 shrink-0">
-                            {item.status === 'ready_for_dispatch' ? 'ติดวอยแล้ว' : 'รอแปะวอย'}
-                          </span>
-                        }
-                        meta={renderUrgencyAlert(urgency)}
-                        actionLabel="จัดสายรถ & ส่งมอบ"
-                        actionIcon={<Truck className="w-4 h-4" />}
-                        onOpen={() => openDispatch(item.id)}
-                      />
-                    );
-                  }
-
-                  const { ticket, urgency } = entry;
-                  return (
-                    <CompactCard
-                      key={entry.id}
-                      accent={urgency.tier === 'overdue' || urgency.tier === 'today' ? 'rose' : 'amber'}
-                      cardHighlightClass={getUrgencyCardHighlight(urgency)}
-                      idLabel={ticket.ticket_no}
-                      title={ticket.customer_name}
-                      subtitle={ticket.device_model || 'ไม่ระบุรุ่นเครื่อง'}
-                      phone={ticket.customer_phone}
-                      routeCode={ticket.route_code}
-                      itemSummary={`ส่งคืนเครื่องซ่อม • S/N: ${ticket.walkin_sn || '-'} • อาการ: ${ticket.fault_symptom}`}
-                      statusBadge={
-                        <span className="px-2 py-0.5 rounded-lg border bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30 text-[10px] font-bold shrink-0">
-                          ส่งคืนเครื่องซ่อม ({ticket.ticket_no})
-                        </span>
-                      }
-                      meta={renderUrgencyAlert(urgency)}
-                      actionLabel="จัดสายรถ & ส่งมอบ"
-                      actionIcon={<Truck className="w-4 h-4" />}
-                      onOpen={() => openDispatchTicket(ticket.id)}
-                    />
-                  );
-                })
-              )}
             </div>
           </QueueSection>
 
@@ -1301,10 +1869,22 @@ export const FrontdeskView: React.FC = () => {
                             )}
                             <div className="flex flex-wrap items-center gap-2 text-[11px] font-semibold text-slate-700 dark:text-slate-200">
                               {ord?.customer_phone && (
-                                <span className="inline-flex items-center gap-1">
-                                  <Phone className="w-3 h-3 text-slate-500 dark:text-slate-400" />
-                                  {ord.customer_phone}
-                                </span>
+                                toTelHref(ord.customer_phone) ? (
+                                  <a
+                                    href={toTelHref(ord.customer_phone)!}
+                                    onClick={(e) => e.stopPropagation()}
+                                    title="กดเพื่อโทรออก"
+                                    className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-300 hover:underline cursor-pointer"
+                                  >
+                                    <Phone className="w-3 h-3" />
+                                    {ord.customer_phone}
+                                  </a>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1">
+                                    <Phone className="w-3 h-3 text-slate-500 dark:text-slate-400" />
+                                    {ord.customer_phone}
+                                  </span>
+                                )
                               )}
                               {rMeta && (
                                 <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold border ${rMeta.badgeBg} ${rMeta.badgeBorder} ${rMeta.badgeText}`}>
@@ -1486,91 +2066,6 @@ export const FrontdeskView: React.FC = () => {
                     </div>
                   </div>
                 ))}
-              </div>
-            </div>
-          </QueueSection>
-
-          {/* Section 2: Project Progress */}
-          <QueueSection
-            icon={<Building2 className="w-5 h-5" />}
-            title="ความคืบหน้างานโปรเจกต์ / ติดตั้ง (แจ้งหัวหน้าฝ่ายช่าง)"
-            count={projects.length}
-            accent="purple"
-            emptyText="ยังไม่มีงานโปรเจกต์ในระบบ"
-          >
-            <div className="space-y-3">
-              <ListControls
-                from={projectsProgressList.from}
-                to={projectsProgressList.to}
-                total={projectsProgressList.total}
-                page={projectsProgressList.page}
-                totalPages={projectsProgressList.totalPages}
-                pageSize={projectsProgressList.pageSize}
-                sort={projectsProgressList.sort}
-                onSortChange={projectsProgressList.setSort}
-                onPageSizeChange={projectsProgressList.setPageSize}
-                onPageChange={projectsProgressList.setPage}
-                pageSizeOptions={[10, 20, 30]}
-                unit="โครงการ"
-              />
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {projectsProgressList.pageItems.map((prj) => {
-                  const latestLog =
-                    prj.daily_logs && prj.daily_logs.length > 0
-                      ? prj.daily_logs[prj.daily_logs.length - 1]
-                      : null;
-                  const pct =
-                    prj.status === 'completed' ? 100 : latestLog ? latestLog.progress_percent : 0;
-                  return (
-                    <div
-                      key={prj.id}
-                      className="rounded-2xl border border-purple-300 dark:border-purple-500/30 bg-white dark:bg-white/[0.03] p-4 space-y-2.5"
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs font-mono font-extrabold px-2 py-0.5 rounded-lg bg-purple-600 text-white">
-                          {prj.id}
-                        </span>
-                        <span className="text-xs font-mono font-extrabold text-purple-700 dark:text-purple-300">
-                          คืบหน้า {pct}%
-                        </span>
-                      </div>
-                      <div>
-                        <div className="text-sm font-extrabold text-slate-900 dark:text-white">
-                          {prj.site_name}
-                        </div>
-                        <div className="text-xs text-slate-600 dark:text-slate-300">
-                          ลูกค้า: <b>{prj.customer_name}</b>
-                          {prj.due_date ? ` · กำหนดส่ง ${formatDateDMY(prj.due_date)}` : ''}
-                        </div>
-                      </div>
-                      <div className="w-full h-2 rounded-full bg-slate-200 dark:bg-white/10 overflow-hidden">
-                        <div
-                          className="h-full bg-gradient-to-r from-purple-500 to-emerald-500 transition-all"
-                          style={{ width: `${Math.min(100, Math.max(0, pct))}%` }}
-                        />
-                      </div>
-                      <div className="rounded-xl p-2.5 bg-slate-50 dark:bg-white/[0.04] border border-slate-200 dark:border-white/[0.08] text-xs">
-                        {latestLog ? (
-                          <>
-                            <div className="font-semibold text-slate-800 dark:text-slate-100">
-                              อัปเดตล่าสุด: {latestLog.note || '-'}
-                            </div>
-                            <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                              โดย {latestLog.tech_name} · {formatDateDMY(latestLog.date)}
-                            </div>
-                          </>
-                        ) : (
-                          <span className="text-slate-500 dark:text-slate-400">
-                            ยังไม่มีบันทึกความคืบหน้ารายวันจากช่าง Onsite
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-[11px] font-bold text-slate-600 dark:text-slate-300">
-                        ทีมช่าง: {prj.assigned_techs?.length ? prj.assigned_techs.join(', ') : 'ยังไม่ระบุ'}
-                      </div>
-                    </div>
-                  );
-                })}
               </div>
             </div>
           </QueueSection>
@@ -1844,9 +2339,19 @@ export const FrontdeskView: React.FC = () => {
                 </span>
               </div>
               {dispatchOrder?.customer_phone && (
-                <div className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-300">
-                  <Phone className="w-3.5 h-3.5" /> {dispatchOrder.customer_phone}
-                </div>
+                toTelHref(dispatchOrder.customer_phone) ? (
+                  <a
+                    href={toTelHref(dispatchOrder.customer_phone)!}
+                    title="กดเพื่อโทรออก"
+                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 dark:text-emerald-300 hover:underline cursor-pointer"
+                  >
+                    <Phone className="w-3.5 h-3.5" /> {dispatchOrder.customer_phone}
+                  </a>
+                ) : (
+                  <div className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-300">
+                    <Phone className="w-3.5 h-3.5" /> {dispatchOrder.customer_phone}
+                  </div>
+                )
               )}
               {dispatchOrder?.delivery_location && (
                 <div className="flex items-start gap-1.5 text-xs text-slate-600 dark:text-slate-300">
@@ -1976,9 +2481,19 @@ export const FrontdeskView: React.FC = () => {
                 {pickupOrder?.customer_name || 'ไม่ระบุลูกค้า'}
               </div>
               {pickupOrder?.customer_phone && (
-                <div className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-300">
-                  <Phone className="w-3.5 h-3.5" /> {pickupOrder.customer_phone}
-                </div>
+                toTelHref(pickupOrder.customer_phone) ? (
+                  <a
+                    href={toTelHref(pickupOrder.customer_phone)!}
+                    title="กดเพื่อโทรออก"
+                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 dark:text-emerald-300 hover:underline cursor-pointer"
+                  >
+                    <Phone className="w-3.5 h-3.5" /> {pickupOrder.customer_phone}
+                  </a>
+                ) : (
+                  <div className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-300">
+                    <Phone className="w-3.5 h-3.5" /> {pickupOrder.customer_phone}
+                  </div>
+                )
               )}
               <div className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-300">
                 <Hash className="w-3.5 h-3.5" /> S/N: {pickupItem.serial_number || '-'}
@@ -2007,59 +2522,25 @@ export const FrontdeskView: React.FC = () => {
         accentClass="border-[#FF6B00]/40"
         footer={
           trackerTicket ? (
-            <div className="flex flex-wrap gap-2">
+            <div className="flex items-center justify-between gap-2 w-full">
+              <button
+                type="button"
+                onClick={() => setPrintModalTicket(trackerTicket)}
+                className={modalSecondaryBtnClass}
+              >
+                <Printer className="w-4 h-4 text-[#FF6B00]" />
+                <span>พิมพ์ใบรับซ่อม</span>
+              </button>
               <button type="button" onClick={closeTracker} className={modalSecondaryBtnClass}>
                 ปิด
               </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setPrintModalTicket(trackerTicket);
-                }}
-                className={modalSecondaryBtnClass}
-              >
-                <Printer className="w-4 h-4" />
-                พิมพ์ใบรับซ่อม
-              </button>
-              {trackerTicket.repair_status === 'ready_pickup' && handoverMode === 'none' && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => setHandoverMode('self_pickup')}
-                    className={modalSecondaryBtnClass}
-                  >
-                    <Store className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                    ลูกค้ารับเองหน้าร้าน (ปิดงานทันที)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={confirmQueueForDispatch}
-                    className={modalPrimaryBtnClass}
-                  >
-                    <Send className="w-4 h-4" />
-                    ส่งเข้าคิวจัดสายรถ (ให้ช่าง Onsite ส่งคืน)
-                  </button>
-                </>
-              )}
-              {trackerTicket.repair_status === 'ready_pickup' && handoverMode === 'self_pickup' && (
-                <>
-                  <button type="button" onClick={resetHandover} className={modalSecondaryBtnClass}>
-                    <X className="w-4 h-4" />
-                    ยกเลิก
-                  </button>
-                  <button type="button" onClick={confirmSelfPickup} className={modalPrimaryBtnClass}>
-                    <CheckCircle2 className="w-4 h-4" />
-                    ยืนยันลูกค้ารับเอง (ปิดงานทันที)
-                  </button>
-                </>
-              )}
             </div>
           ) : undefined
         }
       >
         {trackerTicket && (
-          <div className="space-y-4">
-            {/* Status + key info */}
+          <div className="space-y-3.5">
+            {/* Status + Received Date */}
             <div className="flex items-center justify-between gap-2 flex-wrap">
               {renderLifecycleBadge(trackerTicket)}
               <span className="text-xs text-slate-500 dark:text-slate-400">
@@ -2067,32 +2548,58 @@ export const FrontdeskView: React.FC = () => {
               </span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              <div className="rounded-xl border border-slate-200 dark:border-white/[0.08] p-3">
-                <p className="text-[11px] text-slate-500 dark:text-slate-400 mb-0.5">ลูกค้า</p>
-                <p className="text-sm font-bold text-slate-900 dark:text-white">{trackerTicket.customer_name}</p>
-                {trackerTicket.customer_phone && (
-                  <p className="text-xs text-slate-600 dark:text-slate-300 flex items-center gap-1 mt-0.5">
-                    <Phone className="w-3 h-3" /> {trackerTicket.customer_phone}
-                  </p>
+            {/* Unified Info Card (ลดกล่องซ้ำซ้อน อ่านจบในกรอบเดียว) */}
+            <div className="rounded-2xl border border-slate-200 dark:border-white/[0.08] bg-slate-50/70 dark:bg-white/[0.02] p-3.5 space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <div>
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400">ลูกค้า</span>
+                  <div className="text-sm font-bold text-slate-900 dark:text-white mt-0.5">{trackerTicket.customer_name}</div>
+                  {trackerTicket.customer_phone && (
+                    toTelHref(trackerTicket.customer_phone) ? (
+                      <a
+                        href={toTelHref(trackerTicket.customer_phone)!}
+                        title="กดเพื่อโทรออก"
+                        className="inline-flex items-center gap-1 mt-0.5 text-emerald-700 dark:text-emerald-300 font-semibold hover:underline cursor-pointer"
+                      >
+                        <Phone className="w-3 h-3" /> {trackerTicket.customer_phone}
+                      </a>
+                    ) : (
+                      <div className="text-slate-600 dark:text-slate-300 flex items-center gap-1 mt-0.5">
+                        <Phone className="w-3 h-3" /> {trackerTicket.customer_phone}
+                      </div>
+                    )
+                  )}
+                </div>
+                <div>
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400">เครื่อง / S/N</span>
+                  <div className="text-sm font-bold text-slate-900 dark:text-white mt-0.5">{trackerTicket.device_model || '-'}</div>
+                  <div className="text-slate-600 dark:text-slate-300 font-mono flex items-center gap-1 mt-0.5">
+                    <Hash className="w-3 h-3" /> {trackerTicket.walkin_sn || '-'}
+                  </div>
+                </div>
+                <div>
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400">ช่างซ่อมผู้รับผิดชอบ</span>
+                  <div className="text-sm font-bold text-slate-900 dark:text-white mt-0.5">{trackerTicket.repaired_by || 'ยังไม่มอบหมาย'}</div>
+                </div>
+                <div>
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400">ค่าซ่อม (ประมาณ)</span>
+                  <div className="text-sm font-extrabold font-mono text-[#FF6B00] mt-0.5">
+                    {trackerTicket.repair_cost != null ? `฿${trackerTicket.repair_cost.toLocaleString()}` : 'รอประเมิน'}
+                  </div>
+                </div>
+              </div>
+
+              <div className="pt-2.5 border-t border-slate-200 dark:border-white/[0.08] space-y-1.5 text-xs">
+                <div>
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400">อาการเสีย: </span>
+                  <span className="text-slate-900 dark:text-white font-medium">{trackerTicket.fault_symptom}</span>
+                </div>
+                {trackerTicket.repair_detail && (
+                  <div>
+                    <span className="text-[11px] text-slate-500 dark:text-slate-400">รายละเอียดการซ่อม: </span>
+                    <span className="text-slate-800 dark:text-slate-200">{trackerTicket.repair_detail}</span>
+                  </div>
                 )}
-              </div>
-              <div className="rounded-xl border border-slate-200 dark:border-white/[0.08] p-3">
-                <p className="text-[11px] text-slate-500 dark:text-slate-400 mb-0.5">เครื่อง / S/N</p>
-                <p className="text-sm font-bold text-slate-900 dark:text-white">{trackerTicket.device_model || '-'}</p>
-                <p className="text-xs text-slate-600 dark:text-slate-300 flex items-center gap-1 mt-0.5">
-                  <Hash className="w-3 h-3" /> {trackerTicket.walkin_sn || '-'}
-                </p>
-              </div>
-              <div className="rounded-xl border border-slate-200 dark:border-white/[0.08] p-3">
-                <p className="text-[11px] text-slate-500 dark:text-slate-400 mb-0.5">ช่างซ่อมผู้รับผิดชอบ</p>
-                <p className="text-sm font-bold text-slate-900 dark:text-white">{trackerTicket.repaired_by || 'ยังไม่มอบหมาย'}</p>
-              </div>
-              <div className="rounded-xl border border-slate-200 dark:border-white/[0.08] p-3">
-                <p className="text-[11px] text-slate-500 dark:text-slate-400 mb-0.5">ค่าซ่อม (ประมาณ)</p>
-                <p className="text-sm font-bold text-slate-900 dark:text-white">
-                  {trackerTicket.repair_cost != null ? `${trackerTicket.repair_cost.toLocaleString()} ฿` : 'รอประเมิน'}
-                </p>
               </div>
             </div>
 
@@ -2115,18 +2622,6 @@ export const FrontdeskView: React.FC = () => {
                 )}
               </div>
             )}
-
-            {/* Symptom / repair detail */}
-            <div className="rounded-xl border border-slate-200 dark:border-white/[0.08] p-3 space-y-1.5">
-              <p className="text-[11px] text-slate-500 dark:text-slate-400">อาการเสีย</p>
-              <p className="text-sm text-slate-800 dark:text-slate-200">{trackerTicket.fault_symptom}</p>
-              {trackerTicket.repair_detail && (
-                <>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 pt-1">รายละเอียดการซ่อม</p>
-                  <p className="text-sm text-slate-800 dark:text-slate-200">{trackerTicket.repair_detail}</p>
-                </>
-              )}
-            </div>
 
             {/* ===== Handover panel (ready_pickup) ===== */}
             {trackerTicket.repair_status === 'ready_pickup' && (
@@ -2203,6 +2698,475 @@ export const FrontdeskView: React.FC = () => {
         isOpen={!!printModalTicket}
         onClose={() => setPrintModalTicket(null)}
         ticket={printModalTicket}
+      />
+
+      {/* ========================================================================= */}
+      {/* SITE VISIT DISPATCH MODAL (PRJ-..., createPortal, z-[9999])               */}
+      {/* ========================================================================= */}
+      {dispatchProject && createPortal(
+        <div
+          className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-4 animate-fade-in overscroll-contain"
+          onClick={() => setDispatchProjectId(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-t-3xl sm:rounded-3xl w-full sm:w-[92vw] max-w-4xl max-h-[94dvh] sm:max-h-[90vh] flex flex-col overflow-hidden pb-[env(safe-area-inset-bottom)] animate-modal-pop"
+          >
+            <div className="sm:hidden flex justify-center pt-2.5 pb-1 flex-shrink-0">
+              <span className="h-1.5 w-10 rounded-full bg-slate-300 dark:bg-white/20" />
+            </div>
+
+            <div className="p-4 sm:p-5 bg-slate-50/90 dark:bg-slate-900/95 border-b border-slate-200 dark:border-slate-800 flex items-start justify-between gap-2 flex-shrink-0">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="px-2.5 py-0.5 rounded-lg bg-purple-600 text-white font-mono font-extrabold text-xs">
+                    {dispatchProject.id}
+                  </span>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold border ${getProjectDeadlineRisk(dispatchProject.due_date, dispatchProject.status).badgeCls}`}>
+                    {getProjectDeadlineRisk(dispatchProject.due_date, dispatchProject.status).label}
+                  </span>
+                </div>
+                <h3 className="text-sm sm:text-base font-extrabold mt-1">{dispatchProject.site_name}</h3>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  ลูกค้า: {dispatchProject.customer_name} ({dispatchProject.phone}) • กำหนดส่ง {formatDateDMY(dispatchProject.due_date)}
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {!showScheduleForm && (
+                  <button
+                    type="button"
+                    onClick={() => setShowScheduleForm(true)}
+                    className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] text-black font-extrabold text-xs cursor-pointer flex items-center gap-1.5 shadow-sm"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>+ นัดวันเข้าไซต์ &amp; จัดชุดช่าง</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setDispatchProjectId(null)}
+                  className="p-2 rounded-xl bg-slate-100 dark:bg-white/[0.06] text-slate-500 dark:text-slate-300 cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto overscroll-contain p-4 sm:p-6 space-y-5 text-xs">
+              {showScheduleForm && (
+                <form onSubmit={handleSubmitScheduleSiteVisit} className="p-4 rounded-2xl bg-indigo-50/70 dark:bg-indigo-500/10 border border-indigo-200 dark:border-indigo-500/30 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-sm font-extrabold text-indigo-900 dark:text-indigo-200 flex items-center gap-1.5">
+                      <Calendar className="w-4 h-4" />
+                      <span>นัดวันเข้าไซต์ &amp; จัดชุดช่าง (แจ้งจัดซื้อ/ช่างเตรียมล่วงหน้า 1 วัน)</span>
+                    </h4>
+                    <button
+                      type="button"
+                      onClick={() => setShowScheduleForm(false)}
+                      className="text-[11px] font-bold text-slate-500 hover:text-slate-900 dark:hover:text-white cursor-pointer"
+                    >
+                      ซ่อนฟอร์ม
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                      <label className={modalLabelClass}>วันที่เข้าไซต์ (Visit Date) *</label>
+                      <input
+                        type="date"
+                        required
+                        value={visitDate}
+                        onChange={(e) => setVisitDate(e.target.value)}
+                        className={modalInputClass}
+                      />
+                    </div>
+                    <div>
+                      <label className={modalLabelClass}>ช่วงเวลา *</label>
+                      <select
+                        value={visitTimeSlot}
+                        onChange={(e) => setVisitTimeSlot(e.target.value)}
+                        className={modalInputClass}
+                      >
+                        <option value="09:00 - 17:00">เต็มวัน (09:00 - 17:00)</option>
+                        <option value="ช่วงเช้า (08:30-12:00)">ช่วงเช้า (08:30 - 12:00)</option>
+                        <option value="ช่วงบ่าย (13:00-17:30)">ช่วงบ่าย (13:00 - 17:30)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className={modalLabelClass}>ขอบเขตงานวันนี้ *</label>
+                      <input
+                        type="text"
+                        required
+                        value={visitScope}
+                        onChange={(e) => setVisitScope(e.target.value)}
+                        placeholder="เช่น เดินสายอาคาร 1 + ติด AP 8 ตัว"
+                        className={modalInputClass}
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className={modalLabelClass}>เลือกชุดช่าง Onsite สำหรับรอบนี้ *</label>
+                    <div className="flex flex-wrap gap-2">
+                      {(onsiteTechs.length > 0 ? onsiteTechs.map(u => u.name) : ['ช่างเอ', 'ช่างบี', 'ช่างซี', 'ช่างดี']).map(techName => {
+                        const selected = visitTechs.includes(techName);
+                        return (
+                          <button
+                            key={techName}
+                            type="button"
+                            onClick={() =>
+                              setVisitTechs(prev =>
+                                prev.includes(techName) ? prev.filter(t => t !== techName) : [...prev, techName]
+                              )
+                            }
+                            className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition cursor-pointer ${
+                              selected
+                                ? 'bg-[#FF6B00] text-black border-[#FF6B00] shadow-sm'
+                                : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700'
+                            }`}
+                          >
+                            {selected ? '✓ ' : ''}{techName}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className={modalLabelClass}>เลือกสินค้า / อุปกรณ์ที่จะเบิกไปหน้างานในรอบนี้ (ไม่บังคับ)</label>
+                    <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                      {(dispatchProject.items || []).map(pi => {
+                        const remaining = Math.max(0, pi.qty_required - pi.qty_allocated);
+                        return (
+                          <div key={pi.id} className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 flex items-center justify-between gap-2">
+                            <div className="min-w-0 flex-1">
+                              <div className="font-bold text-slate-900 dark:text-white truncate">{pi.model_name}</div>
+                              <div className="text-[10px] text-slate-500 font-mono">
+                                {pi.item_type === 'equipment' ? 'อุปกรณ์หลัก (ต้องเทส/ติดวอย)' : 'วัสดุสิ้นเปลือง/ค่าแรง'} • ค้างเบิก {remaining}/{pi.qty_required}
+                              </div>
+                            </div>
+                            <input
+                              type="number"
+                              min={0}
+                              max={pi.qty_required}
+                              value={visitItemQtyMap[pi.id] ?? 0}
+                              onChange={(e) => {
+                                const val = Math.max(0, parseInt(e.target.value) || 0);
+                                setVisitItemQtyMap(prev => ({ ...prev, [pi.id]: val }));
+                              }}
+                              className="w-20 rounded-lg px-2 py-1 text-xs font-mono text-center bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700"
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-end gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowScheduleForm(false)}
+                      className={modalSecondaryBtnClass}
+                    >
+                      ยกเลิก
+                    </button>
+                    <button
+                      type="submit"
+                      className={modalPrimaryBtnClass}
+                    >
+                      <Check className="w-4 h-4 inline mr-1" />
+                      บันทึกนัดเข้าไซต์ &amp; แจ้งเตรียมของ
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              <div className="space-y-2">
+                <h4 className="font-extrabold text-slate-800 dark:text-slate-200">
+                  รายการอุปกรณ์ &amp; งานคงค้างในโปรเจกต์ ({dispatchProject.items.length} รายการ)
+                </h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {dispatchProject.items.map(pi => {
+                    const remaining = Math.max(0, pi.qty_required - pi.qty_allocated);
+                    return (
+                      <div key={pi.id} className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="font-bold truncate">{pi.model_name}</div>
+                          <div className="text-[10px] text-slate-500 font-mono">
+                            สัญญา {pi.qty_required} • เบิกแล้ว {pi.qty_allocated} • ค้าง {remaining}
+                          </div>
+                        </div>
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${
+                          remaining === 0
+                            ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300'
+                            : 'bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300'
+                        }`}>
+                          {remaining === 0 ? 'เบิกครบ' : `ค้าง ${remaining}`}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <h4 className="font-extrabold text-slate-800 dark:text-slate-200">
+                  ตารางรอบเข้าไซต์ที่นัดหมายแล้ว ({dispatchProject.site_visits?.length || 0} รอบ)
+                </h4>
+                {!dispatchProject.site_visits || dispatchProject.site_visits.length === 0 ? (
+                  <div className="p-6 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 text-center text-slate-500">
+                    ยังไม่มีรอบเข้าไซต์ — กด &quot;+ นัดวันเข้าไซต์ &amp; จัดชุดช่าง&quot; ด้านบน
+                  </div>
+                ) : (
+                  <div className="space-y-2.5">
+                    {dispatchProject.site_visits.map((sv, idx) => (
+                      <div key={sv.id} className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 space-y-1.5">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono font-extrabold text-indigo-700 dark:text-indigo-300">
+                              รอบ #{idx + 1} ({sv.id}) • {formatDateDMY(sv.visit_date)} ({sv.time_slot})
+                            </span>
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                              sv.prep_status === 'ready_for_pickup' || sv.prep_status === 'dispatched'
+                                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300'
+                                : sv.prep_status === 'prepping'
+                                  ? 'bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300'
+                                  : 'bg-rose-100 text-rose-800 dark:bg-rose-500/20 dark:text-rose-300'
+                            }`}>
+                              {sv.prep_status === 'pending_stock' ? 'รอจัดซื้อตัดสต๊อก' :
+                               sv.prep_status === 'prepping' ? 'ช่างเตรียมกำลังเทส/ติดวอย' :
+                               sv.prep_status === 'ready_for_pickup' ? 'ของพร้อมขึ้นรถ' : 'จ่ายออกแล้ว'}
+                            </span>
+                          </div>
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                            sv.visit_status === 'completed'
+                              ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300'
+                              : 'bg-sky-100 text-sky-800 dark:bg-sky-500/20 dark:text-sky-300'
+                          }`}>
+                            {sv.visit_status === 'completed' ? 'ปิดรอบแล้ว' : sv.visit_status === 'in_progress' ? 'กำลังเข้าไซต์' : 'รอดำเนินการ'}
+                          </span>
+                        </div>
+                        <div className="font-bold text-slate-900 dark:text-white">{sv.visit_scope}</div>
+                        <div className="text-[11px] text-slate-600 dark:text-slate-300">
+                          ทีมช่าง: <strong>{sv.assigned_techs.join(', ')}</strong>
+                          {sv.items_to_take.length > 0 && ` • รายการที่เบิก: ${sv.items_to_take.map(i => `${i.name} x${i.qty}`).join(', ')}`}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* ========================================================================= */}
+      {/* SCHEDULE JOB MODAL (z-[9999])                                             */}
+      {/* ========================================================================= */}
+      {scheduleTarget && createPortal(
+        <div
+          className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-4 animate-fade-in overscroll-contain"
+          onClick={() => setScheduleTarget(null)}
+        >
+          <form
+            onSubmit={handleConfirmScheduleJob}
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-t-3xl sm:rounded-3xl w-full sm:w-[92vw] max-w-lg p-5 space-y-4 pb-[env(safe-area-inset-bottom)] animate-modal-pop"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <h3 className="text-sm sm:text-base font-extrabold truncate">ลงตารางวิ่งงานล่วงหน้า (Schedule Job)</h3>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">{scheduleTarget.title} • {scheduleTarget.subtitle}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setScheduleTarget(null)}
+                className="p-2 rounded-xl bg-slate-100 dark:bg-white/[0.06] text-slate-500 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* ข้อมูลลูกค้า เบอร์โทร และสถานที่ส่งมอบ (ป้องกันลงคิวผิด) */}
+            {(() => {
+              let custName = '-';
+              let custPhone = '-';
+              let custDistrict = '-';
+              let custAddress = '-';
+              let jobDetail = '';
+              let dueStr = '';
+              if (scheduleTarget.kind === 'repair') {
+                const t = scheduleTarget.ticket;
+                custName = t.customer_name || '-';
+                custPhone = t.customer_phone || '-';
+                custDistrict = t.district || '-';
+                custAddress = t.district || '-';
+                jobDetail = `${t.device_model || 'เครื่องซ่อม'}${t.walkin_sn ? ` (S/N: ${t.walkin_sn})` : ''} — ${t.fault_symptom || ''}`;
+                dueStr = t.due_date ? formatDateDMY(t.due_date) : '';
+              } else {
+                const it = scheduleTarget.item;
+                const ord = orders.find(o => o.id === it.order_id);
+                const prj = projects.find(p => p.id === it.project_id);
+                custName = prj?.customer_name || ord?.customer_name || '-';
+                custPhone = prj?.phone || ord?.customer_phone || '-';
+                custDistrict = prj?.district || ord?.district || '-';
+                custAddress = prj?.location || ord?.delivery_location || '-';
+                jobDetail = `${it.model_name}${it.serial_number ? ` (S/N: ${it.serial_number})` : ''}${ord?.site_notes ? ` — ${ord.site_notes}` : ''}`;
+                const d = prj?.due_date || ord?.delivery_date;
+                dueStr = d ? formatDateDMY(d) : '';
+              }
+              return (
+                <div className="rounded-2xl border border-slate-200 dark:border-white/[0.08] bg-slate-50 dark:bg-white/[0.03] p-3 space-y-1.5 text-xs">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-extrabold text-slate-900 dark:text-white flex items-center gap-1.5">
+                      <User className="w-3.5 h-3.5 text-[#FF6B00] shrink-0" />
+                      <span>{custName}</span>
+                    </span>
+                    {toTelHref(custPhone) ? (
+                      <a
+                        href={toTelHref(custPhone)!}
+                        title="กดเพื่อโทรออก"
+                        className="font-mono font-bold text-emerald-700 dark:text-emerald-300 flex items-center gap-1 hover:underline cursor-pointer"
+                      >
+                        <Phone className="w-3 h-3 shrink-0" />
+                        <span>{custPhone}</span>
+                      </a>
+                    ) : (
+                      <span className="font-mono font-bold text-slate-500 flex items-center gap-1">
+                        <Phone className="w-3 h-3 shrink-0" />
+                        <span>{custPhone}</span>
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[11px] text-slate-600 dark:text-slate-300 flex items-start gap-1.5">
+                    <MapPin className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400 shrink-0 mt-0.5" />
+                    <span>
+                      <strong>{custDistrict}</strong> • {custAddress}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-slate-700 dark:text-slate-200 pt-1 border-t border-slate-200 dark:border-white/[0.06] flex flex-wrap items-center justify-between gap-2">
+                    <span className="truncate">{jobDetail}</span>
+                    {dueStr && (
+                      <span className="font-mono font-bold text-[#FF6B00] shrink-0">กำหนดส่ง: {dueStr}</span>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+              <div>
+                <label className={modalLabelClass}>วันที่วิ่งงาน (Scheduled Date) *</label>
+                <input
+                  type="date"
+                  required
+                  value={schedDate}
+                  onChange={(e) => setSchedDate(e.target.value)}
+                  className={modalInputClass}
+                />
+              </div>
+              <div>
+                <label className={modalLabelClass}>ช่วงเวลา *</label>
+                <select
+                  value={schedTimeSlot}
+                  onChange={(e) => setSchedTimeSlot(e.target.value as 'เช้า' | 'บ่าย' | 'ทั้งวัน')}
+                  className={modalInputClass}
+                >
+                  <option value="เช้า">ช่วงเช้า</option>
+                  <option value="บ่าย">ช่วงบ่าย</option>
+                  <option value="ทั้งวัน">ทั้งวัน</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="text-xs">
+              <label className={modalLabelClass}>สายรถ / โซน *</label>
+              <select
+                value={schedRouteZone}
+                onChange={(e) => setSchedRouteZone(e.target.value)}
+                className={modalInputClass}
+              >
+                {ROUTE_ZONE_OPTIONS.map(z => (
+                  <option key={z} value={z}>{z}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="text-xs">
+              <label className={modalLabelClass}>ทีมช่างที่รับผิดชอบ *</label>
+              <div className="flex flex-wrap gap-2">
+                {(onsiteTechs.length > 0 ? onsiteTechs.map(u => u.name) : ['ช่างเอ', 'ช่างบี', 'ช่างซี', 'ช่างดี']).map(techName => {
+                  const selected = schedTechs.includes(techName);
+                  return (
+                    <button
+                      key={techName}
+                      type="button"
+                      onClick={() =>
+                        setSchedTechs(prev =>
+                          prev.includes(techName) ? prev.filter(t => t !== techName) : [...prev, techName]
+                        )
+                      }
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition cursor-pointer ${
+                        selected
+                          ? 'bg-[#FF6B00] text-black border-[#FF6B00] shadow-sm'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700'
+                      }`}
+                    >
+                      {selected ? '✓ ' : ''}{techName}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setScheduleTarget(null)}
+                className={modalSecondaryBtnClass}
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="submit"
+                className={modalPrimaryBtnClass}
+              >
+                <Check className="w-4 h-4 inline mr-1" />
+                บันทึกลงตารางวิ่งงาน
+              </button>
+            </div>
+          </form>
+        </div>,
+        document.body
+      )}
+
+      {/* Morning Briefing A4 Print Preview Modal */}
+      <MorningBriefingPrintModal
+        isOpen={morningBriefingOpen}
+        onClose={() => setMorningBriefingOpen(false)}
+        targetDate={rosterDate}
+        onDateChange={(d) => setRosterDate(d)}
+        rows={morningBriefingRows}
+        preparedBy={currentUser?.name || 'หน้าร้าน'}
+      />
+
+      {/* Tomorrow / Daily Job Dispatch Roster Sheet (ONSITE SERVICE + INSTALLATION) */}
+      <OnsiteDispatchRosterModal
+        isOpen={dispatchRosterOpen}
+        onClose={() => setDispatchRosterOpen(false)}
+        targetDate={rosterDate}
+        onDateChange={(d) => setRosterDate(d)}
+        orders={orders}
+        items={items}
+        projects={projects}
+        repairTickets={repairTickets}
+        vehicleMap={vehicleMap}
+        onUpdateVehiclePlate={handleUpdateVehiclePlate}
+        customTeamBlocks={customTeamBlocks}
+        onAddCustomTeamBlock={handleAddCustomTeamBlock}
+        availableTechs={onsiteTechs.map(u => u.name)}
       />
 
       {/* Onsite Daily Report A4 Print Preview Modal */}

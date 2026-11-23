@@ -7,7 +7,7 @@ import {
   Sparkles, Layers, Trash2, Calendar, CreditCard,
   FileText, Truck, Search, ShoppingBag, X, Check,
   UserCheck, Pencil, TrendingUp, AlertTriangle, ShieldCheck,
-  Receipt, Package, Printer, Wifi, Server, Monitor, Wrench, FileCheck2
+  Receipt, Package, Printer, Wifi, Server, Monitor, Wrench, FileCheck2, Lock
 } from 'lucide-react';
 import {
   ROUTE_DEFINITIONS, getRouteByDistrict, RouteCode, BillType, PaymentTerm, DeliveryMode, OrderItem,
@@ -15,9 +15,10 @@ import {
   WARRANTY_PRESET_YEARS, formatThaiDateTime, Order,
   Project, ProjectItemType,
   Contract, BillingCategoryType, BillingSubType, BillingBadgeKey,
-  BILLING_BADGE_META, getOrderBillingBadgeKey
+  BILLING_BADGE_META, getOrderBillingBadgeKey, getProjectDeadlineRisk, formatDateDMY
 } from '../types';
 import { ListControls, useListControls } from './ListControls';
+import { isNonPrepCableOrConsumable } from '../utils/domainHelpers';
 import { ActivityTimeline } from './ActivityTimeline';
 import { OrderFormPrintModal } from './OrderFormPrintModal';
 
@@ -175,7 +176,7 @@ export const SalesView: React.FC = () => {
   const [ctrNotes, setCtrNotes] = useState('');
   const [ctrItems, setCtrItems] = useState<OrderItem[]>([]);
   const [detailOrder, setDetailOrder] = useState<Order | null>(null);
-  const [printTarget, setPrintTarget] = useState<{ order?: Order | null; project?: Project | null } | null>(null);
+  const [printTarget, setPrintTarget] = useState<{ order?: Order | null; project?: Project | null; initialBatchNo?: number | null } | null>(null);
 
   // ---- Project & Site Installation (PRJ-...) State ----
   const [isCreateProjectOpen, setIsCreateProjectOpen] = useState(false);
@@ -671,6 +672,18 @@ export const SalesView: React.FC = () => {
 
   const handleCloseCreateModal = () => setIsCreateModalOpen(false);
 
+  // เปิดบิลใหม่จากโปรเจกต์ที่ส่งมอบปิดงานแล้ว — ดึงเฉพาะข้อมูลลูกค้า & สถานที่ (ไม่ดึงรายการสินค้าเก่า)
+  const handleCreateFollowUpBillFromClosedProject = (prj: Project) => {
+    handleOpenCreateModal('addon');
+    setCustomerName(prj.customer_name || '');
+    setCustomerPhone(prj.phone || '');
+    setDistrict(prj.district || 'เมืองสุราษฎร์ธานี');
+    setDeliveryLoc(prj.location || '');
+    setSiteNotes(`งานเพิ่มเติม/แก้ไขต่อจากโปรเจกต์ที่ส่งมอบแล้ว ${prj.id} (${prj.site_name})`);
+    setOrderItems([]);
+    setDetailProjectId(null);
+  };
+
   // Open Catalog Modal
   const handleOpenCatalogModal = (target: 'order' | 'contract_order' | 'contract_template' | 'project_equipment' | 'project_consumable' | 'addon' = 'order') => {
     setCatalogTarget(target);
@@ -780,15 +793,16 @@ export const SalesView: React.FC = () => {
         .map(id => {
           const catItem = products.find(c => c.id === id);
           if (!catItem) return null;
+          const resolvedType: ProjectItemType = isNonPrepCableOrConsumable(catItem.name) ? 'consumable' : targetType;
           return {
             product_id: catItem.id,
             model_name: catItem.name,
-            item_type: targetType,
+            item_type: resolvedType,
             unit: catItem.unit,
             qty_required: modalSelectedMap[id] || 1,
             unit_cost: catItem.cost_price,
             unit_price: catItem.sell_price,
-            warranty_years: targetType === 'equipment' ? 1 : 0
+            warranty_years: resolvedType === 'equipment' ? 1 : 0
           };
         })
         .filter((x): x is NonNullable<typeof x> => x !== null);
@@ -1118,7 +1132,7 @@ export const SalesView: React.FC = () => {
       created_by: salespersonName,
       start_date: prjStartDate,
       due_date: prjDueDate,
-      assigned_techs: prjAssignedTechs,
+      assigned_techs: [],
       items: prjItems
     });
     setIsCreateProjectOpen(false);
@@ -1322,10 +1336,18 @@ export const SalesView: React.FC = () => {
                       </p>
                     </div>
 
-                    {/* Add-on attribution badges + field material request alert */}
+                    {/* Add-on attribution badges + deadline risk + scheduled visits summary */}
                     <div className="flex items-center gap-1.5 flex-wrap">
+                      {(() => {
+                        const risk = getProjectDeadlineRisk(prj.due_date, prj.status);
+                        return (
+                          <span className={`px-2 py-0.5 rounded-md text-[10px] font-extrabold border ${risk.badgeCls}`}>
+                            กำหนดส่ง {formatDateDMY(prj.due_date)} • {risk.label}
+                          </span>
+                        );
+                      })()}
                       <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 text-slate-800 border border-slate-300 dark:bg-white/[0.06] dark:text-slate-200 dark:border-white/[0.1]">
-                        งวดเบิก {prj.batches?.length || 0} งวด • คืบหน้า {latestProgress}%
+                        นัดเข้าไซต์ {prj.site_visits?.length || 0} รอบ • งวดเบิก {prj.batches?.length || 0} งวด • คืบหน้า {latestProgress}%
                       </span>
                       {addonSalesSet.map((saleName) => (
                         <span
@@ -1360,14 +1382,25 @@ export const SalesView: React.FC = () => {
                   </div>
 
                   <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-200 dark:border-white/[0.08]">
-                    <button
-                      type="button"
-                      onClick={(e) => handleOpenAddonModal(prj, e)}
-                      className="flex-1 py-2 px-3 rounded-xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-sm active:scale-95"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>+ แอดรายการเพิ่มเข้าโปรเจกต์ (Add-on)</span>
-                    </button>
+                    {prj.status === 'completed' ? (
+                      <button
+                        type="button"
+                        onClick={() => handleCreateFollowUpBillFromClosedProject(prj)}
+                        className="flex-1 py-2 px-3 rounded-xl bg-emerald-100 hover:bg-emerald-200 dark:bg-emerald-500/20 dark:hover:bg-emerald-500/30 text-emerald-900 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-500/40 font-extrabold text-xs transition cursor-pointer flex items-center justify-center gap-1.5 active:scale-95"
+                      >
+                        <FilePlus2 className="w-3.5 h-3.5" />
+                        <span>เปิดบิลใหม่จากลูกค้า/ไซต์นี้</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={(e) => handleOpenAddonModal(prj, e)}
+                        className="flex-1 py-2 px-3 rounded-xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-sm active:scale-95"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>+ แอดรายการเพิ่มเข้าโปรเจกต์ (Add-on)</span>
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => setDetailProjectId(prj.id)}
@@ -2617,45 +2650,19 @@ export const SalesView: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">กำหนดส่งมอบงาน (Due Date) *</label>
+                  <label className="block text-xs font-bold text-rose-700 dark:text-rose-300 mb-1">วันกำหนดส่งมอบห้ามช้า (Contract Deadline) *</label>
                   <input
                     type="date"
                     required
                     value={prjDueDate}
                     onChange={(e) => setPrjDueDate(e.target.value)}
-                    className="w-full rounded-xl px-3 py-2 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 font-mono focus:outline-none focus:border-purple-500"
+                    className="w-full rounded-xl px-3 py-2 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-rose-300 dark:border-rose-500/40 font-mono focus:outline-none focus:border-purple-500"
                   />
                 </div>
               </div>
 
-              {/* Assign Onsite Tech Team */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
-                  ทีมช่าง Onsite ประจำไซต์งานนี้ (เลือกได้หลายคน)
-                </label>
-                <div className="flex flex-wrap gap-2">
-                  {(onsiteUsersList.length > 0 ? onsiteUsersList.map(u => u.name) : ['ช่างเอ', 'ช่างบี', 'ช่างซี', 'ช่างดี']).map((techName) => {
-                    const selected = prjAssignedTechs.includes(techName);
-                    return (
-                      <button
-                        key={techName}
-                        type="button"
-                        onClick={() =>
-                          setPrjAssignedTechs(prev =>
-                            prev.includes(techName) ? prev.filter(t => t !== techName) : [...prev, techName]
-                          )
-                        }
-                        className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition cursor-pointer ${
-                          selected
-                            ? 'bg-purple-600 text-white border-purple-600 shadow-sm'
-                            : 'bg-slate-100 dark:bg-white/[0.04] text-slate-700 dark:text-slate-300 border-slate-300 dark:border-white/[0.1]'
-                        }`}
-                      >
-                        {selected ? '✓ ' : ''}{techName}
-                      </button>
-                    );
-                  })}
-                </div>
+              <div className="p-3 rounded-2xl bg-indigo-50 dark:bg-indigo-500/10 border border-indigo-200 dark:border-indigo-500/30 text-[11px] text-indigo-900 dark:text-indigo-200">
+                <strong>หมายเหตุการจัดทีมช่าง:</strong> ฝ่ายขายกำหนดเฉพาะขอบเขตงาน รายการสินค้า และวันกำหนดส่งมอบตามสัญญา — <strong>ฝ่ายหน้าร้าน (Front-Desk)</strong> จะเป็นผู้จัดชุดช่างและนัดวันเข้าไซต์รายวันให้เอง
               </div>
 
               {/* Separate Lists: อุปกรณ์หลัก vs วัสดุสิ้นเปลือง/ค่าแรง — เลือกผ่าน Product Catalog Modal */}
@@ -2906,25 +2913,51 @@ export const SalesView: React.FC = () => {
               const fin = getProjectFinancials(detailProject);
               return (
                 <div className="flex-1 overflow-y-auto overscroll-contain p-4 sm:p-5 space-y-4 text-xs">
-                  {/* Top action: Anyone in Sales can add an Add-on */}
-                  <div className="p-3.5 rounded-2xl bg-purple-50 dark:bg-purple-500/10 border border-purple-200 dark:border-purple-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div>
-                      <div className="font-extrabold text-purple-900 dark:text-purple-200">
-                        ระบบแอดรายการเพิ่มข้ามเซลล์ (Multi-Sales Add-On Attribution)
+                  {/* Top action: Lock Add-on when completed; allow opening a fresh follow-up bill with customer info only */}
+                  {detailProject.status === 'completed' ? (
+                    <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-500/10 border-2 border-emerald-300 dark:border-emerald-500/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="flex items-start gap-2.5">
+                        <div className="p-2 rounded-xl bg-emerald-600 text-white shrink-0">
+                          <Lock className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <div className="font-black text-sm text-emerald-900 dark:text-emerald-200">
+                            ส่งมอบปิดโปรเจกต์เรียบร้อยแล้ว (ล็อกการแก้ไขบิลเดิม)
+                          </div>
+                          <p className="text-[11px] text-emerald-800 dark:text-emerald-300/90 mt-0.5">
+                            โปรเจกต์นี้ปิดงานสมบูรณ์แล้ว ไม่สามารถเพิ่มหรือแก้ไขรายการในบิลนี้ได้ — หากมีงานเพิ่มเติมหรือแก้ไข กดเปิดบิลใหม่โดยดึงเฉพาะข้อมูลลูกค้าและสถานที่ (ไม่ดึงรายการสินค้าเก่า)
+                          </p>
+                        </div>
                       </div>
-                      <p className="text-[11px] text-purple-800/80 dark:text-purple-300/80">
-                        เซลล์ทุกคนสามารถแอดสินค้า/สายไฟ/ค่าแรงเพิ่มเข้าไซต์งานนี้ได้ ระบบจะระบุชื่อผู้แอดและแยกยอดตั้งต้น vs ยอดแอดเพิ่มอัตโนมัติ
-                      </p>
+                      <button
+                        type="button"
+                        onClick={() => handleCreateFollowUpBillFromClosedProject(detailProject)}
+                        className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-md shrink-0 active:scale-95"
+                      >
+                        <FilePlus2 className="w-4 h-4" />
+                        <span>+ เปิดบิลใหม่จากลูกค้า/ไซต์นี้</span>
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={(e) => handleOpenAddonModal(detailProject, e)}
-                      className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-md shrink-0"
-                    >
-                      <Plus className="w-4 h-4" />
-                      <span>+ แอดรายการเพิ่มเข้าโปรเจกต์ (Add-on)</span>
-                    </button>
-                  </div>
+                  ) : (
+                    <div className="p-3.5 rounded-2xl bg-purple-50 dark:bg-purple-500/10 border border-purple-200 dark:border-purple-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div>
+                        <div className="font-extrabold text-purple-900 dark:text-purple-200">
+                          ระบบแอดรายการเพิ่มข้ามเซลล์ (Multi-Sales Add-On Attribution)
+                        </div>
+                        <p className="text-[11px] text-purple-800/80 dark:text-purple-300/80">
+                          เซลล์ทุกคนสามารถแอดสินค้า/สายไฟ/ค่าแรงเพิ่มเข้าไซต์งานนี้ได้ ระบบจะระบุชื่อผู้แอดและแยกยอดตั้งต้น vs ยอดแอดเพิ่มอัตโนมัติ
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={(e) => handleOpenAddonModal(detailProject, e)}
+                        className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-md shrink-0"
+                      >
+                        <Plus className="w-4 h-4" />
+                        <span>+ แอดรายการเพิ่มเข้าโปรเจกต์ (Add-on)</span>
+                      </button>
+                    </div>
+                  )}
 
                   {/* Separate Subtotals: ยอดตั้งต้น vs ยอดแอดเพิ่ม */}
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
@@ -3013,6 +3046,73 @@ export const SalesView: React.FC = () => {
                       );
                     })}
                   </div>
+
+                  {/* Read-only Scheduled Site Visits */}
+                  <div className="space-y-2">
+                    <div className="font-bold text-slate-800 dark:text-slate-200 flex items-center justify-between gap-2">
+                      <span>ตารางนัดเข้าไซต์งาน (จัดทีมโดยหน้าร้าน) ({detailProject.site_visits?.length || 0} รอบ)</span>
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${getProjectDeadlineRisk(detailProject.due_date, detailProject.status).badgeCls}`}>
+                        {getProjectDeadlineRisk(detailProject.due_date, detailProject.status).label}
+                      </span>
+                    </div>
+                    {!detailProject.site_visits || detailProject.site_visits.length === 0 ? (
+                      <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-dashed border-slate-300 dark:border-slate-700 text-[11px] text-slate-500">
+                        รอหน้าร้านนัดวันเข้าไซต์ &amp; จัดชุดช่าง
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {detailProject.site_visits.map((sv, idx) => (
+                          <div key={sv.id} className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 space-y-1">
+                            <div className="flex items-center justify-between gap-1">
+                              <span className="font-mono font-bold text-indigo-700 dark:text-indigo-300">
+                                รอบ #{idx + 1} • {formatDateDMY(sv.visit_date)} ({sv.time_slot})
+                              </span>
+                              <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                                sv.visit_status === 'completed'
+                                  ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300'
+                                  : 'bg-sky-100 text-sky-800 dark:bg-sky-500/20 dark:text-sky-300'
+                              }`}>
+                                {sv.visit_status === 'completed' ? 'เสร็จสิ้น' : sv.visit_status === 'in_progress' ? 'กำลังเข้าไซต์' : 'นัดหมายแล้ว'}
+                              </span>
+                            </div>
+                            <div className="text-[11px] text-slate-700 dark:text-slate-200 font-semibold">{sv.visit_scope}</div>
+                            <div className="text-[10px] text-slate-500 dark:text-slate-400">
+                              ทีมช่าง: {sv.assigned_techs.join(', ') || '-'} • สิ่งที่จะนำไป: {sv.items_to_take.length} รายการ
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Released Batches with per-batch print */}
+                  {detailProject.batches && detailProject.batches.length > 0 && (
+                    <div className="space-y-2">
+                      <div className="font-bold text-slate-800 dark:text-slate-200">
+                        งวดเบิกของที่ปล่อยแล้ว ({detailProject.batches.length} งวด)
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {detailProject.batches.map((b) => (
+                          <div key={b.id} className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 flex items-center justify-between gap-2">
+                            <div className="min-w-0">
+                              <div className="font-bold text-purple-700 dark:text-purple-300">งวดที่ {b.batch_no}</div>
+                              <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
+                                {formatThaiDateTime(b.released_at)} • {b.items.length} รายการ
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setPrintTarget({ project: detailProject, initialBatchNo: b.batch_no })}
+                              className="px-2.5 py-1.5 rounded-lg bg-[#FF6B00]/15 hover:bg-[#FF6B00]/25 text-[#C2410C] dark:text-[#FF6B00] border border-[#FF6B00]/30 text-[11px] font-bold cursor-pointer flex items-center gap-1 shrink-0"
+                            >
+                              <Printer className="w-3 h-3" />
+                              <span>พิมพ์บิล งวดที่ {b.batch_no}</span>
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Activity Timeline */}
                   {detailProject.activity_logs && detailProject.activity_logs.length > 0 && (
@@ -4155,6 +4255,7 @@ export const SalesView: React.FC = () => {
         onClose={() => setPrintTarget(null)}
         order={printTarget?.order}
         project={printTarget?.project}
+        initialBatchNo={printTarget?.initialBatchNo ?? null}
       />
     </div>
   );

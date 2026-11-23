@@ -9,7 +9,8 @@ import {
 } from 'lucide-react';
 import {
   ROUTE_DEFINITIONS, RouteCode, PRODUCT_CATEGORY_LABELS, Item,
-  formatWarrantyDuration, getDeliveryUrgency, formatThaiDateTime
+  formatWarrantyDuration, getDeliveryUrgency, formatThaiDateTime,
+  formatDateDMY, getLocalDateStr
 } from '../types';
 import { ListControls, useListControls } from './ListControls';
 import { ActivityTimeline, LatestUpdateBadge } from './ActivityTimeline';
@@ -34,9 +35,9 @@ const renderDueBadge = (dueDateStr?: string | null, createdAtIso?: string | null
     urgency.tier === 'overdue'
       ? ` (เกินกำหนด ${urgency.overdueDays} วัน)`
       : urgency.tier === 'today'
-        ? ' (ส่งวันนี้!)'
-        : urgency.tier === 'soon'
-          ? ` (อีก ${urgency.daysRemaining} วัน)`
+        ? ' (วันนี้)'
+        : urgency.daysRemaining > 0
+          ? ` (เหลืออีก ${urgency.daysRemaining} วัน)`
           : '';
   return (
     <div className="mt-2 flex flex-wrap items-center gap-1.5">
@@ -688,16 +689,26 @@ export const PrepView: React.FC = () => {
 
                       <div>
                         {/* Project Batch Tag Banner */}
-                        {isProjectGroup && (
-                          <div className="mb-2.5 flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-purple-100 text-purple-900 border border-purple-300 dark:bg-purple-500/20 dark:text-purple-200 dark:border-purple-500/40">
-                            <span className="text-[11px] font-extrabold font-mono truncate">
-                              [โปรเจกต์] {group.project_id} • งวดเบิกที่ {group.project_batch_no || 1}
-                            </span>
-                            <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-purple-600 text-white shrink-0">
-                              เฉพาะอุปกรณ์หลัก
-                            </span>
-                          </div>
-                        )}
+                        {isProjectGroup && (() => {
+                          const linkedVisitId = group.items.find(it => it.site_visit_id)?.site_visit_id;
+                          const matchedVisit = linkedVisitId
+                            ? (project?.site_visits || []).find(v => v.id === linkedVisitId)
+                            : (project?.site_visits || []).find(v => v.visit_status !== 'completed');
+                          const isTomorrow = matchedVisit?.visit_date === getLocalDateStr(1);
+                          const visitLabel = matchedVisit
+                            ? (isTomorrow ? `เตรียมเข้าไซต์พรุ่งนี้ (${formatDateDMY(matchedVisit.visit_date)})` : `นัดเข้าไซต์วันที่ ${formatDateDMY(matchedVisit.visit_date)}`)
+                            : `งวดเบิกที่ ${group.project_batch_no || 1}`;
+                          return (
+                            <div className="mb-2.5 flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-purple-100 text-purple-900 border border-purple-300 dark:bg-purple-500/20 dark:text-purple-200 dark:border-purple-500/40">
+                              <span className="text-[11px] font-extrabold font-mono truncate">
+                                [{visitLabel}] {group.project_id}
+                              </span>
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-purple-600 text-white shrink-0">
+                                เฉพาะอุปกรณ์หลัก
+                              </span>
+                            </div>
+                          );
+                        })()}
 
                         {/* Step badges */}
                         <div className="flex items-center gap-1.5 flex-wrap mb-3">

@@ -52,6 +52,7 @@ export const App: React.FC = () => {
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isClearDemoModalOpen, setIsClearDemoModalOpen] = useState(false);
+  const [isResetDemoModalOpen, setIsResetDemoModalOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [showStaffLogin, setShowStaffLogin] = useState(false);
@@ -471,16 +472,13 @@ export const App: React.FC = () => {
             </button>
 
             <button
-              onClick={() => {
-                if (confirm('ต้องการรีเซ็ตข้อมูลตัวอย่างกลับเป็นค่าเริ่มต้นหรือไม่?')) {
-                  resetAllDemoData();
-                }
-              }}
-              title="รีเซ็ตข้อมูลตัวอย่าง"
-              aria-label="รีเซ็ตข้อมูลตัวอย่าง"
-              className="hidden sm:flex p-2 rounded-xl liquid-glass-card text-slate-400 hover:text-[#FF6B00] transition cursor-pointer min-w-[40px] min-h-[40px] items-center justify-center"
+              onClick={() => setIsResetDemoModalOpen(true)}
+              title="รีเซ็ตระบบเป็นข้อมูล Demo (เลือกเก็บ Catalog ไว้ได้)"
+              aria-label="รีเซ็ตระบบเป็นข้อมูล Demo"
+              className="hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-xl liquid-glass-card text-slate-600 dark:text-slate-300 hover:text-[#FF6B00] border border-slate-200 dark:border-white/[0.08] text-[11px] font-semibold transition-all duration-150 active:scale-[0.97] cursor-pointer min-h-[40px] whitespace-nowrap"
             >
-              <RotateCcw className="w-4 h-4" />
+              <RotateCcw className="w-3.5 h-3.5 flex-shrink-0" />
+              <span className="hidden 2xl:inline">รีเซ็ตเดโม่</span>
             </button>
 
             <button
@@ -582,7 +580,7 @@ export const App: React.FC = () => {
               </div>
 
               <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 dark:bg-amber-500/10 dark:border-amber-500/30 dark:text-slate-200 text-xs leading-relaxed mb-5">
-                ยืนยันการล้างข้อมูลทดสอบทั้งหมด (บิลขาย, PO, คิวงานซ่อม, ประวัติ Log) โดยจะยังคงรายการสินค้าและยอดสต๊อกในคลังไว้เหมือนเดิม?
+                ยืนยันการล้างข้อมูลทดสอบทั้งหมด (บิลขาย, PO, คิวงานซ่อม, งานโปรเจกต์, สัญญาเช่า/MA, ประวัติ Log) โดยจะยังคง <strong>Catalog สินค้า</strong> และ <strong>ยอดสต๊อกคงเหลือในคลัง</strong> ไว้ทั้งหมด?
               </div>
 
               <div className="flex items-center gap-2.5">
@@ -598,12 +596,98 @@ export const App: React.FC = () => {
                   onClick={() => {
                     clearDemoKeepStock();
                     setIsClearDemoModalOpen(false);
-                    setToastMessage('เคลียร์ข้อมูลทดสอบเรียบร้อย พร้อมเริ่มใช้งานจริง (คงเหลือข้อมูลคลังสินค้าไว้แล้ว)');
+                    setToastMessage('เคลียร์ข้อมูลทดสอบเรียบร้อย พร้อมเริ่มใช้งานจริง (คงเหลือสต๊อกและ Catalog ไว้แล้ว)');
                   }}
                   className="flex-1 px-4 py-2.5 min-h-[44px] rounded-2xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] hover:to-[#FF6B00] text-black font-extrabold text-xs transition-all duration-150 active:scale-[0.97] cursor-pointer shadow-lg shadow-[#FF6B00]/25 border border-white/20"
                 >
                   ยืนยันล้างข้อมูลทดสอบ
                 </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
+
+      {/* Reset Demo Data Modal (Keep Catalog vs Full Factory Reset) */}
+      {isResetDemoModalOpen &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-4 animate-fade-in"
+            onClick={() => setIsResetDemoModalOpen(false)}
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="reset-demo-modal-title"
+              onClick={(e) => e.stopPropagation()}
+              className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-t-3xl sm:rounded-3xl w-full sm:w-[95vw] max-w-md max-h-[92dvh] sm:max-h-[88dvh] overflow-y-auto overscroll-contain p-5 sm:p-6 pb-[max(1.25rem,env(safe-area-inset-bottom))] relative animate-modal-pop"
+            >
+              <div className="sm:hidden flex justify-center pt-1 pb-3">
+                <span className="h-1.5 w-10 rounded-full bg-slate-300 dark:bg-white/20" />
+              </div>
+              <button
+                onClick={() => setIsResetDemoModalOpen(false)}
+                aria-label="ปิดหน้าต่างรีเซ็ตเดโม่"
+                className="absolute top-3 right-3 sm:top-4 sm:right-4 p-2 rounded-xl text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/[0.06] transition-all duration-150 active:scale-[0.97] cursor-pointer min-w-[40px] min-h-[40px] flex items-center justify-center"
+              >
+                <X className="w-4 h-4" />
+              </button>
+
+              <div className="flex items-start gap-3 mb-4 pr-8">
+                <div className="p-2.5 rounded-2xl bg-orange-100 text-orange-700 border border-orange-300 dark:bg-[#FF6B00]/15 dark:text-[#FF8A24] dark:border-[#FF6B00]/30 flex-shrink-0">
+                  <RotateCcw className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 id="reset-demo-modal-title" className="text-base font-bold text-slate-900 dark:text-white">
+                    รีเซ็ตระบบเป็นข้อมูลทดลอง (Demo)
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    โหลดบิลตัวอย่าง สต๊อก และคิวงานกลับมาทดสอบใหม่
+                  </p>
+                </div>
+              </div>
+
+              <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 text-slate-700 dark:bg-white/[0.03] dark:border-white/[0.08] dark:text-slate-300 text-xs leading-relaxed mb-5 space-y-1.5">
+                <p>
+                  • <strong className="text-slate-900 dark:text-white">รีเซ็ตเดโม่ (เก็บ Catalog ไว้):</strong> คืนค่าบิลทดสอบ, PO, คิวงานช่าง และสต๊อกตัวอย่าง โดย <strong className="text-emerald-600 dark:text-emerald-400">คงรายการสินค้าใน Catalog ของคุณไว้ทั้งหมด</strong>
+                </p>
+                <p>
+                  • <strong className="text-slate-900 dark:text-white">รีเซ็ตทั้งหมดรวม Catalog:</strong> คืนค่าระบบและ Catalog กลับเป็นค่าเริ่มต้นชุดใหม่ของระบบ
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    resetAllDemoData({ preserveCatalog: true });
+                    setIsResetDemoModalOpen(false);
+                    setToastMessage('รีเซ็ตข้อมูลทดสอบ Demo เรียบร้อยแล้ว (เก็บ Catalog สินค้าไว้เหมือนเดิม)');
+                  }}
+                  className="w-full px-4 py-2.5 min-h-[44px] rounded-2xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] hover:to-[#FF6B00] text-black font-extrabold text-xs transition-all duration-150 active:scale-[0.97] cursor-pointer shadow-lg shadow-[#FF6B00]/25 border border-white/20"
+                >
+                  รีเซ็ตเดโม่ (เก็บ Catalog ไว้)
+                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsResetDemoModalOpen(false)}
+                    className="flex-1 px-4 py-2.5 min-h-[42px] rounded-2xl border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-white/[0.04] hover:bg-slate-200 dark:hover:bg-white/[0.08] text-slate-700 dark:text-slate-300 font-semibold text-xs transition-all duration-150 active:scale-[0.97] cursor-pointer"
+                  >
+                    ยกเลิก
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      resetAllDemoData({ preserveCatalog: false });
+                      setIsResetDemoModalOpen(false);
+                      setToastMessage('รีเซ็ตระบบและ Catalog กลับเป็นค่าเริ่มต้นทั้งหมดเรียบร้อยแล้ว');
+                    }}
+                    className="flex-1 px-4 py-2.5 min-h-[42px] rounded-2xl border border-rose-300 dark:border-rose-500/30 bg-rose-50 dark:bg-rose-500/10 hover:bg-rose-100 dark:hover:bg-rose-500/20 text-rose-700 dark:text-rose-300 font-semibold text-xs transition-all duration-150 active:scale-[0.97] cursor-pointer"
+                  >
+                    รีเซ็ตทั้งหมดรวม Catalog
+                  </button>
+                </div>
               </div>
             </div>
           </div>,

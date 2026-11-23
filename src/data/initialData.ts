@@ -11,23 +11,42 @@ const computeExpire = (voidIso: string, years = 0, months = 0): string =>
 // Product Catalog (แคตตาล็อกสินค้า/บริการที่ใช้ซ้ำได้ พร้อมราคาทุน & ราคาขาย)
 // ==============================================================================
 export const INITIAL_PRODUCTS: Product[] = [
-  // --- สินค้าไอที / ออฟฟิศ (ตามที่ร้องขอ) ---
+  // --- 1. คอมพิวเตอร์ / โน้ตบุ๊ก / UPS (pc_notebook) ---
+  { id: 'prod-7', name: 'BossComputech Core-i7 Workstation Pro', category: 'pc_notebook', item_type: 'hardware', unit: 'เครื่อง', cost_price: 24800, sell_price: 32500 },
+  { id: 'prod-8', name: 'BossComputech Mini POS Terminal X1', category: 'pc_notebook', item_type: 'hardware', unit: 'เครื่อง', cost_price: 17600, sell_price: 18900 },
+  { id: 'prod-20', name: 'Dell OptiPlex 7020 MFF Desktop (i5-14500T / 16GB / 512GB)', category: 'pc_notebook', item_type: 'hardware', unit: 'เครื่อง', cost_price: 18900, sell_price: 23500 },
+  { id: 'prod-21', name: 'Lenovo ThinkPad E14 Gen 5 Notebook (i5 / 16GB / 512GB)', category: 'pc_notebook', item_type: 'hardware', unit: 'เครื่อง', cost_price: 21500, sell_price: 26900 },
+  { id: 'prod-6', name: 'Kingston NV2 512GB M.2 NVMe SSD', category: 'pc_notebook', item_type: 'hardware', unit: 'เครื่อง', cost_price: 1150, sell_price: 1590 },
+  { id: 'prod-22', name: 'APC Back-UPS 1100VA / 550W (BX1100LI-MS)', category: 'pc_notebook', item_type: 'hardware', unit: 'เครื่อง', cost_price: 2850, sell_price: 3690 },
+
+  // --- 2. เครื่องพิมพ์ / สแกนเนอร์ / หมึก (printer) ---
+  { id: 'prod-4', name: 'Brother HL-L3240CDW Color Laser Printer', category: 'printer', item_type: 'hardware', unit: 'เครื่อง', cost_price: 8900, sell_price: 10900 },
+  { id: 'prod-5', name: 'Epson LQ-310 Dot Matrix Printer', category: 'printer', item_type: 'hardware', unit: 'เครื่อง', cost_price: 5900, sell_price: 7500 },
+  { id: 'prod-23', name: 'Epson EcoTank L3250 Wi-Fi All-in-One Printer', category: 'printer', item_type: 'hardware', unit: 'เครื่อง', cost_price: 4250, sell_price: 5290 },
+  { id: 'prod-24', name: 'ตลับหมึกโทนเนอร์ Brother TN-269 Black (กล่อง)', category: 'printer', item_type: 'hardware', unit: 'กล่อง', cost_price: 1650, sell_price: 2190 },
+
+  // --- 3. กล้องวงจรปิด / ระบบเครือข่าย (cctv_network) ---
   { id: 'prod-1', name: 'Huawei eKitEngine S220-24P4X Switch', category: 'cctv_network', item_type: 'hardware', unit: 'เครื่อง', cost_price: 8900, sell_price: 11500 },
   { id: 'prod-2', name: 'Mikrotik RB4011iGS+RM Router', category: 'cctv_network', item_type: 'hardware', unit: 'เครื่อง', cost_price: 6900, sell_price: 8900 },
   { id: 'prod-3', name: 'Hikvision 8CH NVR + 4MP CCTV Kit', category: 'cctv_network', item_type: 'hardware', unit: 'ชุด', cost_price: 14500, sell_price: 18900 },
-  { id: 'prod-4', name: 'Brother HL-L3240CDW Color Laser Printer', category: 'printer', item_type: 'hardware', unit: 'เครื่อง', cost_price: 8900, sell_price: 10900 },
-  { id: 'prod-5', name: 'Epson LQ-310 Dot Matrix Printer', category: 'printer', item_type: 'hardware', unit: 'เครื่อง', cost_price: 5900, sell_price: 7500 },
-  { id: 'prod-6', name: 'Kingston NV2 512GB M.2 NVMe SSD', category: 'pc_notebook', item_type: 'hardware', unit: 'เครื่อง', cost_price: 1150, sell_price: 1590 },
-  // --- สินค้าไอทีอื่น ๆ ที่มีในสต๊อก/ออเดอร์ ---
-  { id: 'prod-7', name: 'BossComputech Core-i7 Workstation Pro', category: 'pc_notebook', item_type: 'hardware', unit: 'เครื่อง', cost_price: 24800, sell_price: 32500 },
-  { id: 'prod-8', name: 'BossComputech Mini POS Terminal X1', category: 'pc_notebook', item_type: 'hardware', unit: 'เครื่อง', cost_price: 17600, sell_price: 18900 },
   { id: 'prod-9', name: 'Ubiquiti UniFi U6-Pro Wi-Fi 6 Access Point', category: 'cctv_network', item_type: 'hardware', unit: 'เครื่อง', cost_price: 4950, sell_price: 6200 },
   { id: 'prod-10', name: 'ตู้ Rack 42U 600x1000mm พร้อม PDU & พัดลม', category: 'cctv_network', item_type: 'hardware', unit: 'ชุด', cost_price: 14200, sell_price: 18500 },
-  { id: 'prod-11', name: 'สายสัญญาณ LAN Link Cat6 UTP 305m (กล่อง)', category: 'cctv_network', item_type: 'hardware', unit: 'ชุด', cost_price: 2900, sell_price: 3850 },
-  // --- ค่าบริการ ---
+
+  // --- 4. สายแลน / กล่องสาย / สายไฟเบอร์ / วัสดุสิ้นเปลือง (ส่งตรง Onsite ได้) ---
+  { id: 'prod-11', name: 'สายสัญญาณ LAN Link Cat6 UTP 305m (กล่อง)', category: 'cctv_network', item_type: 'hardware', unit: 'กล่อง', cost_price: 2900, sell_price: 3850 },
+  { id: 'prod-15', name: 'สายสัญญาณ LAN Link Cat5e UTP 305m (กล่อง)', category: 'cctv_network', item_type: 'hardware', unit: 'กล่อง', cost_price: 2150, sell_price: 2890 },
+  { id: 'prod-16', name: 'สาย Fiber Optic Drop Wire 1 Core (ม้วน 1,000m)', category: 'cctv_network', item_type: 'hardware', unit: 'ม้วน', cost_price: 1850, sell_price: 2590 },
+  { id: 'prod-17', name: 'สาย Patch Cord Cat6 UTP 2m (เส้น)', category: 'cctv_network', item_type: 'hardware', unit: 'เส้น', cost_price: 65, sell_price: 120 },
+  { id: 'prod-25', name: 'ท่อร้อยสาย PVC สีขาว 20mm (มัด 10 เส้น)', category: 'general', item_type: 'hardware', unit: 'มัด', cost_price: 320, sell_price: 490 },
+  { id: 'prod-18', name: 'หัว RJ45 Cat6 Link (แพ็ค 100 หัว)', category: 'general', item_type: 'hardware', unit: 'แพ็ค', cost_price: 420, sell_price: 650 },
+  { id: 'prod-19', name: 'รางปลั๊กไฟ Surge Protection 6 ช่อง (3m)', category: 'general', item_type: 'hardware', unit: 'อัน', cost_price: 390, sell_price: 590 },
+  { id: 'prod-26', name: 'Harddisk WD Purple 4TB Surveillance (สำหรับ NVR)', category: 'general', item_type: 'hardware', unit: 'อัน', cost_price: 3150, sell_price: 3990 },
+
+  // --- 5. ค่าบริการ / ค่าแรง (service) ---
   { id: 'prod-12', name: 'ค่าบริการเดินสาย LAN ท่อร้อยสาย และจัดตู้ Rack Server (ต่อจุด)', category: 'service', item_type: 'service', unit: 'จุด', cost_price: 250, sell_price: 450 },
   { id: 'prod-13', name: 'ค่าบริการติดตั้งเซ็ตอัพระบบกล้องวงจรปิด CCTV PoE (4 จุด)', category: 'service', item_type: 'service', unit: 'ชุด', cost_price: 1200, sell_price: 2500 },
-  { id: 'prod-14', name: 'ค่าบริการติดตั้งและอบรมการใช้งานโปรแกรม POS หน้าร้าน', category: 'service', item_type: 'service', unit: 'รายการ', cost_price: 600, sell_price: 1500 }
+  { id: 'prod-14', name: 'ค่าบริการติดตั้งและอบรมการใช้งานโปรแกรม POS หน้าร้าน', category: 'service', item_type: 'service', unit: 'รายการ', cost_price: 600, sell_price: 1500 },
+  { id: 'prod-27', name: 'ค่าบริการตรวจเช็ค / PM ระบบเครือข่ายและเครื่องแม่ข่าย (รายครั้ง)', category: 'service', item_type: 'service', unit: 'รายการ', cost_price: 800, sell_price: 1800 }
 ];
 
 // ==============================================================================
@@ -237,16 +256,15 @@ export const INITIAL_ORDERS: Order[] = [
     delivery_mode: 'install',
     site_notes: 'ติดตั้งกล้องวงจรปิดรอบอาคารโกดังข้าวเปลือก 8 จุด พร้อมเซ็ตออนไลน์',
     bill_no: null,
-    order_status: 'waiting_po',
+    order_status: 'pending_purchasing',
     items_list: [
-      { model_name: 'Hikvision 8CH NVR + 4MP CCTV Kit', quantity: 4, supplier: 'Synnex (Thailand)', po_no: 'SYN/2569-441', item_type: 'hardware', unit: 'ชุด', unit_price: 18900, unit_cost: 14500, warranty_years: 2 },
-      { model_name: 'Huawei eKitEngine S220-24P4X Switch', quantity: 2, supplier: 'Synnex (Thailand)', po_no: 'SYN/2569-441', item_type: 'hardware', unit: 'เครื่อง', unit_price: 11500, unit_cost: 8900, warranty_years: 3 }
+      { model_name: 'Hikvision 8CH NVR + 4MP CCTV Kit', quantity: 4, supplier: 'Synnex (Thailand)', item_type: 'hardware', unit: 'ชุด', unit_price: 18900, unit_cost: 14500, warranty_years: 2 },
+      { model_name: 'Huawei eKitEngine S220-24P4X Switch', quantity: 2, supplier: 'Synnex (Thailand)', item_type: 'hardware', unit: 'เครื่อง', unit_price: 11500, unit_cost: 8900, warranty_years: 3 }
     ],
     extra_cost: 2500,
     created_at: new Date(Date.now() - 3600000 * 2).toISOString(),
     created_by: 'เซลล์เอ',
-    created_at_log: new Date(Date.now() - 3600000 * 2).toISOString(),
-    po_created_at: new Date(Date.now() - 3600000).toISOString()
+    created_at_log: new Date(Date.now() - 3600000 * 2).toISOString()
   },
   // ---------------------------------------------------------------------------
   // Order 2: ตัดสต๊อกแล้ว ส่งช่างเตรียม (approved_for_prep) - รอช่างรับงาน/เทส/ยิง S/N
@@ -1026,7 +1044,166 @@ export const INITIAL_ITEMS: Item[] = [
         note: 'โปรเจกต์ PRJ-2026-001 • งวดเบิกที่ 1 ส่งให้ช่างเตรียม'
       }
     ]
-  }
+  },
+  // ---------------------------------------------------------------------------
+  // หมวดสายแลน / กล่องสายแลน / สายไฟเบอร์ / วัสดุสิ้นเปลืองพร้อมใช้ (in_stock)
+  // ---------------------------------------------------------------------------
+  ...[1, 2, 3].map((n) => ({
+    id: `item-stock-lan6-${n}`,
+    order_id: null,
+    model_name: 'สายสัญญาณ LAN Link Cat6 UTP 305m (กล่อง)',
+    serial_number: `BOX-CAT6-260${n}`,
+    category: 'cctv_network' as const,
+    status: 'in_stock' as const,
+    cost_price: 2900,
+    sell_price: 3850,
+    supplier: 'Interlink Communication',
+    po_no: 'PO-STK-2026-011',
+    prep_note: undefined,
+    delivery_mode: undefined,
+    assigned_prep_tech: null,
+    prep_accepted_at: null,
+    job_category: undefined,
+    assigned_techs: [],
+    assigned_onsite_tech: null,
+    prepped_at: null,
+    void_date: null,
+    warranty_years: 1,
+    logo_applied: false,
+    notes: 'กล่องสายแลน Cat6 305m พร้อมเบิกใช้งานหน้างานทันที',
+    created_at: new Date(Date.now() - 86400000 * 4).toISOString(),
+    activity_logs: []
+  })),
+  ...[1, 2].map((n) => ({
+    id: `item-stock-lan5e-${n}`,
+    order_id: null,
+    model_name: 'สายสัญญาณ LAN Link Cat5e UTP 305m (กล่อง)',
+    serial_number: `BOX-CAT5E-260${n}`,
+    category: 'cctv_network' as const,
+    status: 'in_stock' as const,
+    cost_price: 2150,
+    sell_price: 2890,
+    supplier: 'Interlink Communication',
+    po_no: 'PO-STK-2026-011',
+    prep_note: undefined,
+    delivery_mode: undefined,
+    assigned_prep_tech: null,
+    prep_accepted_at: null,
+    job_category: undefined,
+    assigned_techs: [],
+    assigned_onsite_tech: null,
+    prepped_at: null,
+    void_date: null,
+    warranty_years: 1,
+    logo_applied: false,
+    notes: 'กล่องสายแลน Cat5e 305m พร้อมเบิกใช้งานหน้างาน',
+    created_at: new Date(Date.now() - 86400000 * 4).toISOString(),
+    activity_logs: []
+  })),
+  ...[1, 2].map((n) => ({
+    id: `item-stock-fiber-${n}`,
+    order_id: null,
+    model_name: 'สาย Fiber Optic Drop Wire 1 Core (ม้วน 1,000m)',
+    serial_number: `REEL-FO1C-260${n}`,
+    category: 'cctv_network' as const,
+    status: 'in_stock' as const,
+    cost_price: 1850,
+    sell_price: 2590,
+    supplier: 'Interlink Communication',
+    po_no: 'PO-STK-2026-012',
+    prep_note: undefined,
+    delivery_mode: undefined,
+    assigned_prep_tech: null,
+    prep_accepted_at: null,
+    job_category: undefined,
+    assigned_techs: [],
+    assigned_onsite_tech: null,
+    prepped_at: null,
+    void_date: null,
+    warranty_years: 1,
+    logo_applied: false,
+    notes: 'ม้วนสายไฟเบอร์ออปติก Drop Wire พร้อมใช้เดินระยะไกล',
+    created_at: new Date(Date.now() - 86400000 * 3).toISOString(),
+    activity_logs: []
+  })),
+  ...[1, 2, 3, 4].map((n) => ({
+    id: `item-stock-patch-${n}`,
+    order_id: null,
+    model_name: 'สาย Patch Cord Cat6 UTP 2m (เส้น)',
+    serial_number: `PC-CAT6-260${n}`,
+    category: 'cctv_network' as const,
+    status: 'in_stock' as const,
+    cost_price: 65,
+    sell_price: 120,
+    supplier: 'Interlink Communication',
+    po_no: 'PO-STK-2026-012',
+    prep_note: undefined,
+    delivery_mode: undefined,
+    assigned_prep_tech: null,
+    prep_accepted_at: null,
+    job_category: undefined,
+    assigned_techs: [],
+    assigned_onsite_tech: null,
+    prepped_at: null,
+    void_date: null,
+    warranty_years: 1,
+    logo_applied: false,
+    notes: 'สายแพตช์คอร์ดสำเร็จรูป สำหรับเข้าตู้ Rack / Switch',
+    created_at: new Date(Date.now() - 86400000 * 3).toISOString(),
+    activity_logs: []
+  })),
+  ...[1, 2, 3].map((n) => ({
+    id: `item-stock-rj45-${n}`,
+    order_id: null,
+    model_name: 'หัว RJ45 Cat6 Link (แพ็ค 100 หัว)',
+    serial_number: `PK-RJ45-260${n}`,
+    category: 'general' as const,
+    status: 'in_stock' as const,
+    cost_price: 420,
+    sell_price: 650,
+    supplier: 'Interlink Communication',
+    po_no: 'PO-STK-2026-012',
+    prep_note: undefined,
+    delivery_mode: undefined,
+    assigned_prep_tech: null,
+    prep_accepted_at: null,
+    job_category: undefined,
+    assigned_techs: [],
+    assigned_onsite_tech: null,
+    prepped_at: null,
+    void_date: null,
+    warranty_years: 1,
+    logo_applied: false,
+    notes: 'วัสดุสิ้นเปลืองงานเดินสาย LAN',
+    created_at: new Date(Date.now() - 86400000 * 3).toISOString(),
+    activity_logs: []
+  })),
+  ...[1, 2, 3].map((n) => ({
+    id: `item-stock-pdu-${n}`,
+    order_id: null,
+    model_name: 'รางปลั๊กไฟ Surge Protection 6 ช่อง (3m)',
+    serial_number: `SURGE-6P-260${n}`,
+    category: 'general' as const,
+    status: 'in_stock' as const,
+    cost_price: 390,
+    sell_price: 590,
+    supplier: 'Advice Distribution',
+    po_no: 'PO-STK-2026-013',
+    prep_note: undefined,
+    delivery_mode: undefined,
+    assigned_prep_tech: null,
+    prep_accepted_at: null,
+    job_category: undefined,
+    assigned_techs: [],
+    assigned_onsite_tech: null,
+    prepped_at: null,
+    void_date: null,
+    warranty_years: 2,
+    logo_applied: false,
+    notes: 'ปลั๊กพ่วงกันไฟกระชากพร้อมใช้ติดตั้ง',
+    created_at: new Date(Date.now() - 86400000 * 2).toISOString(),
+    activity_logs: []
+  }))
 ];
 
 // ==============================================================================
@@ -1385,6 +1562,35 @@ export const INITIAL_PROJECTS: Project[] = [
         progress_percent: 60,
         note: 'ติดตั้ง Switch PoE ตัวที่ 1 (S/N: HW-S220-PRJ01) และยึดกล้อง CCTV รอบโกดัง C1 เสร็จ 8 จุด',
         photo_urls: []
+      }
+    ],
+    site_visits: [
+      {
+        id: 'VST-2026-001',
+        visit_date: new Date(Date.now() + 86400000).toISOString().split('T')[0],
+        time_slot: '09:00 - 17:00',
+        assigned_techs: ['ช่างซี', 'ช่างดี'],
+        visit_scope: 'ติดตั้ง Switch PoE ตัวที่ 2 + เดินจุดกล้อง CCTV โกดัง C2 ส่วนที่เหลือ',
+        items_to_take: [
+          {
+            product_id: 'prod-1',
+            project_item_id: 'pitem-1',
+            name: 'Huawei eKitEngine S220-24P4X Switch',
+            item_type: 'equipment',
+            qty: 1
+          },
+          {
+            product_id: 'prod-3',
+            project_item_id: 'pitem-2',
+            name: 'Hikvision 8CH NVR + 4MP CCTV Kit',
+            item_type: 'equipment',
+            qty: 1
+          }
+        ],
+        prep_status: 'pending_stock',
+        visit_status: 'scheduled',
+        created_by: 'คุณนก (แอดมินหน้าร้าน & จ่ายงาน)',
+        created_at: new Date(Date.now() - 3600000 * 2).toISOString()
       }
     ],
     created_at: new Date(Date.now() - 86400000 * 3).toISOString(),

@@ -6,6 +6,8 @@ import {
   Activity, Briefcase, X, Phone
 } from 'lucide-react';
 import { ActivityLog, UserAccount, UserRole, formatThaiDateTime } from '../types';
+import { ListControls, useListControls } from './ListControls';
+import { toTelHref } from '../utils/domainHelpers';
 
 const ROLE_OPTIONS: { value: UserRole; label: string; dept: string }[] = [
   { value: 'sales', label: 'ฝ่ายขาย (Sales)', dept: 'ฝ่ายขาย' },
@@ -145,6 +147,12 @@ export const HrDirectoryView: React.FC = () => {
     });
   }, [users, searchQuery, roleFilter]);
 
+  const hrList = useListControls(filteredUsers, {
+    getDate: (u) => (u as UserAccount & { created_at?: string }).created_at,
+    initialSort: 'newest',
+    initialPageSize: 12
+  });
+
   const activeCount = users.filter(u => u.is_active !== false).length;
 
   return (
@@ -209,8 +217,22 @@ export const HrDirectoryView: React.FC = () => {
       </div>
 
       {/* Staff Directory & Workload Cards */}
+      <ListControls
+        from={hrList.from}
+        to={hrList.to}
+        total={hrList.total}
+        page={hrList.page}
+        totalPages={hrList.totalPages}
+        pageSize={hrList.pageSize}
+        sort={hrList.sort}
+        onSortChange={hrList.setSort}
+        onPageSizeChange={hrList.setPageSize}
+        onPageChange={hrList.setPage}
+        pageSizeOptions={[12, 24, 48]}
+        unit="คน"
+      />
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-        {filteredUsers.map(u => {
+        {hrList.pageItems.map(u => {
           const stat = staffStats.get(u.id) || { logs: [], activeJobs: 0 };
           const roleMeta = ROLE_OPTIONS.find(r => r.value === u.role);
           const active = u.is_active !== false;
@@ -256,10 +278,21 @@ export const HrDirectoryView: React.FC = () => {
               </div>
 
               <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-800/60 rounded-xl px-3 py-2">
-                <span className="flex items-center gap-1">
-                  <Phone className="w-3 h-3" />
-                  <span>{u.phone || '-'}</span>
-                </span>
+                {toTelHref(u.phone) ? (
+                  <a
+                    href={toTelHref(u.phone)!}
+                    title="กดเพื่อโทรออก"
+                    className="flex items-center gap-1 text-emerald-700 dark:text-emerald-300 font-semibold hover:underline cursor-pointer"
+                  >
+                    <Phone className="w-3 h-3" />
+                    <span>{u.phone}</span>
+                  </a>
+                ) : (
+                  <span className="flex items-center gap-1">
+                    <Phone className="w-3 h-3" />
+                    <span>{u.phone || '-'}</span>
+                  </span>
+                )}
                 <span className="font-mono text-[#FF6B00]">@{u.username}</span>
               </div>
 

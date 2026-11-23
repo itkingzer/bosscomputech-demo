@@ -7,13 +7,14 @@ import {
   CheckSquare, Square, X, Smartphone, UserCheck, Layers,
   ClipboardList, ArrowRight, Phone, Calendar, ScanLine, Search, Check
 } from 'lucide-react';
-import { ROUTE_DEFINITIONS, RouteCode, RepairTicket, Item, Project, Product, ProductCategory, PRODUCT_CATEGORY_LABELS, formatThaiDateTime } from '../types';
+import { ROUTE_DEFINITIONS, RouteCode, RepairTicket, Item, Project, Product, ProductCategory, PRODUCT_CATEGORY_LABELS, formatThaiDateTime, formatDateDMY, getLocalDateStr, getProjectDeadlineRisk, SiteVisit } from '../types';
 import { ListControls, useListControls } from './ListControls';
 import { ActivityTimeline, LatestUpdateBadge } from './ActivityTimeline';
 import { BarcodeScannerModal } from './BarcodeScannerModal';
 import { EvidencePhotoUploader } from './EvidencePhotoUploader';
 import { ToastBanner } from './ui/ToastBanner';
 import { OrderFormPrintModal } from './OrderFormPrintModal';
+import { OnsiteDispatchRosterModal } from './OnsiteDispatchRosterModal';
 import { RepairIntakeModal, RepairIntakeInitialValues } from './RepairIntakeModal';
 import { PrintGuideButton } from './PrintGuideButton';
 import {
@@ -21,6 +22,7 @@ import {
   modalPrimaryBtnClass
 } from './ui/Modal';
 import { lookupPurchaseBySn } from '../utils/snLookup';
+import { isNonPrepCableOrConsumable, toTelHref } from '../utils/domainHelpers';
 
 // ---------------------------------------------------------------------------
 // Official "ใบรับซ่อมสินค้า" receipt helpers (shared with RepairView)
@@ -162,22 +164,34 @@ export const OnsiteView: React.FC = () => {
     completeOnsiteJobHandoff, currentUser, users,
     acceptOnsiteJob, completeRepairReturnOnsite, triggerPrintRepairReceipt,
     lookupWarrantyBySerial,
-    projects, products, addProjectDailyLog, createProjectMaterialRequest, completeProjectHandover
+    projects, products, addProjectDailyLog, createProjectMaterialRequest, completeProjectHandover,
+    updateSiteVisit
   } = useApp();
 
   // Default landing route filter to 'all' so Onsite techs see all their assigned jobs across every route
   const [selectedRouteFilter, setSelectedRouteFilter] = useState<'all' | RouteCode>('all');
   const [selectedTechNameFilter, setSelectedTechNameFilter] = useState<string>(currentUser?.role === 'onsite' ? currentUser.name : 'all');
+  const [selectedDayFilter, setSelectedDayFilter] = useState<'all' | 'today' | 'tomorrow'>('all');
   const [selectedCategory, setSelectedCategory] = useState<'all' | 'projects' | 'new_goods' | 'repair_return' | 'pickup'>('all');
   const [deliveryNotes, setDeliveryNotes] = useState<Record<string, string>>({});
   const [repairIntakeOpen, setRepairIntakeOpen] = useState(false);
   const [intakeInitialValues, setIntakeInitialValues] = useState<RepairIntakeInitialValues | null>(null);
   const [toast, setToast] = useState('');
+  const [dispatchRosterOpen, setDispatchRosterOpen] = useState(false);
+  const [rosterDate, setRosterDate] = useState<string>(() => getLocalDateStr(1));
+  const vehicleMap = useMemo<Record<string, string>>(() => {
+    try {
+      const raw = localStorage.getItem('boss_dispatch_vehicles');
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  }, [dispatchRosterOpen]);
 
   // ---- Onsite Project Workspace Modal State (PRJ-...) ----
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [prjWorkspaceTab, setPrjWorkspaceTab] = useState<'daily_log' | 'material_req' | 'handover'>('daily_log');
-  const [dailyProgressInput, setDailyProgressInput] = useState<number>(75);
+  const [dailyProgressInput, setDailyProgressInput] = useState<number>(0);
   const [dailyNoteInput, setDailyNoteInput] = useState('');
   const [dailyPhotosInput, setDailyPhotosInput] = useState<string[]>([]);
   const [reqProductId, setReqProductId] = useState('');
@@ -196,12 +210,9 @@ export const OnsiteView: React.FC = () => {
   );
 
   const openProjectWorkspace = (prj: Project) => {
-    const latestPct = prj.daily_logs && prj.daily_logs.length > 0
-      ? prj.daily_logs[prj.daily_logs.length - 1].progress_percent
-      : 50;
     setActiveProjectId(prj.id);
     setPrjWorkspaceTab('daily_log');
-    setDailyProgressInput(Math.min(100, latestPct + 15));
+    setDailyProgressInput(0);
     setDailyNoteInput('');
     setDailyPhotosInput([]);
     setReqProductId('');
@@ -328,7 +339,7 @@ export const OnsiteView: React.FC = () => {
   // Onsite Job Detail Modal State (card-to-modal)
   // kind: 'new_goods' | 'repair_return' | 'pickup'
   const [activeJob, setActiveJob] = useState<{ kind: 'new_goods' | 'repair_return' | 'pickup'; key: string } | null>(null);
-  const [printProjectTarget, setPrintProjectTarget] = useState<Project | null>(null);
+  const [printProjectTarget, setPrintProjectTarget] = useState<{ project: Project; initialBatchNo?: number | null } | null>(null);
 
   const onsiteTechUsers = users.filter(u => u.role === 'onsite' && u.is_active !== false);
 
@@ -364,11 +375,26 @@ export const OnsiteView: React.FC = () => {
     return false;
   };
 
-  // 0. Active Multi-Day Projects (PRJ-2026-XXX) pinned across days until final handover (status !== 'completed')
+  const todayDateStr = getLocalDateStr(0);
+  const tomorrowDateStr = getLocalDateStr(1);
+  const matchesDayFilter = (dateStr?: string | null) => {
+    if (selectedDayFilter === 'all') return true;
+    if (selectedDayFilter === 'today') return dateStr === todayDateStr;
+    return dateStr === tomorrowDateStr;
+  };
+
+  // 0. Active Multi-Day Projects (PRJ-2026-XXX) — ONLY visible to Onsite once Front-Desk has scheduled a Site Visit
   const assignedProjects = projects.filter(p => {
     if (p.status === 'completed') return false;
-    if (selectedTechNameFilter !== 'all' && p.assigned_techs && p.assigned_techs.length > 0 && !p.assigned_techs.includes(selectedTechNameFilter)) {
-      return false;
+    const hasScheduledVisit = (p.site_visits || []).some(
+      sv => sv.visit_status !== 'completed' && matchesDayFilter(sv.visit_date)
+    );
+    if (!hasScheduledVisit) return false;
+    if (selectedTechNameFilter !== 'all') {
+      const inVisitTechs = (p.site_visits || []).some(
+        sv => sv.visit_status !== 'completed' && matchesDayFilter(sv.visit_date) && sv.assigned_techs.includes(selectedTechNameFilter)
+      );
+      if (!inVisitTechs) return false;
     }
     if (selectedRouteFilter !== 'all' && p.route_code && p.route_code !== selectedRouteFilter) {
       return false;
@@ -376,9 +402,28 @@ export const OnsiteView: React.FC = () => {
     return true;
   });
 
-  // 1. New goods assigned to onsite (excluding items that belong to a Project PRJ-... so Project cards represent the site)
+  // 0.5 Scheduled Site Visits Queue (วันนี้ / พรุ่งนี้ / นัดหมาย)
+  const scheduledSiteVisits = useMemo(() => {
+    const list: { project: Project; visit: SiteVisit; bucket: 'today' | 'tomorrow' | 'upcoming' }[] = [];
+    assignedProjects.forEach(prj => {
+      (prj.site_visits || []).forEach(sv => {
+        if (sv.visit_status === 'completed') return;
+        if (!matchesDayFilter(sv.visit_date)) return;
+        if (selectedTechNameFilter !== 'all' && !sv.assigned_techs.includes(selectedTechNameFilter)) return;
+        const bucket =
+          sv.visit_date === todayDateStr ? 'today' :
+          sv.visit_date === tomorrowDateStr ? 'tomorrow' : 'upcoming';
+        list.push({ project: prj, visit: sv, bucket });
+      });
+    });
+    return list.sort((a, b) => a.visit.visit_date.localeCompare(b.visit.visit_date));
+  }, [assignedProjects, selectedTechNameFilter, selectedDayFilter, todayDateStr, tomorrowDateStr]);
+
+  // 1. New goods assigned to onsite — ONLY visible once Front-Desk has scheduled onto a daily dispatch roster (scheduled_date)
   const assignedNewGoods = items.filter(i => {
     if (i.status !== 'assigned_onsite') return false;
+    if (!i.scheduled_date) return false;
+    if (!matchesDayFilter(i.scheduled_date)) return false;
     if (i.project_id) return false;
     if (!matchesTechFilter(i.assigned_techs, i.assigned_onsite_tech)) return false;
     const order = orders.find(o => o.id === i.order_id);
@@ -388,15 +433,15 @@ export const OnsiteView: React.FC = () => {
     return true;
   });
 
-  // 2. Repaired items assigned to onsite for return delivery
-  //    - งานส่งคืนเครื่องซ่อม (is_repair_return) ที่หน้าร้านมอบหมายให้ช่าง Onsite ไปส่งคืนลูกค้า
-  //    - สถานะ dispatched_onsite / on_delivery หรือ legacy 'repaired' ที่มีช่าง Onsite ถูกมอบหมาย
+  // 2. Repaired items assigned to onsite for return delivery — ONLY visible once Front-Desk has scheduled (scheduled_date)
   const assignedRepairedReturns = repairTickets.filter(t => {
     const isReturnJob = t.is_repair_return === true;
     const isReturnStatus = t.status === 'dispatched_onsite' || t.status === 'on_delivery';
     const isLegacyRepaired = t.status === 'repaired';
     if (!isReturnJob && !isReturnStatus && !isLegacyRepaired) return false;
     if (t.status === 'returned_closed' || t.repair_status === 'completed') return false;
+    if (!t.scheduled_date) return false;
+    if (!matchesDayFilter(t.scheduled_date)) return false;
     if (!t.assigned_onsite_tech && (!t.assigned_techs || t.assigned_techs.length === 0)) return false;
     if (!matchesTechFilter(t.assigned_techs, t.assigned_onsite_tech)) return false;
     if (selectedRouteFilter !== 'all' && t.route_code !== selectedRouteFilter) {
@@ -572,64 +617,140 @@ export const OnsiteView: React.FC = () => {
       <ToastBanner message={toast} onClose={() => setToast('')} />
 
       {/* Main Container */}
-      <div className="liquid-glass rounded-3xl p-4 sm:p-6 lg:p-7 shadow-2xl border border-white/[0.08] min-w-0">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6 pb-4 border-b border-white/[0.08]">
+      <div className="liquid-glass rounded-3xl p-4 sm:p-6 lg:p-7 shadow-2xl border border-slate-200 dark:border-white/[0.08] min-w-0">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-5 pb-4 border-b border-slate-200 dark:border-white/[0.08]">
           <div>
-            <h2 className="text-base font-bold text-white flex items-center gap-2">
-              <div className="p-2 rounded-xl bg-purple-500/15 text-purple-400 border border-purple-500/30">
+            <h2 className="text-lg sm:text-xl font-black text-slate-900 dark:text-white flex items-center gap-2.5">
+              <div className="p-2.5 rounded-xl bg-purple-500/15 text-purple-600 dark:text-purple-400 border border-purple-500/30">
                 <Truck className="w-5 h-5" />
               </div>
-              <span>คิวงานทีมรถ Onsite & บันทึกรับเครื่องซ่อมกลับร้าน</span>
+              <span>งานช่าง Onsite (ส่งของ · ติดตั้ง · รับเครื่องซ่อม)</span>
             </h2>
-            <p className="text-xs text-slate-400 mt-1">
-              {currentUser?.name ? `เข้าสู่ระบบในชื่อ: ${currentUser.name}` : ''}
+            <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 mt-1">
+              {currentUser?.name ? `ช่าง: ${currentUser.name}` : ''}
               {currentUser?.assigned_route && currentUser.assigned_route !== 'all'
-                ? ` | วิ่งประจำ: ${ROUTE_DEFINITIONS[currentUser.assigned_route].name}`
-                : ' | วิ่งได้ทุกสายรถ'}
+                ? ` • ประจำ${ROUTE_DEFINITIONS[currentUser.assigned_route].shortName}`
+                : ' • วิ่งได้ทุกสาย'}
+              {' • แสดงเฉพาะงานที่หน้าร้านจัดคิวให้แล้ว'}
             </p>
           </div>
 
-          {/* ช่าง Onsite ออกใบรับซ่อม / Service Sheet (ใช้ Modal เดียวกับหน้าร้าน) */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full lg:w-auto">
+            <button
+              type="button"
+              onClick={() => setDispatchRosterOpen(true)}
+              className="w-full sm:w-auto px-4 py-3 min-h-[48px] bg-indigo-600 hover:bg-indigo-500 active:scale-[0.97] text-white font-extrabold rounded-xl text-sm transition-all duration-150 cursor-pointer flex items-center justify-center gap-2 shadow-md"
+            >
+              <Printer className="w-5 h-5" />
+              <span>พิมพ์ใบจัดคิวพรุ่งนี้ (Print)</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleOpenNewServiceSheet()}
+              className="w-full sm:w-auto px-5 py-3 min-h-[48px] bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:brightness-110 active:scale-[0.97] text-black font-black rounded-xl text-sm transition-all duration-150 cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-[#FF6B00]/25 border border-white/20"
+            >
+              <ClipboardList className="w-5 h-5" />
+              <span>+ ออกใบรับเครื่องซ่อมหน้างาน</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Quick 3-Card Summary ("งานของคุณตอนนี้") */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
           <button
             type="button"
-            onClick={() => handleOpenNewServiceSheet()}
-            className="w-full lg:w-auto px-5 py-3 min-h-[44px] bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:brightness-110 active:scale-[0.97] text-black font-extrabold rounded-xl text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-[#FF6B00]/25 border border-white/20"
+            onClick={() => setSelectedCategory('projects')}
+            className="text-left p-3.5 rounded-2xl bg-purple-50 dark:bg-purple-500/10 border border-purple-300 dark:border-purple-500/35 hover:border-purple-500 transition cursor-pointer flex items-center justify-between gap-3 min-h-[68px]"
           >
-            <ClipboardList className="w-4 h-4" />
-            <span>ออกใบรับซ่อม / Service Sheet (ส่งเข้าห้องช่าง)</span>
+            <div>
+              <div className="text-xs font-bold text-purple-800 dark:text-purple-300">คิวเข้าไซต์โปรเจกต์</div>
+              <div className="text-xl font-black text-purple-950 dark:text-white font-mono mt-0.5">
+                {scheduledSiteVisits.length} <span className="text-xs font-bold">รอบ</span>
+              </div>
+            </div>
+            <Calendar className="w-7 h-7 text-purple-600 dark:text-purple-400 shrink-0" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setSelectedCategory('new_goods')}
+            className="text-left p-3.5 rounded-2xl bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-300 dark:border-emerald-500/35 hover:border-emerald-500 transition cursor-pointer flex items-center justify-between gap-3 min-h-[68px]"
+          >
+            <div>
+              <div className="text-xs font-bold text-emerald-800 dark:text-emerald-300">งานส่งของ / ติดตั้ง</div>
+              <div className="text-xl font-black text-emerald-950 dark:text-white font-mono mt-0.5">
+                {assignedNewGoods.length} <span className="text-xs font-bold">งาน</span>
+              </div>
+            </div>
+            <Package className="w-7 h-7 text-emerald-600 dark:text-emerald-400 shrink-0" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setSelectedCategory('repair_return')}
+            className="text-left p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-500/10 border border-amber-300 dark:border-amber-500/35 hover:border-amber-500 transition cursor-pointer flex items-center justify-between gap-3 min-h-[68px]"
+          >
+            <div>
+              <div className="text-xs font-bold text-amber-900 dark:text-amber-300">รับ-ส่งเครื่องซ่อม</div>
+              <div className="text-xl font-black text-amber-950 dark:text-white font-mono mt-0.5">
+                {assignedRepairedReturns.length + assignedPickups.length} <span className="text-xs font-bold">งาน</span>
+              </div>
+            </div>
+            <Wrench className="w-7 h-7 text-amber-600 dark:text-amber-400 shrink-0" />
           </button>
         </div>
 
-        {/* Dual Filters Bar: By Technician Name + By Route */}
-        <div className="p-3.5 sm:p-4 rounded-2xl bg-white/[0.03] border border-white/[0.06] mb-6 flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3.5 min-w-0">
-          {/* Tech Name Filter */}
+        {/* Day Schedule Filter: งานทั้งหมด / งานวันนี้ / งานพรุ่งนี้ (สอดคล้องกับตารางหน้าร้าน) */}
+        <div className="flex flex-wrap items-center gap-2 mb-4">
+          <span className="text-xs font-extrabold text-slate-700 dark:text-slate-300 mr-1">ดูคิวงานวันที่:</span>
+          {([
+            { id: 'all', label: 'งานที่จัดคิวทั้งหมด' },
+            { id: 'today', label: `งานวันนี้ (${formatDateDMY(todayDateStr)})` },
+            { id: 'tomorrow', label: `งานพรุ่งนี้ (${formatDateDMY(tomorrowDateStr)})` }
+          ] as const).map(d => (
+            <button
+              key={d.id}
+              type="button"
+              onClick={() => setSelectedDayFilter(d.id)}
+              className={`px-4 py-2 min-h-[44px] rounded-xl text-xs sm:text-sm font-extrabold transition cursor-pointer ${
+                selectedDayFilter === d.id
+                  ? 'bg-[#FF6B00] text-black shadow-md'
+                  : 'bg-slate-100 dark:bg-white/[0.04] text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-white/[0.08]'
+              }`}
+            >
+              {d.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Clean Filters Bar */}
+        <div className="p-3.5 rounded-2xl bg-slate-100/80 dark:bg-white/[0.03] border border-slate-200 dark:border-white/[0.06] mb-5 flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3 min-w-0">
           <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-2 text-xs w-full lg:w-auto min-w-0">
-            <span className="text-slate-400 font-medium whitespace-nowrap">กรองตามชื่อช่าง:</span>
+            <span className="text-slate-700 dark:text-slate-300 font-bold whitespace-nowrap">ดูงานของช่าง:</span>
             <select
               value={selectedTechNameFilter}
               onChange={(e) => setSelectedTechNameFilter(e.target.value)}
-              className="liquid-glass-input rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none w-full sm:w-auto min-w-0"
+              className="rounded-xl px-3 py-2 min-h-[42px] text-xs font-bold bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 focus:outline-none w-full sm:w-auto min-w-0"
             >
-              <option value="all" className="bg-[#12141A]">-- แสดงงานช่างทุกคน --</option>
+              <option value="all">แสดงงานช่างทุกคน</option>
               {onsiteTechUsers.map(u => (
-                <option key={u.id} value={u.name} className="bg-[#12141A]">
+                <option key={u.id} value={u.name}>
                   {u.name} {currentUser?.name === u.name ? '(ตัวฉัน)' : ''}
                 </option>
               ))}
             </select>
           </div>
 
-          {/* Route Filter */}
           <div className="w-full lg:w-auto min-w-0 flex flex-wrap items-center gap-1.5 text-xs">
-            <span className="text-slate-400 font-medium whitespace-nowrap mr-1">สายรถ:</span>
+            <span className="text-slate-700 dark:text-slate-300 font-bold whitespace-nowrap mr-1">สายรถ:</span>
             <button
               onClick={() => setSelectedRouteFilter('all')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all duration-150 active:scale-[0.97] cursor-pointer whitespace-nowrap flex-shrink-0 ${selectedRouteFilter === 'all'
-                ? 'bg-white/20 text-white border border-white/40 shadow-sm font-bold'
-                : 'bg-white/[0.04] text-slate-400 hover:text-white border border-white/[0.06]'
+              className={`px-3 py-2 min-h-[40px] rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${selectedRouteFilter === 'all'
+                ? 'bg-slate-900 dark:bg-white text-white dark:text-black shadow-sm'
+                : 'bg-white dark:bg-white/[0.04] text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-white/[0.06]'
                 }`}
             >
-              ทั้งหมด
+              ทุกสาย
             </button>
             {(Object.keys(ROUTE_DEFINITIONS) as RouteCode[]).map((rCode) => {
               const r = ROUTE_DEFINITIONS[rCode];
@@ -637,9 +758,9 @@ export const OnsiteView: React.FC = () => {
                 <button
                   key={rCode}
                   onClick={() => setSelectedRouteFilter(rCode)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all duration-150 active:scale-[0.97] cursor-pointer whitespace-nowrap flex-shrink-0 flex items-center gap-1.5 ${selectedRouteFilter === rCode
-                    ? `${r.badgeBg} ${r.badgeText} ${r.badgeBorder} border shadow-md font-bold`
-                    : 'bg-white/[0.04] text-slate-400 hover:text-slate-200 border border-white/[0.06]'
+                  className={`px-3 py-2 min-h-[40px] rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${selectedRouteFilter === rCode
+                    ? `${r.badgeBg} ${r.badgeText} ${r.badgeBorder} border shadow-sm`
+                    : 'bg-white dark:bg-white/[0.04] text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-white/[0.06]'
                     }`}
                 >
                   <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: r.color }}></span>
@@ -650,56 +771,56 @@ export const OnsiteView: React.FC = () => {
           </div>
         </div>
 
-        {/* Category Pills Filter */}
-        <div className="w-full max-w-full min-w-0 flex flex-wrap sm:flex-nowrap items-center gap-2 pb-4 sm:overflow-x-auto">
+        {/* Simplified Category Tabs (Plain Thai, High Contrast, >= 44px) */}
+        <div className="w-full max-w-full min-w-0 flex flex-wrap items-center gap-2 pb-4">
           <button
             onClick={() => setSelectedCategory('all')}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-xl transition-all duration-150 active:scale-[0.97] cursor-pointer whitespace-nowrap ${selectedCategory === 'all'
-              ? 'bg-white/20 text-white border border-white/40 font-bold'
-              : 'bg-white/[0.03] text-slate-400 hover:text-white border border-white/[0.05]'
+            className={`px-3.5 py-2 min-h-[44px] text-xs sm:text-sm font-extrabold rounded-xl transition-all cursor-pointer whitespace-nowrap ${selectedCategory === 'all'
+              ? 'bg-[#FF6B00] text-black shadow-sm'
+              : 'bg-slate-100 dark:bg-white/[0.04] text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-white/[0.06]'
               }`}
           >
-            รวมทุกประเภท ({totalAssignedCount})
+            ทั้งหมด ({totalAssignedCount})
           </button>
           <button
             onClick={() => setSelectedCategory('projects')}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-xl transition-all duration-150 active:scale-[0.97] cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${selectedCategory === 'projects'
-              ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40 font-bold'
-              : 'bg-white/[0.03] text-slate-400 hover:text-purple-300 border border-white/[0.05]'
+            className={`px-3.5 py-2 min-h-[44px] text-xs sm:text-sm font-extrabold rounded-xl transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${selectedCategory === 'projects'
+              ? 'bg-purple-600 text-white shadow-sm'
+              : 'bg-slate-100 dark:bg-white/[0.04] text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-white/[0.06]'
               }`}
           >
-            <Layers className="w-3.5 h-3.5" />
-            <span>[งานโปรเจกต์ / ติดตั้งหลายวัน (PRJ)] ({assignedProjects.length})</span>
+            <Layers className="w-4 h-4" />
+            <span>งานโปรเจกต์ ({assignedProjects.length})</span>
           </button>
           <button
             onClick={() => setSelectedCategory('new_goods')}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-xl transition-all duration-150 active:scale-[0.97] cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${selectedCategory === 'new_goods'
-              ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 font-bold'
-              : 'bg-white/[0.03] text-slate-400 hover:text-emerald-300 border border-white/[0.05]'
+            className={`px-3.5 py-2 min-h-[44px] text-xs sm:text-sm font-extrabold rounded-xl transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${selectedCategory === 'new_goods'
+              ? 'bg-emerald-600 text-white shadow-sm'
+              : 'bg-slate-100 dark:bg-white/[0.04] text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-white/[0.06]'
               }`}
           >
-            <Package className="w-3.5 h-3.5" />
-            <span>[ส่งของใหม่ - วอยติดแล้ว] ({assignedNewGoods.length})</span>
+            <Package className="w-4 h-4" />
+            <span>ส่งของใหม่ ({assignedNewGoods.length})</span>
           </button>
           <button
             onClick={() => setSelectedCategory('repair_return')}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-xl transition-all duration-150 active:scale-[0.97] cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${selectedCategory === 'repair_return'
-              ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/40 font-bold'
-              : 'bg-white/[0.03] text-slate-400 hover:text-purple-300 border border-white/[0.05]'
+            className={`px-3.5 py-2 min-h-[44px] text-xs sm:text-sm font-extrabold rounded-xl transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${selectedCategory === 'repair_return'
+              ? 'bg-cyan-600 text-white shadow-sm'
+              : 'bg-slate-100 dark:bg-white/[0.04] text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-white/[0.06]'
               }`}
           >
-            <RotateCcw className="w-3.5 h-3.5" />
-            <span>[ส่งคืนเครื่องซ่อมให้ลูกค้า] ({assignedRepairedReturns.length})</span>
+            <RotateCcw className="w-4 h-4" />
+            <span>ส่งคืนเครื่องซ่อม ({assignedRepairedReturns.length})</span>
           </button>
           <button
             onClick={() => setSelectedCategory('pickup')}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-xl transition-all duration-150 active:scale-[0.97] cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${selectedCategory === 'pickup'
-              ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40 font-bold'
-              : 'bg-white/[0.03] text-slate-400 hover:text-amber-300 border border-white/[0.05]'
+            className={`px-3.5 py-2 min-h-[44px] text-xs sm:text-sm font-extrabold rounded-xl transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${selectedCategory === 'pickup'
+              ? 'bg-amber-500 text-black shadow-sm'
+              : 'bg-slate-100 dark:bg-white/[0.04] text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-white/[0.06]'
               }`}
           >
-            <Wrench className="w-3.5 h-3.5" />
-            <span>[ออกซ่อม/รับเครื่องกลับร้าน] ({assignedPickups.length})</span>
+            <Wrench className="w-4 h-4" />
+            <span>ไปรับเครื่องซ่อม ({assignedPickups.length})</span>
           </button>
         </div>
 
@@ -759,6 +880,62 @@ export const OnsiteView: React.FC = () => {
                 unit="งานรับเครื่องซ่อม"
               />
             )}
+            {/* 0.A SCHEDULED SITE VISITS (วันนี้ / พรุ่งนี้) */}
+            {(selectedCategory === 'all' || selectedCategory === 'projects') && scheduledSiteVisits.length > 0 && (
+              <div className="mb-4 p-4 rounded-2xl bg-gradient-to-r from-indigo-500/10 via-purple-500/10 to-[#FF6B00]/10 border border-indigo-400/30 space-y-2.5">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <h4 className="text-xs font-extrabold text-slate-900 dark:text-white flex items-center gap-1.5">
+                    <Calendar className="w-4 h-4 text-[#FF6B00]" />
+                    <span>คิวเข้าไซต์ตามนัดหมาย (วันนี้ / พรุ่งนี้ &amp; ล่วงหน้า) — {scheduledSiteVisits.length} รอบ</span>
+                  </h4>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                  {scheduledSiteVisits.map(({ project: prj, visit: sv, bucket }) => {
+                    const preppedVisitItems = items.filter(
+                      it => it.project_id === prj.id && it.site_visit_id === sv.id && (it.status === 'assigned_onsite' || it.status === 'ready_for_dispatch')
+                    );
+                    return (
+                      <div
+                        key={sv.id}
+                        onClick={() => openProjectWorkspace(prj)}
+                        className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-indigo-300 dark:border-indigo-500/35 hover:border-[#FF6B00] cursor-pointer transition space-y-1.5"
+                      >
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <span className="font-mono font-extrabold text-[11px] text-purple-700 dark:text-purple-300">
+                            {prj.id} • {sv.id}
+                          </span>
+                          <div className="flex items-center gap-1.5">
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${
+                              bucket === 'today'
+                                ? 'bg-rose-100 text-rose-900 dark:bg-rose-500/20 dark:text-rose-200'
+                                : bucket === 'tomorrow'
+                                  ? 'bg-amber-100 text-amber-900 dark:bg-amber-500/20 dark:text-amber-300'
+                                  : 'bg-sky-100 text-sky-900 dark:bg-sky-500/20 dark:text-sky-300'
+                            }`}>
+                              {bucket === 'today' ? 'เข้าไซต์วันนี้' : bucket === 'tomorrow' ? 'เข้าไซต์พรุ่งนี้' : formatDateDMY(sv.visit_date)} ({sv.time_slot})
+                            </span>
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                              sv.prep_status === 'ready_for_pickup' || sv.prep_status === 'dispatched'
+                                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300'
+                                : 'bg-slate-100 text-slate-700 dark:bg-white/10 dark:text-slate-300'
+                            }`}>
+                              {sv.prep_status === 'ready_for_pickup' ? 'ของพร้อมขึ้นรถ' : sv.prep_status === 'prepping' ? 'ช่างเตรียมกำลังเทส' : 'รอจัดซื้อตัดสต๊อก'}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="text-xs font-extrabold text-slate-900 dark:text-white">{prj.site_name}</div>
+                        <div className="text-[11px] text-slate-700 dark:text-slate-300 font-semibold">{sv.visit_scope}</div>
+                        <div className="text-[10px] text-slate-500 dark:text-slate-400">
+                          ทีมช่าง: <strong>{sv.assigned_techs.join(', ')}</strong>
+                          {preppedVisitItems.length > 0 && ` • S/N พร้อมส่ง: ${preppedVisitItems.map(i => i.serial_number || i.model_name).join(', ')}`}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
               {/* 0. CARDS: PINNED MULTI-DAY PROJECTS (PRJ-2026-XXX) */}
               {(selectedCategory === 'all' || selectedCategory === 'projects') &&
@@ -790,6 +967,19 @@ export const OnsiteView: React.FC = () => {
                         </div>
 
                         <div className="flex items-center gap-1.5 flex-wrap">
+                          {(() => {
+                            const nextVisit = (prj.site_visits || [])
+                              .filter(sv => sv.visit_status !== 'completed')
+                              .sort((a, b) => a.visit_date.localeCompare(b.visit_date))[0];
+                            return nextVisit ? (
+                              <span className="px-2 py-0.5 rounded-md text-[10px] font-extrabold bg-[#FF6B00] text-black font-mono">
+                                นัดเข้าไซต์: {formatDateDMY(nextVisit.visit_date)} ({nextVisit.time_slot})
+                              </span>
+                            ) : null;
+                          })()}
+                          <span className={`px-2 py-0.5 rounded-md text-[10px] font-extrabold border ${getProjectDeadlineRisk(prj.due_date, prj.status).badgeCls}`}>
+                            {getProjectDeadlineRisk(prj.due_date, prj.status).label}
+                          </span>
                           {rMeta && (
                             <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold border ${rMeta.badgeBg} ${rMeta.badgeBorder} ${rMeta.badgeText}`}>
                               {rMeta.shortName} • {prj.district || ''}
@@ -892,6 +1082,16 @@ export const OnsiteView: React.FC = () => {
                         </div>
 
                         <div className="flex items-center gap-1.5 flex-wrap">
+                          {firstItem.scheduled_date && (
+                            <span className="px-2 py-0.5 rounded-md text-[10px] font-extrabold bg-[#FF6B00] text-black font-mono">
+                              วันที่ส่ง: {formatDateDMY(firstItem.scheduled_date)} ({firstItem.scheduled_time_slot || 'ทั้งวัน'})
+                            </span>
+                          )}
+                          {firstItem.dispatch_route_zone && (
+                            <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/35">
+                              {firstItem.dispatch_route_zone}
+                            </span>
+                          )}
                           {rMeta && (
                             <div className={`px-2 py-0.5 rounded-md text-[10px] font-bold border inline-flex items-center gap-1 ${rMeta.badgeBg} ${rMeta.badgeBorder} ${rMeta.badgeText}`}>
                               <span>{rMeta.shortName}</span>
@@ -966,21 +1166,45 @@ export const OnsiteView: React.FC = () => {
                           <span className="text-xs font-mono font-extrabold text-slate-300 data-key">{ticket.ticket_no}</span>
                         </div>
 
-                        {rMeta && (
-                          <div className={`px-2 py-0.5 rounded-md text-[10px] font-bold border inline-flex items-center gap-1 ${rMeta.badgeBg} ${rMeta.badgeBorder} ${rMeta.badgeText}`}>
-                            <span>{rMeta.name}</span>
-                            <span>• {ticket.district || ''}</span>
-                          </div>
-                        )}
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {ticket.scheduled_date && (
+                            <span className="px-2 py-0.5 rounded-md text-[10px] font-extrabold bg-[#FF6B00] text-black font-mono">
+                              วันที่ส่งคืน: {formatDateDMY(ticket.scheduled_date)} ({ticket.scheduled_time_slot || 'ทั้งวัน'})
+                            </span>
+                          )}
+                          {ticket.dispatch_route_zone && (
+                            <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/35">
+                              {ticket.dispatch_route_zone}
+                            </span>
+                          )}
+                          {rMeta && (
+                            <div className={`px-2 py-0.5 rounded-md text-[10px] font-bold border inline-flex items-center gap-1 ${rMeta.badgeBg} ${rMeta.badgeBorder} ${rMeta.badgeText}`}>
+                              <span>{rMeta.name}</span>
+                              <span>• {ticket.district || ''}</span>
+                            </div>
+                          )}
+                        </div>
 
                         <h4 className="text-base font-bold text-white truncate data-key">{ticket.device_model || 'ไม่ระบุรุ่น'}</h4>
                         <p className="text-xs text-slate-400 font-mono data-meta truncate">S/N: {ticket.walkin_sn || '-'}</p>
                         <p className="text-xs text-slate-300 font-medium data-meta truncate">ลูกค้า: <strong className="text-white font-bold">{ticket.customer_name}</strong></p>
                         {ticket.customer_phone && (
-                          <p className="text-xs text-slate-400 flex items-center gap-1 data-meta">
-                            <Phone className="w-3.5 h-3.5 text-cyan-400 flex-shrink-0" />
-                            <span>{ticket.customer_phone}</span>
-                          </p>
+                          toTelHref(ticket.customer_phone) ? (
+                            <a
+                              href={toTelHref(ticket.customer_phone)!}
+                              onClick={(e) => e.stopPropagation()}
+                              title="กดเพื่อโทรออก"
+                              className="text-xs text-cyan-300 hover:underline flex items-center gap-1 data-meta cursor-pointer"
+                            >
+                              <Phone className="w-3.5 h-3.5 text-cyan-400 flex-shrink-0" />
+                              <span>{ticket.customer_phone}</span>
+                            </a>
+                          ) : (
+                            <p className="text-xs text-slate-400 flex items-center gap-1 data-meta">
+                              <Phone className="w-3.5 h-3.5 text-cyan-400 flex-shrink-0" />
+                              <span>{ticket.customer_phone}</span>
+                            </p>
+                          )
                         )}
                         <p className="text-xs text-slate-500 flex items-start gap-1 data-meta">
                           <MapPin className="w-3.5 h-3.5 text-cyan-400 flex-shrink-0 mt-0.5" />
@@ -1047,12 +1271,24 @@ export const OnsiteView: React.FC = () => {
                           <span className="text-xs font-mono font-extrabold text-amber-400 data-key">{ticket.ticket_no}</span>
                         </div>
 
-                        {rMeta && (
-                          <div className={`px-2 py-0.5 rounded-md text-[10px] font-bold border inline-flex items-center gap-1 ${rMeta.badgeBg} ${rMeta.badgeBorder} ${rMeta.badgeText}`}>
-                            <span>{rMeta.name}</span>
-                            <span>• {ticket.district || ''}</span>
-                          </div>
-                        )}
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {ticket.scheduled_date && (
+                            <span className="px-2 py-0.5 rounded-md text-[10px] font-extrabold bg-[#FF6B00] text-black font-mono">
+                              วันที่ส่งคืน: {formatDateDMY(ticket.scheduled_date)} ({ticket.scheduled_time_slot || 'ทั้งวัน'})
+                            </span>
+                          )}
+                          {ticket.dispatch_route_zone && (
+                            <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/35">
+                              {ticket.dispatch_route_zone}
+                            </span>
+                          )}
+                          {rMeta && (
+                            <div className={`px-2 py-0.5 rounded-md text-[10px] font-bold border inline-flex items-center gap-1 ${rMeta.badgeBg} ${rMeta.badgeBorder} ${rMeta.badgeText}`}>
+                              <span>{rMeta.name}</span>
+                              <span>• {ticket.district || ''}</span>
+                            </div>
+                          )}
+                        </div>
 
                         <h4 className="text-base font-bold text-white truncate data-key">S/N: {ticket.walkin_sn}</h4>
                         <p className="text-xs text-slate-300 font-medium data-meta truncate">ลูกค้า: <strong className="text-white font-bold">{ticket.customer_name}</strong></p>
@@ -1185,47 +1421,58 @@ export const OnsiteView: React.FC = () => {
               }
             >
               <div className="space-y-4">
-                {/* Step badges */}
+                {/* Onsite Step badges (เฉพาะขั้นตอนของช่าง Onsite) */}
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <StepBadge step={1} label="รอกดรับงาน" active={!isAccepted} done={isAccepted} />
-                  <StepBadge step={2} label="กำลังเตรียม/ติดโลโก้" active={isAccepted} />
-                  <StepBadge step={3} label="พร้อมส่ง/ติดวอย" active={false} />
+                  <StepBadge step={2} label="กำลังออกไปส่ง / ถ่ายรูปหน้างาน" active={isAccepted} />
+                  <StepBadge step={3} label="ปิดงานส่งมอบ" active={false} />
                 </div>
 
-                {/* Route & delivery mode */}
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  {rMeta && (
-                    <div className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border inline-flex items-center gap-1 ${rMeta.badgeBg} ${rMeta.badgeBorder} ${rMeta.badgeText}`}>
-                      <span>{rMeta.shortName}</span>
-                      <span>• {order?.district || ''}</span>
+                {/* Highlighted Schedule & Route Banner */}
+                {(firstItem.scheduled_date || firstItem.dispatch_route_zone || rMeta) && (
+                  <div className="p-3 rounded-2xl bg-indigo-50 dark:bg-indigo-500/15 border border-indigo-300 dark:border-indigo-500/40 flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {firstItem.scheduled_date && (
+                        <span className="px-2.5 py-1 rounded-lg bg-[#FF6B00] text-black text-xs font-black font-mono">
+                          นัดส่ง: {formatDateDMY(firstItem.scheduled_date)} ({firstItem.scheduled_time_slot || 'ทั้งวัน'})
+                        </span>
+                      )}
+                      {firstItem.dispatch_route_zone && (
+                        <span className="px-2.5 py-1 rounded-lg bg-indigo-600 text-white text-xs font-bold">
+                          {firstItem.dispatch_route_zone}
+                        </span>
+                      )}
+                      {rMeta && (
+                        <span className={`px-2.5 py-1 rounded-lg text-xs font-bold border ${rMeta.badgeBg} ${rMeta.badgeBorder} ${rMeta.badgeText}`}>
+                          {rMeta.shortName} • {order?.district || ''}
+                        </span>
+                      )}
                     </div>
-                  )}
-                  <span className="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-blue-500/15 text-blue-600 dark:text-blue-300 border border-blue-500/30">
-                    {deliveryLabel}
-                  </span>
-                  {group.items.length > 1 && (
-                    <span className="px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-600 dark:text-emerald-300 border border-emerald-500/40 text-[11px] font-extrabold flex items-center gap-1">
-                      <Layers className="w-3 h-3" />
-                      จำนวน {group.items.length} เครื่อง
+                    <span className="px-2.5 py-1 rounded-lg text-xs font-bold bg-blue-100 text-blue-900 dark:bg-blue-500/20 dark:text-blue-200">
+                      {deliveryLabel} • {group.items.length} เครื่อง
                     </span>
-                  )}
-                </div>
+                  </div>
+                )}
 
-                {/* Customer / location */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                  <div className="p-3 rounded-xl bg-slate-50 dark:bg-white/[0.03] border border-slate-200 dark:border-white/[0.08]">
-                    <p className="text-slate-500 dark:text-slate-400 font-medium mb-0.5">ลูกค้า</p>
-                    <p className="font-bold text-slate-900 dark:text-white">{order ? order.customer_name : '-'}</p>
+                {/* Highlighted Key Info: Customer, Clickable Phone, Address */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="p-3.5 rounded-2xl bg-amber-50/80 dark:bg-amber-500/10 border-2 border-amber-300 dark:border-amber-500/35">
+                    <p className="text-[11px] text-amber-800 dark:text-amber-300 font-bold mb-1">ชื่อลูกค้า &amp; เบอร์โทรติดต่อ</p>
+                    <p className="text-base font-black text-slate-900 dark:text-white leading-snug">{order ? order.customer_name : '-'}</p>
                     {order?.customer_phone && (
-                      <p className="text-slate-500 dark:text-slate-400 mt-1 flex items-center gap-1">
-                        <Phone className="w-3 h-3" /> {order.customer_phone}
-                      </p>
+                      <a
+                        href={`tel:${order.customer_phone.replace(/[^0-9+]/g, '')}`}
+                        className="mt-1.5 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-extrabold shadow-sm"
+                      >
+                        <Phone className="w-3.5 h-3.5" />
+                        <span>โทร: {order.customer_phone}</span>
+                      </a>
                     )}
                   </div>
-                  <div className="p-3 rounded-xl bg-slate-50 dark:bg-white/[0.03] border border-slate-200 dark:border-white/[0.08]">
-                    <p className="text-slate-500 dark:text-slate-400 font-medium mb-0.5">สถานที่ส่งมอบ</p>
-                    <p className="font-semibold text-slate-900 dark:text-white flex items-start gap-1">
-                      <MapPin className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0 mt-0.5" />
+                  <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-white/[0.04] border-2 border-slate-300 dark:border-white/[0.12]">
+                    <p className="text-[11px] text-slate-600 dark:text-slate-300 font-bold mb-1">สถานที่ส่งมอบ / หน้างาน</p>
+                    <p className="text-sm font-extrabold text-slate-900 dark:text-white flex items-start gap-1.5 leading-snug">
+                      <MapPin className="w-4 h-4 text-[#FF6B00] flex-shrink-0 mt-0.5" />
                       <span>{order ? order.delivery_location : '-'}</span>
                     </p>
                   </div>
@@ -1357,30 +1604,47 @@ export const OnsiteView: React.FC = () => {
             }
           >
             <div className="space-y-4">
-              {/* Route badge */}
-              {rMeta && (
-                <div className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border inline-flex items-center gap-1 ${rMeta.badgeBg} ${rMeta.badgeBorder} ${rMeta.badgeText}`}>
-                  <span>{rMeta.name}</span>
-                  <span>• {ticket.district || ''}</span>
+              {/* Highlighted Schedule & Route Banner */}
+              {(ticket.scheduled_date || ticket.dispatch_route_zone || rMeta) && (
+                <div className="p-3 rounded-2xl bg-indigo-50 dark:bg-indigo-500/15 border border-indigo-300 dark:border-indigo-500/40 flex flex-wrap items-center gap-2">
+                  {ticket.scheduled_date && (
+                    <span className="px-2.5 py-1 rounded-lg bg-[#FF6B00] text-black text-xs font-black font-mono">
+                      นัดหมาย: {formatDateDMY(ticket.scheduled_date)} ({ticket.scheduled_time_slot || 'ทั้งวัน'})
+                    </span>
+                  )}
+                  {ticket.dispatch_route_zone && (
+                    <span className="px-2.5 py-1 rounded-lg bg-indigo-600 text-white text-xs font-bold">
+                      {ticket.dispatch_route_zone}
+                    </span>
+                  )}
+                  {rMeta && (
+                    <span className={`px-2.5 py-1 rounded-lg text-xs font-bold border ${rMeta.badgeBg} ${rMeta.badgeBorder} ${rMeta.badgeText}`}>
+                      {rMeta.shortName} • {ticket.district || ''}
+                    </span>
+                  )}
                 </div>
               )}
 
-              {/* Customer / device grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                <div className="p-3 rounded-xl bg-slate-50 dark:bg-white/[0.03] border border-slate-200 dark:border-white/[0.08]">
-                  <p className="text-slate-500 dark:text-slate-400 font-medium mb-0.5">ลูกค้า</p>
-                  <p className="font-bold text-slate-900 dark:text-white">{ticket.customer_name}</p>
+              {/* Highlighted Customer / Device Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="p-3.5 rounded-2xl bg-amber-50/80 dark:bg-amber-500/10 border-2 border-amber-300 dark:border-amber-500/35">
+                  <p className="text-[11px] text-amber-800 dark:text-amber-300 font-bold mb-1">ชื่อลูกค้า &amp; เบอร์โทรติดต่อ</p>
+                  <p className="text-base font-black text-slate-900 dark:text-white leading-snug">{ticket.customer_name}</p>
                   {ticket.customer_phone && (
-                    <p className="text-slate-500 dark:text-slate-400 mt-1 flex items-center gap-1">
-                      <Phone className="w-3 h-3" /> {ticket.customer_phone}
-                    </p>
+                    <a
+                      href={`tel:${ticket.customer_phone.replace(/[^0-9+]/g, '')}`}
+                      className="mt-1.5 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-extrabold shadow-sm"
+                    >
+                      <Phone className="w-3.5 h-3.5" />
+                      <span>โทร: {ticket.customer_phone}</span>
+                    </a>
                   )}
                 </div>
-                <div className="p-3 rounded-xl bg-slate-50 dark:bg-white/[0.03] border border-slate-200 dark:border-white/[0.08]">
-                  <p className="text-slate-500 dark:text-slate-400 font-medium mb-0.5">S/N / รุ่น</p>
-                  <p className="font-mono font-extrabold text-[#FF6B00]">{ticket.walkin_sn}</p>
+                <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-white/[0.04] border-2 border-slate-300 dark:border-white/[0.12]">
+                  <p className="text-[11px] text-slate-600 dark:text-slate-300 font-bold mb-1">เลขเครื่อง (S/N) &amp; รุ่น</p>
+                  <p className="text-base font-mono font-black text-[#FF6B00]">{ticket.walkin_sn || '-'}</p>
                   {ticket.device_model && (
-                    <p className="text-slate-500 dark:text-slate-400 mt-1">{ticket.device_model}</p>
+                    <p className="text-xs font-bold text-slate-800 dark:text-slate-200 mt-1">{ticket.device_model}</p>
                   )}
                 </div>
               </div>
@@ -1979,27 +2243,42 @@ export const OnsiteView: React.FC = () => {
             <div className="p-4 sm:p-5 bg-slate-50/90 dark:bg-slate-900/95 border-b border-slate-200 dark:border-slate-800 flex items-start justify-between gap-2 flex-shrink-0">
               <div className="min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="px-2.5 py-0.5 rounded-lg text-xs font-mono font-extrabold bg-purple-600 text-white">
+                  <span className="px-2.5 py-0.5 rounded-lg text-xs font-mono font-black bg-purple-600 text-white">
                     {activeProject.id}
                   </span>
-                  <span className="px-2.5 py-0.5 rounded-lg text-[11px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-300 dark:bg-emerald-500/15 dark:text-emerald-300 dark:border-emerald-500/30">
-                    เซลล์เจ้าของโครงการ: {activeProject.created_by}
+                  <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-extrabold border ${getProjectDeadlineRisk(activeProject.due_date, activeProject.status).badgeCls}`}>
+                    {getProjectDeadlineRisk(activeProject.due_date, activeProject.status).label}
                   </span>
-                  <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
-                    {activeProject.start_date} → {activeProject.due_date}
+                  <span className="px-2.5 py-0.5 rounded-lg text-[11px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-300 dark:bg-emerald-500/15 dark:text-emerald-300 dark:border-emerald-500/30">
+                    เซลล์: {activeProject.created_by}
                   </span>
                 </div>
-                <h3 className="text-sm sm:text-base font-extrabold text-slate-900 dark:text-white mt-1.5 leading-snug">
+                <h3 className="text-base sm:text-lg font-black text-slate-900 dark:text-white mt-1.5 leading-snug">
                   {activeProject.site_name}
                 </h3>
-                <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
-                  ลูกค้า: <strong>{activeProject.customer_name}</strong> ({activeProject.phone}) • {activeProject.location}
-                </p>
+                <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs">
+                  <span className="font-extrabold text-slate-900 dark:text-white">
+                    ลูกค้า: {activeProject.customer_name}
+                  </span>
+                  {activeProject.phone && (
+                    <a
+                      href={`tel:${activeProject.phone.replace(/[^0-9+]/g, '')}`}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-[11px]"
+                    >
+                      <Phone className="w-3 h-3" />
+                      <span>โทร {activeProject.phone}</span>
+                    </a>
+                  )}
+                  <span className="text-slate-600 dark:text-slate-300 flex items-center gap-1">
+                    <MapPin className="w-3.5 h-3.5 text-[#FF6B00] shrink-0" />
+                    <span>{activeProject.location}</span>
+                  </span>
+                </div>
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 <button
                   type="button"
-                  onClick={() => setPrintProjectTarget(activeProject)}
+                  onClick={() => setPrintProjectTarget({ project: activeProject })}
                   className="px-3 py-2 rounded-xl bg-[#FF6B00] hover:bg-[#FF8A24] text-black text-xs font-extrabold cursor-pointer flex items-center gap-1.5 shadow-sm"
                 >
                   <Printer className="w-3.5 h-3.5" />
@@ -2018,6 +2297,65 @@ export const OnsiteView: React.FC = () => {
 
             {/* Body */}
             <div className="flex-1 overflow-y-auto overscroll-contain p-4 sm:p-5 space-y-4 text-xs">
+              {/* Scheduled Site Visits for this Project (Complete Individual Visit) */}
+              {(activeProject.site_visits || []).length > 0 && (
+                <div className="p-3.5 rounded-2xl bg-indigo-50/70 dark:bg-indigo-500/10 border border-indigo-200 dark:border-indigo-500/30 space-y-2.5">
+                  <div className="font-extrabold text-indigo-900 dark:text-indigo-200 flex items-center gap-1.5">
+                    <Calendar className="w-4 h-4" />
+                    <span>รอบเข้าไซต์งานตามนัดหมาย ({(activeProject.site_visits || []).length} รอบ)</span>
+                  </div>
+                  <div className="space-y-2">
+                    {(activeProject.site_visits || []).map((sv, idx) => {
+                      const visitItems = items.filter(
+                        it => it.project_id === activeProject.id && it.site_visit_id === sv.id
+                      );
+                      return (
+                        <div key={sv.id} className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-indigo-200 dark:border-indigo-500/30 space-y-2">
+                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                            <span className="font-mono font-extrabold text-indigo-700 dark:text-indigo-300">
+                              รอบ #{idx + 1} ({sv.id}) • {formatDateDMY(sv.visit_date)} ({sv.time_slot})
+                            </span>
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                              sv.visit_status === 'completed'
+                                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300'
+                                : 'bg-sky-100 text-sky-800 dark:bg-sky-500/20 dark:text-sky-300'
+                            }`}>
+                              {sv.visit_status === 'completed' ? 'ปิดรอบนี้แล้ว' : 'รอดำเนินการ'}
+                            </span>
+                          </div>
+                          <div className="font-bold text-slate-900 dark:text-white">{sv.visit_scope}</div>
+                          <div className="text-[11px] text-slate-600 dark:text-slate-300">
+                            ทีมช่าง: <strong>{sv.assigned_techs.join(', ')}</strong>
+                            {visitItems.length > 0 && ` • S/N ที่เบิก: ${visitItems.map(i => `${i.model_name} (${i.serial_number || 'รอ S/N'})`).join(', ')}`}
+                          </div>
+                          {sv.visit_status !== 'completed' && (
+                            <div className="flex justify-end pt-1">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  updateSiteVisit(activeProject.id, sv.id, {
+                                    visit_status: 'completed',
+                                    prep_status: 'dispatched',
+                                    progress_note: dailyNoteInput.trim() || `ปิดรอบเข้าไซต์ ${formatDateDMY(sv.visit_date)} เรียบร้อย`,
+                                    photo_urls: dailyPhotosInput
+                                  });
+                                  setToast(`ปิดรอบเข้าไซต์ ${sv.id} (${formatDateDMY(sv.visit_date)}) เรียบร้อยแล้ว`);
+                                  setTimeout(() => setToast(''), 4000);
+                                }}
+                                className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] cursor-pointer flex items-center gap-1"
+                              >
+                                <CheckCircle className="w-3.5 h-3.5" />
+                                <span>ปิดรอบเข้าไซต์นี้ (Complete Visit)</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               {/* Site Equipment & Released Batches Overview */}
               <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 space-y-2.5">
                 <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -2025,18 +2363,47 @@ export const OnsiteView: React.FC = () => {
                     <Package className="w-4 h-4 text-purple-600 dark:text-purple-400" />
                     <span>รายการอุปกรณ์หลัก & วัสดุสิ้นเปลืองของไซต์งาน ({activeProject.items.length} รายการ • เบิกแล้ว {activeProject.batches?.length || 0} งวด)</span>
                   </span>
+                  {(activeProject.batches || []).length > 0 && (
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {(activeProject.batches || []).map((b) => (
+                        <button
+                          key={b.id}
+                          type="button"
+                          onClick={() => setPrintProjectTarget({ project: activeProject, initialBatchNo: b.batch_no })}
+                          className="px-2.5 py-1 rounded-lg bg-[#FF6B00]/15 hover:bg-[#FF6B00]/25 text-[#C2410C] dark:text-[#FF6B00] border border-[#FF6B00]/30 text-[11px] font-bold cursor-pointer flex items-center gap-1"
+                        >
+                          <Printer className="w-3 h-3" />
+                          <span>พิมพ์บิล งวดที่ {b.batch_no}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {activeProject.items.map((it) => (
+                  {activeProject.items.map((it) => {
+                    const isLabor = /ค่าบริการ|ค่าแรง/.test(it.model_name || '');
+                    const isDirectNonPrep = !isLabor && (it.item_type === 'consumable' || isNonPrepCableOrConsumable(it.model_name));
+                    const readyCount = isLabor
+                      ? it.qty_required
+                      : isDirectNonPrep
+                        ? Math.max(it.qty_prepared, it.qty_allocated)
+                        : it.qty_prepared;
+                    return (
                     <div key={it.id} className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 flex items-start justify-between gap-2">
                       <div className="min-w-0 space-y-0.5">
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
-                            it.item_type === 'equipment'
-                              ? 'bg-blue-100 text-blue-900 dark:bg-blue-500/20 dark:text-blue-300'
-                              : 'bg-amber-100 text-amber-900 dark:bg-amber-500/20 dark:text-amber-300'
+                            isLabor
+                              ? 'bg-slate-100 text-slate-700 dark:bg-white/[0.08] dark:text-slate-200'
+                              : !isDirectNonPrep
+                                ? 'bg-blue-100 text-blue-900 dark:bg-blue-500/20 dark:text-blue-300'
+                                : 'bg-amber-100 text-amber-900 dark:bg-amber-500/20 dark:text-amber-300'
                           }`}>
-                            {it.item_type === 'equipment' ? 'อุปกรณ์หลัก' : 'วัสดุสิ้นเปลือง/ค่าแรง'}
+                            {isLabor
+                              ? 'ค่าบริการ / ค่าแรง'
+                              : !isDirectNonPrep
+                                ? 'อุปกรณ์หลัก'
+                                : 'วัสดุ / ตู้ Rack (ส่งตรง Onsite)'}
                           </span>
                           {it.is_addon && (
                             <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold bg-purple-100 text-purple-900 dark:bg-purple-500/20 dark:text-purple-300">
@@ -2052,13 +2419,25 @@ export const OnsiteView: React.FC = () => {
                         )}
                       </div>
                       <div className="text-right shrink-0 font-mono">
-                        <div className="font-extrabold text-slate-900 dark:text-white">
-                          พร้อมใช้ {it.qty_prepared}/{it.qty_required}
-                        </div>
-                        <div className="text-[10px] text-slate-500">เบิก {it.qty_allocated}/{it.qty_required}</div>
+                        {isLabor ? (
+                          <>
+                            <div className="font-extrabold text-emerald-700 dark:text-emerald-300">
+                              งานบริการ ×{it.qty_required}
+                            </div>
+                            <div className="text-[10px] text-slate-500">รวมในบิลแล้ว</div>
+                          </>
+                        ) : (
+                          <>
+                            <div className={`font-extrabold ${readyCount >= it.qty_required ? 'text-emerald-700 dark:text-emerald-300' : 'text-slate-900 dark:text-white'}`}>
+                              พร้อมใช้ {readyCount}/{it.qty_required}
+                            </div>
+                            <div className="text-[10px] text-slate-500">เบิก {it.qty_allocated}/{it.qty_required}</div>
+                          </>
+                        )}
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
 
@@ -2495,7 +2874,21 @@ export const OnsiteView: React.FC = () => {
       <OrderFormPrintModal
         isOpen={!!printProjectTarget}
         onClose={() => setPrintProjectTarget(null)}
-        project={printProjectTarget}
+        project={printProjectTarget?.project}
+        initialBatchNo={printProjectTarget?.initialBatchNo ?? null}
+      />
+
+      <OnsiteDispatchRosterModal
+        isOpen={dispatchRosterOpen}
+        onClose={() => setDispatchRosterOpen(false)}
+        targetDate={rosterDate}
+        onDateChange={(d) => setRosterDate(d)}
+        orders={orders}
+        items={items}
+        projects={projects}
+        repairTickets={repairTickets}
+        vehicleMap={vehicleMap}
+        readOnly
       />
 
       <RepairIntakeModal

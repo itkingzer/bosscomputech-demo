@@ -231,10 +231,10 @@ export const OrderFormPrintModal: React.FC<OrderFormPrintModalProps> = ({
     : order?.bill_no || order?.sales_ref || order?.id || '-';
   const openDate = project
     ? formatDateDMY(activeBatch ? activeBatch.released_at : (project.start_date || project.created_at))
-    : formatDateDMY(order?.created_at);
+    : formatDateDMY(order?.issue_date || order?.created_at);
   const dueDate = project
     ? formatDateDMY(project.due_date)
-    : formatDateDMY(order?.delivery_date);
+    : formatDateDMY(order?.due_date || order?.delivery_date);
   const customerName = project ? project.customer_name : order?.customer_name || '-';
   const customerPhone = project ? project.phone : order?.customer_phone || '-';
   const customerLocation = project
