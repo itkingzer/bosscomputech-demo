@@ -203,6 +203,7 @@ export const OnsiteView: React.FC = () => {
   const [reqCatalogCategory, setReqCatalogCategory] = useState<'all' | ProductCategory>('all');
   const [handoverNoteInput, setHandoverNoteInput] = useState('');
   const [handoverPhotosInput, setHandoverPhotosInput] = useState<string[]>([]);
+  const [showMobileFilters, setShowMobileFilters] = useState(false);
 
   const activeProject = useMemo(
     () => (activeProjectId ? projects.find(p => p.id === activeProjectId) || null : null),
@@ -635,11 +636,11 @@ export const OnsiteView: React.FC = () => {
             </p>
           </div>
 
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full lg:w-auto">
+          <div className="hidden sm:flex flex-row items-center gap-2 w-auto">
             <button
               type="button"
               onClick={() => setDispatchRosterOpen(true)}
-              className="w-full sm:w-auto px-4 py-3 min-h-[48px] bg-indigo-600 hover:bg-indigo-500 active:scale-[0.97] text-white font-extrabold rounded-xl text-sm transition-all duration-150 cursor-pointer flex items-center justify-center gap-2 shadow-md"
+              className="px-4 py-3 min-h-[48px] bg-indigo-600 hover:bg-indigo-500 active:scale-[0.97] text-white font-extrabold rounded-xl text-sm transition-all duration-150 cursor-pointer flex items-center justify-center gap-2 shadow-md"
             >
               <Printer className="w-5 h-5" />
               <span>พิมพ์ใบจัดคิวพรุ่งนี้ (Print)</span>
@@ -647,7 +648,7 @@ export const OnsiteView: React.FC = () => {
             <button
               type="button"
               onClick={() => handleOpenNewServiceSheet()}
-              className="w-full sm:w-auto px-5 py-3 min-h-[48px] bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:brightness-110 active:scale-[0.97] text-black font-black rounded-xl text-sm transition-all duration-150 cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-[#FF6B00]/25 border border-white/20"
+              className="px-5 py-3 min-h-[48px] bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:brightness-110 active:scale-[0.97] text-black font-black rounded-xl text-sm transition-all duration-150 cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-[#FF6B00]/25 border border-white/20"
             >
               <ClipboardList className="w-5 h-5" />
               <span>+ ออกใบรับเครื่องซ่อมหน้างาน</span>
@@ -655,8 +656,8 @@ export const OnsiteView: React.FC = () => {
           </div>
         </div>
 
-        {/* Quick 3-Card Summary ("งานของคุณตอนนี้") */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
+        {/* Quick 3-Card Summary ("งานของคุณตอนนี้") — hidden on mobile so job cards appear immediately */}
+        <div className="hidden sm:grid sm:grid-cols-3 gap-3 mb-5">
           <button
             type="button"
             onClick={() => setSelectedCategory('projects')}
@@ -700,31 +701,50 @@ export const OnsiteView: React.FC = () => {
           </button>
         </div>
 
-        {/* Day Schedule Filter: งานทั้งหมด / งานวันนี้ / งานพรุ่งนี้ (สอดคล้องกับตารางหน้าร้าน) */}
-        <div className="flex flex-wrap items-center gap-2 mb-4">
-          <span className="text-xs font-extrabold text-slate-700 dark:text-slate-300 mr-1">ดูคิวงานวันที่:</span>
+        {/* Day Schedule Filter: งานทั้งหมด / งานวันนี้ / งานพรุ่งนี้ (Mobile Segmented 3-col) */}
+        <div className="grid grid-cols-3 sm:flex sm:flex-wrap items-center gap-1.5 sm:gap-2 mb-3">
+          <span className="hidden sm:inline text-xs font-extrabold text-slate-700 dark:text-slate-300 mr-1">ดูคิวงานวันที่:</span>
           {([
-            { id: 'all', label: 'งานที่จัดคิวทั้งหมด' },
-            { id: 'today', label: `งานวันนี้ (${formatDateDMY(todayDateStr)})` },
-            { id: 'tomorrow', label: `งานพรุ่งนี้ (${formatDateDMY(tomorrowDateStr)})` }
+            { id: 'all', mobileLabel: 'ทั้งหมด', label: 'งานที่จัดคิวทั้งหมด' },
+            { id: 'today', mobileLabel: 'วันนี้', label: `งานวันนี้ (${formatDateDMY(todayDateStr)})` },
+            { id: 'tomorrow', mobileLabel: 'พรุ่งนี้', label: `งานพรุ่งนี้ (${formatDateDMY(tomorrowDateStr)})` }
           ] as const).map(d => (
             <button
               key={d.id}
               type="button"
               onClick={() => setSelectedDayFilter(d.id)}
-              className={`px-4 py-2 min-h-[44px] rounded-xl text-xs sm:text-sm font-extrabold transition cursor-pointer ${
+              className={`px-2 sm:px-4 py-2 min-h-[42px] rounded-xl text-xs sm:text-sm font-extrabold transition cursor-pointer text-center ${
                 selectedDayFilter === d.id
                   ? 'bg-[#FF6B00] text-black shadow-md'
                   : 'bg-slate-100 dark:bg-white/[0.04] text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-white/[0.08]'
               }`}
             >
-              {d.label}
+              <span className="sm:hidden">{d.mobileLabel}</span>
+              <span className="hidden sm:inline">{d.label}</span>
             </button>
           ))}
         </div>
 
-        {/* Clean Filters Bar */}
-        <div className="p-3.5 rounded-2xl bg-slate-100/80 dark:bg-white/[0.03] border border-slate-200 dark:border-white/[0.06] mb-5 flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3 min-w-0">
+        {/* Mobile Filter Toggle Button */}
+        <div className="sm:hidden flex items-center justify-between gap-2 mb-3">
+          <button
+            type="button"
+            onClick={() => setShowMobileFilters(v => !v)}
+            className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-bold border flex items-center justify-between transition cursor-pointer ${
+              selectedTechNameFilter !== 'all' || selectedRouteFilter !== 'all'
+                ? 'bg-purple-50 dark:bg-purple-500/15 border-purple-300 dark:border-purple-500/40 text-purple-900 dark:text-purple-200'
+                : 'bg-slate-100 dark:bg-white/[0.04] border-slate-200 dark:border-white/[0.08] text-slate-700 dark:text-slate-300'
+            }`}
+          >
+            <span>
+              ตัวกรอง: {selectedTechNameFilter === 'all' ? 'ช่างทุกคน' : selectedTechNameFilter} • {selectedRouteFilter === 'all' ? 'ทุกสายรถ' : ROUTE_DEFINITIONS[selectedRouteFilter].shortName}
+            </span>
+            <span className="text-[10px] font-extrabold text-[#FF6B00]">{showMobileFilters ? 'ซ่อน ▲' : 'ปรับตัวกรอง ▼'}</span>
+          </button>
+        </div>
+
+        {/* Clean Filters Bar (Collapsible on mobile, always visible on sm+) */}
+        <div className={`${showMobileFilters ? 'flex' : 'hidden sm:flex'} p-3.5 rounded-2xl bg-slate-100/80 dark:bg-white/[0.03] border border-slate-200 dark:border-white/[0.06] mb-4 flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3 min-w-0`}>
           <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-2 text-xs w-full lg:w-auto min-w-0">
             <span className="text-slate-700 dark:text-slate-300 font-bold whitespace-nowrap">ดูงานของช่าง:</span>
             <select
@@ -771,8 +791,8 @@ export const OnsiteView: React.FC = () => {
           </div>
         </div>
 
-        {/* Simplified Category Tabs (Plain Thai, High Contrast, >= 44px) */}
-        <div className="w-full max-w-full min-w-0 flex flex-wrap items-center gap-2 pb-4">
+        {/* Simplified Category Tabs (Horizontal scroll single row on mobile, wrap on desktop) */}
+        <div className="w-full max-w-full min-w-0 flex flex-nowrap overflow-x-auto no-scrollbar sm:flex-wrap items-center gap-2 pb-4">
           <button
             onClick={() => setSelectedCategory('all')}
             className={`px-3.5 py-2 min-h-[44px] text-xs sm:text-sm font-extrabold rounded-xl transition-all cursor-pointer whitespace-nowrap ${selectedCategory === 'all'
@@ -2904,6 +2924,16 @@ export const OnsiteView: React.FC = () => {
           setTimeout(() => setToast(''), 4000);
         }}
       />
+      {/* Mobile Floating Action Button (FAB): ออกใบรับเครื่องซ่อมหน้างาน */}
+      <button
+        type="button"
+        onClick={() => handleOpenNewServiceSheet()}
+        aria-label="ออกใบรับเครื่องซ่อมหน้างาน"
+        className="sm:hidden fixed bottom-[max(1.25rem,env(safe-area-inset-bottom))] right-4 z-30 px-4 py-3.5 rounded-full bg-gradient-to-r from-[#FF6B00] to-[#E65A00] text-black font-black text-xs shadow-2xl shadow-[#FF6B00]/40 border border-white/25 flex items-center gap-1.5 active:scale-95 transition"
+      >
+        <ClipboardList className="w-4 h-4" />
+        <span>+ รับเครื่องซ่อม</span>
+      </button>
     </div>
   );
 };

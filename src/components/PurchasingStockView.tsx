@@ -1083,8 +1083,8 @@ export const PurchasingStockView: React.FC = () => {
           </button>
         </div>
 
-        {/* 3-Step Workflow Guide Strip (Zero-Confusion Flow) */}
-        <div className="mt-4 px-3.5 py-2.5 rounded-2xl bg-slate-50 dark:bg-white/[0.03] border border-slate-200 dark:border-white/[0.06] flex flex-wrap items-center gap-2 text-[11px] font-bold text-slate-700 dark:text-slate-300">
+        {/* 3-Step Workflow Guide Strip (Desktop/Tablet) */}
+        <div className="hidden sm:flex mt-4 px-3.5 py-2.5 rounded-2xl bg-slate-50 dark:bg-white/[0.03] border border-slate-200 dark:border-white/[0.06] flex-wrap items-center gap-2 text-[11px] font-bold text-slate-700 dark:text-slate-300">
           <span className="text-slate-500 dark:text-slate-400 mr-1">ขั้นตอนทำงาน:</span>
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-rose-100/80 text-rose-900 dark:bg-rose-500/15 dark:text-rose-300 border border-rose-200 dark:border-rose-500/30">
             <span className="w-4 h-4 rounded-full bg-rose-600 text-white text-[10px] font-black inline-flex items-center justify-center">1</span>

@@ -15,6 +15,15 @@
   --animate-slide-up: slideUp 250ms ease-out both;
 }
 
+/* Hide scrollbars cleanly for horizontal mobile pill tabs */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
 /* Subtle opacity fade — backdrops, tab switches, toasts */
 @keyframes fadeIn {
   from {
