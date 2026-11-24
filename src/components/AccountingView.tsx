@@ -685,42 +685,76 @@ export const AccountingView: React.FC = () => {
             pageSizeOptions={[15, 30, 50]}
             unit="รายการ"
           />
-          <table className="w-full text-left text-xs">
-            <thead className="bg-slate-100 dark:bg-white/[0.04] text-slate-600 dark:text-slate-300">
-              <tr>
-                <th className="py-2.5 px-3">เลข PO</th>
-                <th className="py-2.5 px-3">สินค้า</th>
-                <th className="py-2.5 px-3">Supplier</th>
-                <th className="py-2.5 px-3 text-center">จำนวน</th>
-                <th className="py-2.5 px-3 text-right">รวมต้นทุน</th>
-                <th className="py-2.5 px-3">โปรเจกต์</th>
-                <th className="py-2.5 px-3">สถานะ</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-              {poList.pageItems.map(po => (
-                <tr key={po.id} className="hover:bg-slate-50 dark:hover:bg-white/[0.02]">
-                  <td className="py-2.5 px-3 font-mono font-bold text-[#FF6B00]">{po.po_number}</td>
-                  <td className="py-2.5 px-3 font-semibold">{po.product_name}</td>
-                  <td className="py-2.5 px-3">{po.supplier}</td>
-                  <td className="py-2.5 px-3 text-center font-mono">{po.qty}</td>
-                  <td className="py-2.5 px-3 text-right font-mono font-bold">฿{fmt(po.qty * po.unit_cost)}</td>
-                  <td className="py-2.5 px-3 font-mono text-purple-600 dark:text-purple-400">{po.project_id || '-'}</td>
-                  <td className="py-2.5 px-3">
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                      po.status === 'received'
-                        ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300'
-                        : po.status === 'cancelled'
-                          ? 'bg-rose-100 text-rose-800 dark:bg-rose-500/15 dark:text-rose-300'
-                          : 'bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300'
-                    }`}>
-                      {po.status === 'received' ? 'รับเข้าคลังแล้ว' : po.status === 'cancelled' ? 'ยกเลิก' : 'รอของเข้า'}
-                    </span>
-                  </td>
+          {/* Mobile Cards (< md) */}
+          <div className="md:hidden space-y-2.5">
+            {poList.pageItems.map(po => (
+              <div key={po.id} className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 space-y-2 text-xs">
+                <div className="flex items-start justify-between gap-2">
+                  <span className="font-mono font-bold text-sm text-[#FF6B00]">{po.po_number}</span>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold flex-shrink-0 ${
+                    po.status === 'received'
+                      ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300'
+                      : po.status === 'cancelled'
+                        ? 'bg-rose-100 text-rose-800 dark:bg-rose-500/15 dark:text-rose-300'
+                        : 'bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300'
+                  }`}>
+                    {po.status === 'received' ? 'รับเข้าคลังแล้ว' : po.status === 'cancelled' ? 'ยกเลิก' : 'รอของเข้า'}
+                  </span>
+                </div>
+                <div className="font-bold text-sm text-slate-900 dark:text-white">{po.product_name}</div>
+                <div className="text-slate-600 dark:text-slate-400">
+                  Supplier: <span className="font-medium text-slate-800 dark:text-slate-200">{po.supplier}</span>
+                  {po.project_id && (
+                    <span className="ml-2 font-mono text-purple-600 dark:text-purple-400">• {po.project_id}</span>
+                  )}
+                </div>
+                <div className="flex items-center justify-between pt-2 border-t border-slate-200 dark:border-slate-700/70">
+                  <span className="text-slate-500 dark:text-slate-400">จำนวน: <strong className="font-mono text-slate-900 dark:text-white">{po.qty}</strong></span>
+                  <span className="font-mono font-extrabold text-sm text-slate-900 dark:text-white">฿{fmt(po.qty * po.unit_cost)}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Desktop Table (>= md) */}
+          <div className="hidden md:block overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-100 dark:bg-white/[0.04] text-slate-600 dark:text-slate-300">
+                <tr>
+                  <th className="py-2.5 px-3">เลข PO</th>
+                  <th className="py-2.5 px-3">สินค้า</th>
+                  <th className="py-2.5 px-3">Supplier</th>
+                  <th className="py-2.5 px-3 text-center">จำนวน</th>
+                  <th className="py-2.5 px-3 text-right">รวมต้นทุน</th>
+                  <th className="py-2.5 px-3">โปรเจกต์</th>
+                  <th className="py-2.5 px-3">สถานะ</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
+                {poList.pageItems.map(po => (
+                  <tr key={po.id} className="hover:bg-slate-50 dark:hover:bg-white/[0.02]">
+                    <td className="py-2.5 px-3 font-mono font-bold text-[#FF6B00]">{po.po_number}</td>
+                    <td className="py-2.5 px-3 font-semibold">{po.product_name}</td>
+                    <td className="py-2.5 px-3">{po.supplier}</td>
+                    <td className="py-2.5 px-3 text-center font-mono">{po.qty}</td>
+                    <td className="py-2.5 px-3 text-right font-mono font-bold">฿{fmt(po.qty * po.unit_cost)}</td>
+                    <td className="py-2.5 px-3 font-mono text-purple-600 dark:text-purple-400">{po.project_id || '-'}</td>
+                    <td className="py-2.5 px-3">
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                        po.status === 'received'
+                          ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300'
+                          : po.status === 'cancelled'
+                            ? 'bg-rose-100 text-rose-800 dark:bg-rose-500/15 dark:text-rose-300'
+                            : 'bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300'
+                      }`}>
+                        {po.status === 'received' ? 'รับเข้าคลังแล้ว' : po.status === 'cancelled' ? 'ยกเลิก' : 'รอของเข้า'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
@@ -779,7 +813,7 @@ export const AccountingView: React.FC = () => {
       {/* Tax Invoice / Billing Confirmation Modal */}
       {taxModalTarget && createPortal(
         <div
-          className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in"
+          className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 animate-fade-in"
           onClick={() => setTaxModalTarget(null)}
         >
           <form
@@ -834,7 +868,7 @@ export const AccountingView: React.FC = () => {
       {/* Photo Preview Modal for Order Photos */}
       {photoPreviewUrls && createPortal(
         <div
-          className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in"
+          className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 animate-fade-in"
           onClick={() => setPhotoPreviewUrls(null)}
         >
           <div

@@ -337,17 +337,68 @@ export const ProfitDashboardView: React.FC = () => {
 
             {/* Salesperson Breakdown (Admin/Manager only) */}
             {!isSalesperson && (
-                <div className="liquid-glass rounded-3xl p-6 sm:p-7 shadow-2xl border border-slate-200 dark:border-white/[0.08]">
+                <div className="liquid-glass rounded-3xl p-4 sm:p-7 shadow-2xl border border-slate-200 dark:border-white/[0.08]">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
                         <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                            <Trophy className="w-4 h-4 text-[#FF6B00]" />
+                            <Trophy className="w-4 h-4 text-[#FF6B00] flex-shrink-0" />
                             <span>ผลงานแยกตามพนักงานขาย (รวมบิลขาย SO + โปรเจกต์ PRJ + ยอดแอดเพิ่มข้ามเซลล์)</span>
                         </h3>
                         <span className="text-[11px] text-slate-500 dark:text-slate-400">
                             คิดยอด Add-on ของโปรเจกต์ให้เซลล์ผู้แอดรายการเพิ่มโดยอัตโนมัติ
                         </span>
                     </div>
-                    <div className="overflow-x-auto">
+
+                    {/* Mobile Cards (< md) */}
+                    <div className="md:hidden space-y-2.5">
+                        {breakdown.map((row, idx) => {
+                            const gpPct = row.revenue > 0 ? (row.gp / row.revenue) * 100 : 0;
+                            return (
+                                <div key={row.name} className="p-3.5 rounded-2xl border border-slate-200 dark:border-white/[0.08] bg-white/80 dark:bg-white/[0.03] space-y-2.5">
+                                    <div className="flex items-center justify-between gap-2">
+                                        <div className="flex items-center gap-2 min-w-0">
+                                            <span className="w-6 h-6 rounded-lg bg-[#FF6B00]/15 text-[#FF6B00] font-mono font-bold text-xs flex items-center justify-center flex-shrink-0">
+                                                {idx + 1}
+                                            </span>
+                                            <span className="text-sm font-bold text-slate-900 dark:text-white truncate">{row.name}</span>
+                                        </div>
+                                        {row.lowMargin > 0 && (
+                                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300 dark:bg-amber-500/20 dark:text-amber-300 dark:border-amber-500/30 flex-shrink-0">
+                                                {row.lowMargin} กำไรต่ำ
+                                            </span>
+                                        )}
+                                    </div>
+                                    <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+                                        <span>บิล SO: <strong className="font-mono text-slate-800 dark:text-slate-200">{row.orders}</strong></span>
+                                        <span>•</span>
+                                        <span className="text-purple-600 dark:text-purple-300 font-mono">
+                                            {row.projects} โปรเจกต์{row.addonCount > 0 ? ` (+${row.addonCount} Add-on)` : ''}
+                                        </span>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100 dark:border-white/[0.06] text-xs">
+                                        <div>
+                                            <div className="text-[10px] text-slate-400">ยอดขายรวม</div>
+                                            <div className="font-mono font-extrabold text-emerald-500 dark:text-emerald-400">{fmt(row.revenue)}</div>
+                                        </div>
+                                        <div>
+                                            <div className="text-[10px] text-slate-400">ต้นทุนรวม</div>
+                                            <div className="font-mono font-extrabold text-rose-500 dark:text-rose-400">{fmt(row.cost)}</div>
+                                        </div>
+                                        <div>
+                                            <div className="text-[10px] text-slate-400">GP สุทธิ ({gpPct.toFixed(1)}%)</div>
+                                            <div className={`font-mono font-extrabold ${row.gp >= 0 ? 'text-[#FF6B00]' : 'text-rose-400'}`}>{fmt(row.gp)}</div>
+                                        </div>
+                                        <div>
+                                            <div className="text-[10px] text-slate-400">ค่าคอม (5%)</div>
+                                            <div className="font-mono font-extrabold text-purple-500 dark:text-purple-400">{fmt(row.commission)}</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+
+                    {/* Desktop Table (>= md) */}
+                    <div className="hidden md:block overflow-x-auto">
                         <table className="w-full text-left text-xs">
                             <thead className="bg-slate-100 dark:bg-white/[0.04] text-slate-600 dark:text-slate-400 border-b border-slate-200 dark:border-white/[0.06]">
                                 <tr>
@@ -533,7 +584,102 @@ export const ProfitDashboardView: React.FC = () => {
                             unit="รายการ"
                             className="mb-3"
                         />
-                        <div className="overflow-x-auto">
+                        {/* Mobile Cards (< md) */}
+                        <div className="md:hidden space-y-2.5">
+                            {metricsList.pageItems.map((m) => {
+                                const rMeta = m.routeCode ? ROUTE_DEFINITIONS[m.routeCode] : null;
+                                const commission = m.gp > 0 ? m.gp * COMMISSION_RATE : 0;
+                                return (
+                                    <div
+                                        key={`${m.kind}-${m.id}`}
+                                        className={`p-3.5 rounded-2xl border space-y-2.5 ${m.isLowMargin
+                                            ? 'border-rose-500/30 bg-rose-500/[0.06]'
+                                            : 'border-slate-200 dark:border-white/[0.08] bg-white/80 dark:bg-white/[0.03]'
+                                            }`}
+                                    >
+                                        <div className="flex items-start justify-between gap-2">
+                                            <div className="flex flex-wrap items-center gap-1.5 min-w-0">
+                                                <span className={`font-mono font-extrabold text-sm ${m.kind === 'project' ? 'text-purple-400' : 'text-[#FF6B00]'}`}>
+                                                    {m.refCode}
+                                                </span>
+                                                {m.kind === 'project' && (
+                                                    <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                                                        PROJECT
+                                                    </span>
+                                                )}
+                                                {rMeta && (
+                                                    <span className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border ${rMeta.badgeBg} ${rMeta.badgeBorder} ${rMeta.badgeText}`}>
+                                                        {rMeta.shortName}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <span className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border flex-shrink-0 ${m.isLowMargin
+                                                ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                                                : 'bg-sky-500/15 text-sky-300 border-sky-500/30'
+                                                }`}>
+                                                GP {m.gpPct.toFixed(1)}%
+                                            </span>
+                                        </div>
+
+                                        <div>
+                                            <div className="text-sm font-bold text-slate-900 dark:text-white">{m.title}</div>
+                                            {m.kind === 'project' && (
+                                                <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 flex flex-wrap items-center gap-2">
+                                                    <span>ยอดตั้งต้น ฿{fmt(m.baseRevenue)}</span>
+                                                    {m.addonRevenue > 0 && (
+                                                        <span className="text-purple-400 font-semibold">+ Add-on ฿{fmt(m.addonRevenue)}</span>
+                                                    )}
+                                                    {m.serialNumbers.length > 0 && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setSnQuery(m.serialNumbers[0])}
+                                                            className="font-mono text-[#FF6B00] underline cursor-pointer text-left"
+                                                        >
+                                                            S/N: {m.serialNumbers.join(', ')}
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        {!isSalesperson && (
+                                            <div className="flex flex-wrap items-center gap-1">
+                                                <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                                                    {m.leadSalesperson}
+                                                </span>
+                                                {m.addonSalespeople.map(sp => (
+                                                    <span key={sp} className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-purple-500/15 text-purple-300 border border-purple-500/30">
+                                                        +Add-on: {sp}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        )}
+
+                                        <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100 dark:border-white/[0.06] text-xs">
+                                            <div>
+                                                <div className="text-[10px] text-slate-400">ยอดขายรวม</div>
+                                                <div className="font-mono font-extrabold text-emerald-500 dark:text-emerald-400">{fmt(m.revenue)}</div>
+                                            </div>
+                                            <div>
+                                                <div className="text-[10px] text-slate-400">ต้นทุนรวม</div>
+                                                <div className="font-mono font-extrabold text-rose-500 dark:text-rose-400">{fmt(m.cost)}</div>
+                                            </div>
+                                            <div>
+                                                <div className="text-[10px] text-slate-400">GP สุทธิ</div>
+                                                <div className={`font-mono font-extrabold ${m.gp >= 0 ? 'text-[#FF6B00]' : 'text-rose-400'}`}>{fmt(m.gp)}</div>
+                                            </div>
+                                            <div>
+                                                <div className="text-[10px] text-slate-400">ค่าคอม (5%)</div>
+                                                <div className="font-mono font-extrabold text-purple-500 dark:text-purple-400">{fmt(commission)}</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+
+                        {/* Desktop Table (>= md) */}
+                        <div className="hidden md:block overflow-x-auto">
                             <table className="w-full text-left text-xs">
                                 <thead className="bg-white/[0.04] text-slate-400 border-b border-white/[0.06]">
                                     <tr>

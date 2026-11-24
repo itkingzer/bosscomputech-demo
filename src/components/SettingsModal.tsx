@@ -58,15 +58,12 @@ export const SettingsModal: React.FC<{ isOpen: boolean; onClose: () => void }> =
       role="dialog"
       aria-modal="true"
       aria-label="ตั้งค่าการเชื่อมต่อ Supabase"
-      className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-4 animate-fade-in"
+      className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 animate-fade-in"
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-t-3xl sm:rounded-3xl w-full sm:w-[95vw] max-w-md max-h-[92dvh] sm:max-h-[88dvh] overflow-y-auto overscroll-contain p-4 sm:p-7 pb-[max(1rem,env(safe-area-inset-bottom))] relative animate-modal-pop"
+        className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-3xl w-full max-w-md max-h-[82dvh] sm:max-h-[86dvh] overflow-y-auto overscroll-contain p-4 sm:p-7 relative animate-modal-pop"
       >
-        <div className="sm:hidden flex justify-center pt-1 pb-3">
-          <span className="h-1.5 w-10 rounded-full bg-slate-300 dark:bg-white/20" />
-        </div>
         <button
           onClick={onClose}
           aria-label="ปิดหน้าตั้งค่า"

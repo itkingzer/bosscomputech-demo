@@ -1732,11 +1732,8 @@ export const OnsiteView: React.FC = () => {
       {/* MODAL 1: FORM บันทึกการรับเครื่องซ่อมกลับร้าน / ออกใบ Service Sheet (Mobile-Friendly) */}
       {/* ========================================================================= */}
       {isPickupModalOpen && createPortal(
-        <div className="fixed inset-0 z-[10000] flex items-end sm:items-center justify-center sm:p-4 bg-black/60 backdrop-blur-sm overflow-y-auto overscroll-contain animate-fade-in">
-          <div className="w-full sm:w-[95vw] max-w-lg max-h-[92dvh] sm:max-h-[88dvh] overflow-y-auto overscroll-contain bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-t-3xl sm:rounded-3xl p-4 sm:p-7 pb-[max(1rem,env(safe-area-inset-bottom))] border border-slate-200 dark:border-[#FF6B00]/40 shadow-2xl relative animate-modal-pop">
-            <div className="sm:hidden flex justify-center pt-1 pb-3">
-              <span className="h-1.5 w-10 rounded-full bg-slate-300 dark:bg-white/20" />
-            </div>
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4 sm:p-6 bg-black/60 backdrop-blur-sm overflow-y-auto overscroll-contain animate-fade-in">
+          <div className="w-full max-w-lg max-h-[82dvh] sm:max-h-[86dvh] overflow-y-auto overscroll-contain bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-3xl p-4 sm:p-7 border border-slate-200 dark:border-[#FF6B00]/40 shadow-2xl relative animate-modal-pop">
             <button
               onClick={() => setIsPickupModalOpen(false)}
               aria-label="ปิดฟอร์ม"
@@ -2034,15 +2031,12 @@ export const OnsiteView: React.FC = () => {
       {/* ========================================================================= */}
       {receiptTicket && createPortal(
         <div
-          className="onsite-receipt-portal fixed inset-0 z-[9999] flex items-end sm:items-center justify-center sm:p-4 bg-black/60 backdrop-blur-sm overflow-y-auto overscroll-contain animate-fade-in"
+          className="onsite-receipt-portal fixed inset-0 z-[9999] flex items-center justify-center p-4 sm:p-6 bg-black/60 backdrop-blur-sm overflow-y-auto overscroll-contain animate-fade-in"
           role="dialog"
           aria-modal="true"
           aria-label="ใบรับซ่อมสินค้า"
         >
-          <div className="onsite-receipt-panel w-full sm:w-[95vw] max-w-4xl max-h-[92dvh] sm:max-h-[88dvh] overflow-y-auto overscroll-contain bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-t-3xl sm:rounded-3xl p-4 sm:p-6 pb-[max(1rem,env(safe-area-inset-bottom))] border border-emerald-300 dark:border-emerald-500/40 shadow-2xl relative text-xs animate-modal-pop">
-            <div className="sm:hidden flex justify-center pt-1 pb-3 no-print">
-              <span className="h-1.5 w-10 rounded-full bg-slate-300 dark:bg-white/20" />
-            </div>
+          <div className="onsite-receipt-panel w-full max-w-4xl max-h-[82dvh] sm:max-h-[86dvh] overflow-y-auto overscroll-contain bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-3xl p-4 sm:p-6 border border-emerald-300 dark:border-emerald-500/40 shadow-2xl relative text-xs animate-modal-pop">
             <button
               onClick={() => setReceiptTicket(null)}
               aria-label="ปิดใบรับซ่อม"
@@ -2257,8 +2251,8 @@ export const OnsiteView: React.FC = () => {
       {/* MODAL 3: ONSITE PROJECT WORKSPACE MODAL (PRJ-..., createPortal, z-[9999]) */}
       {/* ========================================================================= */}
       {activeProject && createPortal(
-        <div className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center sm:p-4 bg-black/70 backdrop-blur-sm animate-fade-in overscroll-contain">
-          <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-purple-300 dark:border-purple-500/40 shadow-2xl rounded-t-3xl sm:rounded-3xl w-full sm:w-[95vw] max-w-4xl max-h-[94dvh] sm:max-h-[90vh] flex flex-col overflow-hidden pb-[env(safe-area-inset-bottom)] animate-modal-pop">
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 sm:p-6 bg-black/70 backdrop-blur-sm animate-fade-in overscroll-contain">
+          <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-purple-300 dark:border-purple-500/40 shadow-2xl rounded-3xl w-full max-w-4xl max-h-[94dvh] sm:max-h-[82dvh] sm:max-h-[86dvh] flex flex-col overflow-hidden animate-modal-pop">
             {/* Header */}
             <div className="p-4 sm:p-5 bg-slate-50/90 dark:bg-slate-900/95 border-b border-slate-200 dark:border-slate-800 flex items-start justify-between gap-2 flex-shrink-0">
               <div className="min-w-0">
@@ -2768,12 +2762,12 @@ export const OnsiteView: React.FC = () => {
       {/* ========================================================================= */}
       {isReqCatalogOpen && createPortal(
         <div
-          className="fixed inset-0 z-[10001] flex items-end sm:items-center justify-center sm:p-4 bg-black/70 backdrop-blur-sm animate-fade-in overscroll-contain"
+          className="fixed inset-0 z-[10001] flex items-center justify-center p-4 sm:p-6 bg-black/70 backdrop-blur-sm animate-fade-in overscroll-contain"
           onClick={() => setIsReqCatalogOpen(false)}
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-t-3xl sm:rounded-3xl w-full sm:w-[92vw] max-w-4xl max-h-[92dvh] sm:max-h-[88vh] flex flex-col overflow-hidden pb-[env(safe-area-inset-bottom)] animate-modal-pop"
+            className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-3xl w-full sm:w-[92vw] max-w-4xl max-h-[88dvh] sm:max-h-[88vh] flex flex-col overflow-hidden animate-modal-pop"
           >
             <div className="p-4 sm:p-5 bg-slate-50/90 dark:bg-slate-900/95 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 flex-shrink-0">
               <div className="flex items-center gap-2.5 min-w-0">
@@ -2924,16 +2918,19 @@ export const OnsiteView: React.FC = () => {
           setTimeout(() => setToast(''), 4000);
         }}
       />
-      {/* Mobile Floating Action Button (FAB): ออกใบรับเครื่องซ่อมหน้างาน */}
-      <button
-        type="button"
-        onClick={() => handleOpenNewServiceSheet()}
-        aria-label="ออกใบรับเครื่องซ่อมหน้างาน"
-        className="sm:hidden fixed bottom-[max(1.25rem,env(safe-area-inset-bottom))] right-4 z-30 px-4 py-3.5 rounded-full bg-gradient-to-r from-[#FF6B00] to-[#E65A00] text-black font-black text-xs shadow-2xl shadow-[#FF6B00]/40 border border-white/25 flex items-center gap-1.5 active:scale-95 transition"
-      >
-        <ClipboardList className="w-4 h-4" />
-        <span>+ รับเครื่องซ่อม</span>
-      </button>
+      {/* Mobile Floating Action Button (FAB): ออกใบรับเครื่องซ่อมหน้างาน (Portal เพื่อไม่ให้ติด transform ของ animate-slide-up) */}
+      {typeof document !== 'undefined' && createPortal(
+        <button
+          type="button"
+          onClick={() => handleOpenNewServiceSheet()}
+          aria-label="ออกใบรับเครื่องซ่อมหน้างาน"
+          className="sm:hidden fixed bottom-[max(1.25rem,env(safe-area-inset-bottom))] right-4 z-30 px-4 py-3.5 rounded-full bg-gradient-to-r from-[#FF6B00] to-[#E65A00] text-black font-black text-xs shadow-2xl shadow-[#FF6B00]/40 border border-white/25 flex items-center gap-1.5 active:scale-95 transition cursor-pointer"
+        >
+          <ClipboardList className="w-4 h-4" />
+          <span>+ รับเครื่องซ่อม</span>
+        </button>,
+        document.body
+      )}
     </div>
   );
 };

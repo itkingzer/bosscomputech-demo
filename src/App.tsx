@@ -521,7 +521,7 @@ export const App: React.FC = () => {
         </main>
 
         {/* Bottom Footer */}
-        <footer className="px-4 sm:px-6 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] border-t border-white/[0.05] text-center sm:text-left flex flex-col sm:flex-row items-center justify-between text-xs text-slate-500 gap-2 mt-auto">
+        <footer className="px-4 sm:px-6 py-4 border-t border-white/[0.05] text-center sm:text-left flex flex-col sm:flex-row items-center justify-between text-xs text-slate-500 gap-2 mt-auto">
           <div>
             © 2026 <strong>BossComputech Co., Ltd.</strong> All rights reserved.
           </div>
@@ -544,7 +544,7 @@ export const App: React.FC = () => {
       {isClearDemoModalOpen &&
         createPortal(
           <div
-            className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-4 animate-fade-in"
+            className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 animate-fade-in"
             onClick={() => setIsClearDemoModalOpen(false)}
           >
             <div
@@ -552,11 +552,8 @@ export const App: React.FC = () => {
               aria-modal="true"
               aria-labelledby="clear-demo-modal-title"
               onClick={(e) => e.stopPropagation()}
-              className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-t-3xl sm:rounded-3xl w-full sm:w-[95vw] max-w-md max-h-[92dvh] sm:max-h-[88dvh] overflow-y-auto overscroll-contain p-5 sm:p-6 pb-[max(1.25rem,env(safe-area-inset-bottom))] relative animate-modal-pop"
+              className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-3xl w-full max-w-md max-h-[82dvh] sm:max-h-[86dvh] overflow-y-auto overscroll-contain p-5 sm:p-6 pb-[max(1.25rem,env(safe-area-inset-bottom))] relative animate-modal-pop"
             >
-              <div className="sm:hidden flex justify-center pt-1 pb-3">
-                <span className="h-1.5 w-10 rounded-full bg-slate-300 dark:bg-white/20" />
-              </div>
               <button
                 onClick={() => setIsClearDemoModalOpen(false)}
                 aria-label="ปิดหน้าต่างยืนยัน"
@@ -612,7 +609,7 @@ export const App: React.FC = () => {
       {isResetDemoModalOpen &&
         createPortal(
           <div
-            className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-4 animate-fade-in"
+            className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 animate-fade-in"
             onClick={() => setIsResetDemoModalOpen(false)}
           >
             <div
@@ -620,11 +617,8 @@ export const App: React.FC = () => {
               aria-modal="true"
               aria-labelledby="reset-demo-modal-title"
               onClick={(e) => e.stopPropagation()}
-              className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-t-3xl sm:rounded-3xl w-full sm:w-[95vw] max-w-md max-h-[92dvh] sm:max-h-[88dvh] overflow-y-auto overscroll-contain p-5 sm:p-6 pb-[max(1.25rem,env(safe-area-inset-bottom))] relative animate-modal-pop"
+              className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-3xl w-full max-w-md max-h-[82dvh] sm:max-h-[86dvh] overflow-y-auto overscroll-contain p-5 sm:p-6 pb-[max(1.25rem,env(safe-area-inset-bottom))] relative animate-modal-pop"
             >
-              <div className="sm:hidden flex justify-center pt-1 pb-3">
-                <span className="h-1.5 w-10 rounded-full bg-slate-300 dark:bg-white/20" />
-              </div>
               <button
                 onClick={() => setIsResetDemoModalOpen(false)}
                 aria-label="ปิดหน้าต่างรีเซ็ตเดโม่"

@@ -167,20 +167,20 @@ export const ListControls: React.FC<ListControlsProps> = ({
 
     return (
         <div
-            className={`flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 p-2.5 rounded-2xl bg-white/[0.03] border border-white/[0.08] ${className}`}
+            className={`list-controls-bar flex flex-wrap items-center justify-between gap-1.5 sm:gap-2.5 px-2.5 py-1.5 sm:p-2.5 rounded-xl sm:rounded-2xl bg-white/[0.03] border border-slate-200/80 dark:border-white/[0.08] ${className}`}
         >
-            <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
                 {!hideSort && (
-                    <div className="flex items-center gap-1.5">
-                        <SortIcon className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+                    <div className="flex items-center gap-1">
+                        <SortIcon className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-slate-400 flex-shrink-0" />
                         <select
                             value={sort}
                             onChange={(e) => onSortChange(e.target.value as SortDirection)}
                             aria-label={sortLabel}
-                            className="liquid-glass-input rounded-xl px-2.5 py-1.5 text-[11px] text-white focus:outline-none cursor-pointer min-h-[36px]"
+                            className="liquid-glass-input rounded-lg sm:rounded-xl px-2 py-0.5 sm:px-2.5 sm:py-1.5 text-[11px] text-slate-900 dark:text-white focus:outline-none cursor-pointer"
                         >
                             {SORT_OPTIONS.map((opt) => (
-                                <option key={opt.value} value={opt.value} className="bg-[#12141A]">
+                                <option key={opt.value} value={opt.value} className="bg-white dark:bg-[#12141A]">
                                     {opt.label}
                                 </option>
                             ))}
@@ -188,16 +188,16 @@ export const ListControls: React.FC<ListControlsProps> = ({
                     </div>
                 )}
 
-                <div className="flex items-center gap-1.5">
-                    <ListFilter className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+                <div className="flex items-center gap-1">
+                    <ListFilter className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-slate-400 flex-shrink-0" />
                     <select
                         value={pageSize}
                         onChange={(e) => onPageSizeChange(Number(e.target.value))}
                         aria-label="จำนวนต่อหน้า"
-                        className="liquid-glass-input rounded-xl px-2.5 py-1.5 text-[11px] text-white focus:outline-none cursor-pointer min-h-[36px]"
+                        className="liquid-glass-input rounded-lg sm:rounded-xl px-2 py-0.5 sm:px-2.5 sm:py-1.5 text-[11px] text-slate-900 dark:text-white focus:outline-none cursor-pointer"
                     >
                         {pageSizeOptions.map((size) => (
-                            <option key={size} value={size} className="bg-[#12141A]">
+                            <option key={size} value={size} className="bg-white dark:bg-[#12141A]">
                                 {size === 0 ? 'ทั้งหมด' : `${size} / หน้า`}
                             </option>
                         ))}
@@ -205,11 +205,14 @@ export const ListControls: React.FC<ListControlsProps> = ({
                 </div>
             </div>
 
-            <div className="flex items-center justify-between sm:justify-end gap-2">
-                <span className="text-[11px] text-slate-400 whitespace-nowrap">
-                    แสดง <span className="text-white font-semibold">{from}</span>–
-                    <span className="text-white font-semibold">{to}</span> จาก{' '}
-                    <span className="text-white font-semibold">{total}</span> {unit}
+            <div className="flex items-center justify-between sm:justify-end gap-1.5 sm:gap-2 ml-auto">
+                <span className="text-[10px] sm:text-[11px] text-slate-500 dark:text-slate-400 whitespace-nowrap">
+                    <span className="hidden sm:inline">แสดง </span>
+                    <span className="text-slate-900 dark:text-white font-semibold">{from}</span>–
+                    <span className="text-slate-900 dark:text-white font-semibold">{to}</span>
+                    <span className="hidden sm:inline"> จาก</span>
+                    <span className="sm:hidden">/</span>{' '}
+                    <span className="text-slate-900 dark:text-white font-semibold">{total}</span> {unit}
                 </span>
                 <div className="flex items-center gap-1">
                     <button
@@ -217,21 +220,21 @@ export const ListControls: React.FC<ListControlsProps> = ({
                         onClick={() => onPageChange(page - 1)}
                         disabled={page <= 1}
                         aria-label="หน้าก่อนหน้า"
-                        className="p-1.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] text-slate-200 border border-white/[0.1] transition cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed min-w-[36px] min-h-[36px] flex items-center justify-center"
+                        className="p-1 sm:p-1.5 rounded-lg sm:rounded-xl bg-slate-100 dark:bg-white/[0.06] hover:bg-slate-200 dark:hover:bg-white/[0.12] text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-white/[0.1] transition cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed w-7 h-7 sm:w-9 sm:h-9 flex items-center justify-center"
                     >
-                        <ChevronLeft className="w-4 h-4" />
+                        <ChevronLeft className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                     </button>
-                    <span className="text-[11px] text-slate-300 font-mono px-1 whitespace-nowrap">
-                        {page} / {totalPages}
+                    <span className="text-[10px] sm:text-[11px] text-slate-600 dark:text-slate-300 font-mono px-0.5 sm:px-1 whitespace-nowrap">
+                        {page}/{totalPages}
                     </span>
                     <button
                         type="button"
                         onClick={() => onPageChange(page + 1)}
                         disabled={page >= totalPages}
                         aria-label="หน้าถัดไป"
-                        className="p-1.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] text-slate-200 border border-white/[0.1] transition cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed min-w-[36px] min-h-[36px] flex items-center justify-center"
+                        className="p-1 sm:p-1.5 rounded-lg sm:rounded-xl bg-slate-100 dark:bg-white/[0.06] hover:bg-slate-200 dark:hover:bg-white/[0.12] text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-white/[0.1] transition cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed w-7 h-7 sm:w-9 sm:h-9 flex items-center justify-center"
                     >
-                        <ChevronRight className="w-4 h-4" />
+                        <ChevronRight className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                     </button>
                 </div>
             </div>

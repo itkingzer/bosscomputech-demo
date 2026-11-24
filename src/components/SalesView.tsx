@@ -1578,11 +1578,8 @@ export const SalesView: React.FC = () => {
       {/* CREATE SALES ORDER MODAL                                                  */}
       {/* ========================================================================= */}
       {isCreateModalOpen && createPortal(
-        <div className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center sm:p-4 bg-black/60 backdrop-blur-sm animate-fade-in overscroll-contain">
-          <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-t-3xl sm:rounded-3xl w-full sm:w-[92vw] max-w-5xl max-h-[94dvh] sm:max-h-[90vh] flex flex-col overflow-hidden pb-[env(safe-area-inset-bottom)] animate-modal-pop">
-            <div className="sm:hidden flex justify-center pt-2.5 pb-1 flex-shrink-0">
-              <span className="h-1.5 w-10 rounded-full bg-slate-300 dark:bg-white/20" />
-            </div>
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 sm:p-6 bg-black/60 backdrop-blur-sm animate-fade-in overscroll-contain">
+          <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-3xl w-full sm:w-[92vw] max-w-5xl max-h-[94dvh] sm:max-h-[82dvh] sm:max-h-[86dvh] flex flex-col overflow-hidden animate-modal-pop">
 
             {/* Modal Header */}
             <div className="p-4 sm:p-5 bg-slate-50/90 dark:bg-slate-900/95 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 flex-shrink-0">
@@ -2121,11 +2118,8 @@ export const SalesView: React.FC = () => {
       {/* PRODUCT CATALOG MODAL (nested, z-[10001])                                  */}
       {/* ========================================================================= */}
       {isCatalogModalOpen && createPortal(
-        <div className="fixed inset-0 z-[10001] flex items-end sm:items-center justify-center sm:p-4 bg-black/60 backdrop-blur-sm animate-fade-in overscroll-contain">
-          <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-t-3xl sm:rounded-3xl w-full sm:w-[94vw] max-w-6xl max-h-[94dvh] sm:max-h-[90vh] flex flex-col overflow-hidden pb-[env(safe-area-inset-bottom)] animate-modal-pop">
-            <div className="sm:hidden flex justify-center pt-2.5 pb-1 flex-shrink-0">
-              <span className="h-1.5 w-10 rounded-full bg-slate-300 dark:bg-white/20" />
-            </div>
+        <div className="fixed inset-0 z-[10001] flex items-center justify-center p-4 sm:p-6 bg-black/60 backdrop-blur-sm animate-fade-in overscroll-contain">
+          <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-3xl w-full sm:w-[94vw] max-w-6xl max-h-[94dvh] sm:max-h-[82dvh] sm:max-h-[86dvh] flex flex-col overflow-hidden animate-modal-pop">
 
             {/* Header */}
             <div className="p-4 sm:p-5 bg-slate-50/90 dark:bg-slate-900/95 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 flex-shrink-0">
@@ -2390,11 +2384,8 @@ export const SalesView: React.FC = () => {
       {/* SALES ORDER DETAIL & TIMELINE MODAL (z-[9999])                             */}
       {/* ========================================================================= */}
       {detailOrder && createPortal(
-        <div className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center sm:p-4 bg-black/60 backdrop-blur-sm animate-fade-in overscroll-contain">
-          <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-t-3xl sm:rounded-3xl w-full sm:w-[92vw] max-w-3xl max-h-[94dvh] sm:max-h-[90vh] flex flex-col overflow-hidden pb-[env(safe-area-inset-bottom)] animate-modal-pop">
-            <div className="sm:hidden flex justify-center pt-2.5 pb-1 flex-shrink-0">
-              <span className="h-1.5 w-10 rounded-full bg-slate-300 dark:bg-white/20" />
-            </div>
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 sm:p-6 bg-black/60 backdrop-blur-sm animate-fade-in overscroll-contain">
+          <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-3xl w-full sm:w-[92vw] max-w-3xl max-h-[94dvh] sm:max-h-[82dvh] sm:max-h-[86dvh] flex flex-col overflow-hidden animate-modal-pop">
 
             {/* Header */}
             <div className="p-4 sm:p-5 bg-slate-50/90 dark:bg-slate-900/95 border-b border-slate-200 dark:border-slate-800 flex items-start justify-between gap-2 flex-shrink-0">
@@ -2554,8 +2545,8 @@ export const SalesView: React.FC = () => {
       {/* CREATE PROJECT SITE MODAL (PRJ-2026-XXX, createPortal, z-[9999])          */}
       {/* ========================================================================= */}
       {isCreateProjectOpen && createPortal(
-        <div className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center sm:p-4 bg-black/60 backdrop-blur-sm animate-fade-in overscroll-contain">
-          <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-purple-300 dark:border-purple-500/40 shadow-2xl rounded-t-3xl sm:rounded-3xl w-full sm:w-[94vw] max-w-5xl max-h-[94dvh] sm:max-h-[90vh] flex flex-col overflow-hidden pb-[env(safe-area-inset-bottom)] animate-modal-pop">
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 sm:p-6 bg-black/60 backdrop-blur-sm animate-fade-in overscroll-contain">
+          <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-purple-300 dark:border-purple-500/40 shadow-2xl rounded-3xl w-full sm:w-[94vw] max-w-5xl max-h-[94dvh] sm:max-h-[82dvh] sm:max-h-[86dvh] flex flex-col overflow-hidden animate-modal-pop">
             <div className="p-4 sm:p-5 bg-slate-50/90 dark:bg-slate-900/95 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 flex-shrink-0">
               <div className="flex items-center gap-2.5 min-w-0">
                 <div className="p-2.5 rounded-2xl bg-purple-500/15 text-purple-700 dark:text-purple-300 border border-purple-500/30">
@@ -2871,8 +2862,8 @@ export const SalesView: React.FC = () => {
       {/* PROJECT DETAIL & MULTI-SALES ADD-ON BREAKDOWN MODAL (z-[9999])            */}
       {/* ========================================================================= */}
       {detailProject && createPortal(
-        <div className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center sm:p-4 bg-black/60 backdrop-blur-sm animate-fade-in overscroll-contain">
-          <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-purple-300 dark:border-purple-500/40 shadow-2xl rounded-t-3xl sm:rounded-3xl w-full sm:w-[94vw] max-w-4xl max-h-[94dvh] sm:max-h-[90vh] flex flex-col overflow-hidden pb-[env(safe-area-inset-bottom)] animate-modal-pop">
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 sm:p-6 bg-black/60 backdrop-blur-sm animate-fade-in overscroll-contain">
+          <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-purple-300 dark:border-purple-500/40 shadow-2xl rounded-3xl w-full sm:w-[94vw] max-w-4xl max-h-[94dvh] sm:max-h-[82dvh] sm:max-h-[86dvh] flex flex-col overflow-hidden animate-modal-pop">
             <div className="p-4 sm:p-5 bg-slate-50/90 dark:bg-slate-900/95 border-b border-slate-200 dark:border-slate-800 flex items-start justify-between gap-2 flex-shrink-0">
               <div className="min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
@@ -3135,8 +3126,8 @@ export const SalesView: React.FC = () => {
       {/* ADD-ON MODAL FOR ANY SALES USER (createPortal, z-[10000])                 */}
       {/* ========================================================================= */}
       {addonProject && createPortal(
-        <div className="fixed inset-0 z-[10000] flex items-end sm:items-center justify-center sm:p-4 bg-black/70 backdrop-blur-sm animate-fade-in overscroll-contain">
-          <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-[#FF6B00]/50 shadow-2xl rounded-t-3xl sm:rounded-3xl w-full sm:w-[92vw] max-w-lg max-h-[92dvh] flex flex-col overflow-hidden pb-[env(safe-area-inset-bottom)] animate-modal-pop">
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4 sm:p-6 bg-black/70 backdrop-blur-sm animate-fade-in overscroll-contain">
+          <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-[#FF6B00]/50 shadow-2xl rounded-3xl w-full sm:w-[92vw] max-w-lg max-h-[88dvh] flex flex-col overflow-hidden animate-modal-pop">
             <div className="p-4 sm:p-5 bg-slate-50/90 dark:bg-slate-900/95 border-b border-slate-200 dark:border-slate-800 flex items-start justify-between gap-2">
               <div>
                 <h3 className="text-sm sm:text-base font-extrabold text-slate-900 dark:text-white">
@@ -3337,16 +3328,13 @@ export const SalesView: React.FC = () => {
       {/* ========================================================================= */}
       {isBillingTypeModalOpen && createPortal(
         <div
-          className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-4 animate-fade-in overscroll-contain"
+          className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 animate-fade-in overscroll-contain"
           onClick={() => setIsBillingTypeModalOpen(false)}
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-t-3xl sm:rounded-3xl w-full sm:w-[92vw] max-w-2xl overflow-hidden pb-[env(safe-area-inset-bottom)] animate-modal-pop"
+            className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-3xl w-full sm:w-[92vw] max-w-2xl overflow-hidden animate-modal-pop"
           >
-            <div className="sm:hidden flex justify-center pt-2.5 pb-1">
-              <span className="h-1.5 w-10 rounded-full bg-slate-300 dark:bg-white/20" />
-            </div>
             <div className="p-4 sm:p-5 bg-slate-50/90 dark:bg-slate-900/95 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2">
               <div className="flex items-center gap-2.5">
                 <div className="p-2.5 rounded-2xl bg-[#FF6B00]/15 text-[#E65A00] dark:text-[#FF6B00] border border-[#FF6B00]/30">
@@ -3450,16 +3438,13 @@ export const SalesView: React.FC = () => {
       {/* ========================================================================= */}
       {isContractBillingOpen && createPortal(
         <div
-          className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-4 animate-fade-in overscroll-contain"
+          className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 animate-fade-in overscroll-contain"
           onClick={() => setIsContractBillingOpen(false)}
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-t-3xl sm:rounded-3xl w-full sm:w-[92vw] max-w-4xl max-h-[94dvh] sm:max-h-[90vh] flex flex-col overflow-hidden pb-[env(safe-area-inset-bottom)] animate-modal-pop"
+            className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-3xl w-full sm:w-[92vw] max-w-4xl max-h-[94dvh] sm:max-h-[82dvh] sm:max-h-[86dvh] flex flex-col overflow-hidden animate-modal-pop"
           >
-            <div className="sm:hidden flex justify-center pt-2.5 pb-1 flex-shrink-0">
-              <span className="h-1.5 w-10 rounded-full bg-slate-300 dark:bg-white/20" />
-            </div>
 
             <div className="p-4 sm:p-5 bg-slate-50/90 dark:bg-slate-900/95 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 flex-shrink-0">
               <div className="flex items-center gap-2.5 min-w-0">
@@ -3856,16 +3841,13 @@ export const SalesView: React.FC = () => {
       {/* ========================================================================= */}
       {isContractManagerOpen && createPortal(
         <div
-          className="fixed inset-0 z-[10000] bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-4 animate-fade-in overscroll-contain"
+          className="fixed inset-0 z-[10000] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 animate-fade-in overscroll-contain"
           onClick={() => setIsContractManagerOpen(false)}
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-t-3xl sm:rounded-3xl w-full sm:w-[92vw] max-w-4xl max-h-[94dvh] sm:max-h-[90vh] flex flex-col overflow-hidden pb-[env(safe-area-inset-bottom)] animate-modal-pop"
+            className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-3xl w-full sm:w-[92vw] max-w-4xl max-h-[94dvh] sm:max-h-[82dvh] sm:max-h-[86dvh] flex flex-col overflow-hidden animate-modal-pop"
           >
-            <div className="sm:hidden flex justify-center pt-2.5 pb-1 flex-shrink-0">
-              <span className="h-1.5 w-10 rounded-full bg-slate-300 dark:bg-white/20" />
-            </div>
 
             <div className="p-4 sm:p-5 bg-slate-50/90 dark:bg-slate-900/95 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 flex-shrink-0">
               <div className="flex items-center gap-2.5">

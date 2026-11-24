@@ -69,18 +69,18 @@ export const ActivityTimeline: React.FC<ActivityTimelineProps> = ({
     );
 
     return (
-        <div className={`mt-2 ${className}`}>
+        <div className={`mt-1.5 sm:mt-2 ${className}`}>
             <button
                 type="button"
                 onClick={() => setOpen(o => !o)}
-                className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-lg
-                   bg-slate-100 hover:bg-slate-200 text-slate-600
-                   dark:bg-white/5 dark:hover:bg-white/10 dark:text-slate-300
-                   border border-slate-200 dark:border-white/10 transition-colors"
+                className="activity-log-toggle inline-flex items-center gap-1 text-[10px] sm:text-[11px] font-medium px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-md sm:rounded-lg
+                   bg-slate-100/80 hover:bg-slate-200 text-slate-500
+                   dark:bg-white/[0.04] dark:hover:bg-white/10 dark:text-slate-400
+                   border border-slate-200/80 dark:border-white/[0.08] transition-colors cursor-pointer"
                 aria-expanded={open}
             >
                 <svg
-                    className={`w-3 h-3 transition-transform ${open ? 'rotate-90' : ''}`}
+                    className={`w-2.5 h-2.5 sm:w-3 sm:h-3 transition-transform ${open ? 'rotate-90' : ''}`}
                     viewBox="0 0 20 20"
                     fill="currentColor"
                     aria-hidden="true"
@@ -91,8 +91,9 @@ export const ActivityTimeline: React.FC<ActivityTimelineProps> = ({
                         clipRule="evenodd"
                     />
                 </svg>
-                {label}
-                <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-slate-200 dark:bg-white/10 text-[10px] font-bold">
+                <span className="sm:hidden">{label === 'ดูประวัติไทม์ไลน์ (Log)' ? 'ดู Log' : label}</span>
+                <span className="hidden sm:inline">{label}</span>
+                <span className="ml-0.5 px-1 py-0 rounded-full bg-slate-200 dark:bg-white/10 text-[9px] sm:text-[10px] font-bold">
                     {sorted.length}
                 </span>
             </button>

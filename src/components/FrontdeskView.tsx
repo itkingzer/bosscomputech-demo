@@ -868,18 +868,41 @@ export const FrontdeskView: React.FC = () => {
   }, [repairTickets]);
 
   const [step1Page, setStep1Page] = useState(1);
+  const [step1RouteFilter, setStep1RouteFilter] = useState<'all' | RouteCode>('all');
   const STEP1_PAGE_SIZE = 4;
   const step1Combined = useMemo(
     () => [
-      ...unscheduledReadyItems.map(it => ({ kind: 'item' as const, item: it })),
-      ...unscheduledReadyRepairs.map(t => ({ kind: 'repair' as const, ticket: t }))
+      ...unscheduledReadyItems.map(it => {
+        const ord = orders.find(o => o.id === it.order_id);
+        const prj = projects.find(p => p.id === it.project_id);
+        const routeCode: RouteCode =
+          prj?.route_code ||
+          ord?.route_code ||
+          (ord?.district || prj?.district ? getRouteByDistrict(ord?.district || prj?.district || '') : 'route_5');
+        return { kind: 'item' as const, item: it, routeCode };
+      }),
+      ...unscheduledReadyRepairs.map(t => {
+        const routeCode: RouteCode = t.route_code || (t.district ? getRouteByDistrict(t.district) : 'route_5');
+        return { kind: 'repair' as const, ticket: t, routeCode };
+      })
     ],
-    [unscheduledReadyItems, unscheduledReadyRepairs]
+    [unscheduledReadyItems, unscheduledReadyRepairs, orders, projects]
   );
-  const step1TotalPages = Math.max(1, Math.ceil(step1Combined.length / STEP1_PAGE_SIZE));
+  const step1RouteCounts = useMemo(() => {
+    const counts: Partial<Record<RouteCode, number>> = {};
+    step1Combined.forEach(e => {
+      counts[e.routeCode] = (counts[e.routeCode] || 0) + 1;
+    });
+    return counts;
+  }, [step1Combined]);
+  const step1Filtered = useMemo(
+    () => (step1RouteFilter === 'all' ? step1Combined : step1Combined.filter(e => e.routeCode === step1RouteFilter)),
+    [step1Combined, step1RouteFilter]
+  );
+  const step1TotalPages = Math.max(1, Math.ceil(step1Filtered.length / STEP1_PAGE_SIZE));
   const safeStep1Page = Math.min(step1Page, step1TotalPages);
   const step1Start = (safeStep1Page - 1) * STEP1_PAGE_SIZE;
-  const step1PageEntries = step1Combined.slice(step1Start, step1Start + STEP1_PAGE_SIZE);
+  const step1PageEntries = step1Filtered.slice(step1Start, step1Start + STEP1_PAGE_SIZE);
 
   // Daily Dispatch Roster for selected rosterDate (Items + Site Visits + Repairs)
   const dailyRosterItems = useMemo(
@@ -1134,52 +1157,59 @@ export const FrontdeskView: React.FC = () => {
   // Render
   // =========================================================================
   return (
-    <div className="space-y-6">
+    <div className="space-y-3 sm:space-y-6">
       {/* Toast */}
       <ToastBanner message={toast} onClose={() => setToast('')} />
 
       {/* Header */}
-      <div className="space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+      <div className="space-y-2.5 sm:space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3">
           <div>
-            <h2 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white flex items-center gap-2.5">
-              <ClipboardList className="w-7 h-7 text-[#FF6B00]" />
-              <span>หน้างานหน้าร้าน (รับซ่อม · จัดคิวรถ · ตามงาน)</span>
+            <h2 className="text-base sm:text-2xl font-black text-slate-900 dark:text-white flex items-center gap-2">
+              <ClipboardList className="w-5 h-5 sm:w-7 sm:h-7 text-[#FF6B00] shrink-0" />
+              <span className="sm:hidden">หน้างานหน้าร้าน</span>
+              <span className="hidden sm:inline">หน้างานหน้าร้าน (รับซ่อม · จัดคิวรถ · ตามงาน)</span>
             </h2>
-            <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">
+            <p className="hidden sm:block text-sm text-slate-600 dark:text-slate-300 mt-1">
               กดเลือกเมนูด้านล่างตามงานที่ต้องการทำได้เลยครับ
             </p>
           </div>
         </div>
 
-        {/* "วันนี้ต้องทำอะไรบ้าง?" 3-Card Quick Action Guide (Elderly-friendly) */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        {/* "วันนี้ต้องทำอะไรบ้าง?" 3-Card Quick Action Guide (3-col grid even on mobile) */}
+        <div className="grid grid-cols-3 gap-1.5 sm:gap-3">
           <button
             type="button"
             onClick={() => setActiveTab('counter')}
-            className="text-left p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-500/10 border-2 border-emerald-300 dark:border-emerald-500/35 hover:border-emerald-500 transition cursor-pointer flex items-center justify-between gap-3 min-h-[76px]"
+            className="text-left p-2.5 sm:p-4 rounded-xl sm:rounded-2xl bg-emerald-50 dark:bg-emerald-500/10 border sm:border-2 border-emerald-300 dark:border-emerald-500/35 hover:border-emerald-500 transition cursor-pointer flex items-center justify-between gap-2 sm:min-h-[76px]"
           >
-            <div>
-              <div className="text-xs font-bold text-emerald-800 dark:text-emerald-300">1. ซ่อมเสร็จแล้ว รอโทรตามลูกค้า</div>
-              <div className="text-2xl font-black text-emerald-900 dark:text-white font-mono mt-0.5">
-                {pickupReadyTickets.length} <span className="text-sm font-bold">เครื่อง</span>
+            <div className="min-w-0">
+              <div className="text-[10px] sm:text-xs font-bold text-emerald-800 dark:text-emerald-300 truncate">
+                <span className="sm:hidden">รอโทรตาม</span>
+                <span className="hidden sm:inline">1. ซ่อมเสร็จแล้ว รอโทรตามลูกค้า</span>
+              </div>
+              <div className="text-base sm:text-2xl font-black text-emerald-900 dark:text-white font-mono mt-0.5">
+                {pickupReadyTickets.length} <span className="text-[10px] sm:text-sm font-bold">เครื่อง</span>
               </div>
             </div>
-            <PhoneCall className="w-8 h-8 text-emerald-600 dark:text-emerald-400 shrink-0" />
+            <PhoneCall className="hidden sm:block w-8 h-8 text-emerald-600 dark:text-emerald-400 shrink-0" />
           </button>
 
           <button
             type="button"
             onClick={() => setActiveTab('scheduler')}
-            className="text-left p-4 rounded-2xl bg-amber-50 dark:bg-[#FF6B00]/10 border-2 border-amber-300 dark:border-[#FF6B00]/40 hover:border-[#FF6B00] transition cursor-pointer flex items-center justify-between gap-3 min-h-[76px]"
+            className="text-left p-2.5 sm:p-4 rounded-xl sm:rounded-2xl bg-amber-50 dark:bg-[#FF6B00]/10 border sm:border-2 border-amber-300 dark:border-[#FF6B00]/40 hover:border-[#FF6B00] transition cursor-pointer flex items-center justify-between gap-2 sm:min-h-[76px]"
           >
-            <div>
-              <div className="text-xs font-bold text-amber-900 dark:text-amber-300">2. ของพร้อมส่ง รอลงตารางรถ</div>
-              <div className="text-2xl font-black text-amber-950 dark:text-white font-mono mt-0.5">
-                {unscheduledReadyItems.length + unscheduledReadyRepairs.length} <span className="text-sm font-bold">งาน</span>
+            <div className="min-w-0">
+              <div className="text-[10px] sm:text-xs font-bold text-amber-900 dark:text-amber-300 truncate">
+                <span className="sm:hidden">รอลงคิวรถ</span>
+                <span className="hidden sm:inline">2. ของพร้อมส่ง รอลงตารางรถ</span>
+              </div>
+              <div className="text-base sm:text-2xl font-black text-amber-950 dark:text-white font-mono mt-0.5">
+                {unscheduledReadyItems.length + unscheduledReadyRepairs.length} <span className="text-[10px] sm:text-sm font-bold">งาน</span>
               </div>
             </div>
-            <Calendar className="w-8 h-8 text-[#FF6B00] shrink-0" />
+            <Calendar className="hidden sm:block w-8 h-8 text-[#FF6B00] shrink-0" />
           </button>
 
           <button
@@ -1187,42 +1217,47 @@ export const FrontdeskView: React.FC = () => {
             onClick={() => {
               setActiveTab('scheduler');
             }}
-            className="text-left p-4 rounded-2xl bg-indigo-50 dark:bg-indigo-500/10 border-2 border-indigo-300 dark:border-indigo-500/35 hover:border-indigo-500 transition cursor-pointer flex items-center justify-between gap-3 min-h-[76px]"
+            className="text-left p-2.5 sm:p-4 rounded-xl sm:rounded-2xl bg-indigo-50 dark:bg-indigo-500/10 border sm:border-2 border-indigo-300 dark:border-indigo-500/35 hover:border-indigo-500 transition cursor-pointer flex items-center justify-between gap-2 sm:min-h-[76px]"
           >
-            <div>
-              <div className="text-xs font-bold text-indigo-900 dark:text-indigo-300">3. ตารางรถวันที่ {formatDateDMY(rosterDate)}</div>
-              <div className="text-2xl font-black text-indigo-950 dark:text-white font-mono mt-0.5">
-                {morningBriefingRows.length} <span className="text-sm font-bold">งาน</span>
+            <div className="min-w-0">
+              <div className="text-[10px] sm:text-xs font-bold text-indigo-900 dark:text-indigo-300 truncate">
+                <span className="sm:hidden">คิว {formatDateDMY(rosterDate).slice(0, 5)}</span>
+                <span className="hidden sm:inline">3. ตารางรถวันที่ {formatDateDMY(rosterDate)}</span>
+              </div>
+              <div className="text-base sm:text-2xl font-black text-indigo-950 dark:text-white font-mono mt-0.5">
+                {morningBriefingRows.length} <span className="text-[10px] sm:text-sm font-bold">งาน</span>
               </div>
             </div>
-            <Truck className="w-8 h-8 text-indigo-600 dark:text-indigo-400 shrink-0" />
+            <Truck className="hidden sm:block w-8 h-8 text-indigo-600 dark:text-indigo-400 shrink-0" />
           </button>
         </div>
 
-        {/* 4 Large High-Contrast Navigation Tabs (Min 52px height, Clear Thai) */}
-        <div className="grid grid-cols-2 lg:grid-cols-5 gap-2 p-1.5 rounded-2xl bg-slate-100 dark:bg-white/[0.04] border border-slate-200 dark:border-white/[0.08]">
+        {/* Navigation Tabs: 1 scrollable row on mobile, 5-col grid on desktop */}
+        <div className="flex overflow-x-auto no-scrollbar lg:grid lg:grid-cols-5 gap-1.5 sm:gap-2 p-1 sm:p-1.5 rounded-2xl bg-slate-100 dark:bg-white/[0.04] border border-slate-200 dark:border-white/[0.08]">
           <button
             type="button"
             onClick={() => setActiveTab('counter')}
-            className={`px-4 py-3 min-h-[52px] rounded-xl text-sm font-extrabold transition-all cursor-pointer flex items-center justify-center gap-2 ${activeTab === 'counter'
+            className={`px-3 py-2 sm:px-4 sm:py-3 sm:min-h-[52px] rounded-xl text-xs sm:text-sm font-extrabold transition-all cursor-pointer flex items-center justify-center gap-1.5 sm:gap-2 whitespace-nowrap flex-shrink-0 ${activeTab === 'counter'
               ? 'bg-[#FF6B00] text-black shadow-md'
               : 'text-slate-700 dark:text-slate-200 hover:bg-white/70 dark:hover:bg-white/[0.06]'
               }`}
           >
-            <Store className="w-4 h-4 shrink-0" />
-            <span>1. รับงานหน้าร้าน</span>
+            <Store className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+            <span className="sm:hidden">รับงาน</span>
+            <span className="hidden sm:inline">1. รับงานหน้าร้าน</span>
           </button>
           <button
             type="button"
             onClick={() => setActiveTab('scheduler')}
-            className={`px-4 py-3 min-h-[52px] rounded-xl text-sm font-extrabold transition-all cursor-pointer flex items-center justify-center gap-2 ${activeTab === 'scheduler'
+            className={`px-3 py-2 sm:px-4 sm:py-3 sm:min-h-[52px] rounded-xl text-xs sm:text-sm font-extrabold transition-all cursor-pointer flex items-center justify-center gap-1.5 sm:gap-2 whitespace-nowrap flex-shrink-0 ${activeTab === 'scheduler'
               ? 'bg-[#FF6B00] text-black shadow-md'
               : 'text-slate-700 dark:text-slate-200 hover:bg-white/70 dark:hover:bg-white/[0.06]'
               }`}
           >
-            <Calendar className="w-4 h-4 shrink-0" />
-            <span>2. จัดคิวส่งพรุ่งนี้</span>
-            <span className={`px-2 py-0.5 rounded-full text-xs font-mono font-black ${
+            <Calendar className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+            <span className="sm:hidden">จัดคิวส่ง</span>
+            <span className="hidden sm:inline">2. จัดคิวส่งพรุ่งนี้</span>
+            <span className={`px-1.5 sm:px-2 py-0.5 rounded-full text-[10px] sm:text-xs font-mono font-black ${
               activeTab === 'scheduler' ? 'bg-black/15 text-black' : 'bg-[#FF6B00]/20 text-[#C2410C] dark:text-[#FF6B00]'
             }`}>
               {unscheduledReadyItems.length + unscheduledReadyRepairs.length}
@@ -1231,25 +1266,27 @@ export const FrontdeskView: React.FC = () => {
           <button
             type="button"
             onClick={() => setActiveTab('tracker')}
-            className={`px-4 py-3 min-h-[52px] rounded-xl text-sm font-extrabold transition-all cursor-pointer flex items-center justify-center gap-2 ${activeTab === 'tracker'
+            className={`px-3 py-2 sm:px-4 sm:py-3 sm:min-h-[52px] rounded-xl text-xs sm:text-sm font-extrabold transition-all cursor-pointer flex items-center justify-center gap-1.5 sm:gap-2 whitespace-nowrap flex-shrink-0 ${activeTab === 'tracker'
               ? 'bg-[#FF6B00] text-black shadow-md'
               : 'text-slate-700 dark:text-slate-200 hover:bg-white/70 dark:hover:bg-white/[0.06]'
               }`}
           >
-            <Search className="w-4 h-4 shrink-0" />
-            <span>3. ตามงานซ่อม</span>
+            <Search className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+            <span className="sm:hidden">ตามซ่อม</span>
+            <span className="hidden sm:inline">3. ตามงานซ่อม</span>
           </button>
           <button
             type="button"
             onClick={() => setActiveTab('prep_ready')}
-            className={`px-4 py-3 min-h-[52px] rounded-xl text-sm font-extrabold transition-all cursor-pointer flex items-center justify-center gap-2 ${activeTab === 'prep_ready'
+            className={`px-3 py-2 sm:px-4 sm:py-3 sm:min-h-[52px] rounded-xl text-xs sm:text-sm font-extrabold transition-all cursor-pointer flex items-center justify-center gap-1.5 sm:gap-2 whitespace-nowrap flex-shrink-0 ${activeTab === 'prep_ready'
               ? 'bg-[#FF6B00] text-black shadow-md'
               : 'text-slate-700 dark:text-slate-200 hover:bg-white/70 dark:hover:bg-white/[0.06]'
               }`}
           >
-            <PackageCheck className="w-4 h-4 shrink-0" />
-            <span>4. เช็คของพร้อมปล่อย</span>
-            <span className={`px-2 py-0.5 rounded-full text-xs font-mono font-black ${
+            <PackageCheck className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+            <span className="sm:hidden">เช็คของ</span>
+            <span className="hidden sm:inline">4. เช็คของพร้อมปล่อย</span>
+            <span className={`px-1.5 sm:px-2 py-0.5 rounded-full text-[10px] sm:text-xs font-mono font-black ${
               activeTab === 'prep_ready' ? 'bg-black/15 text-black' : 'bg-sky-500/20 text-sky-700 dark:text-sky-300'
             }`}>
               {prepReadyOverviewItems.length}
@@ -1258,14 +1295,15 @@ export const FrontdeskView: React.FC = () => {
           <button
             type="button"
             onClick={() => setActiveTab('onsite_summary')}
-            className={`col-span-2 lg:col-span-1 px-4 py-3 min-h-[52px] rounded-xl text-sm font-extrabold transition-all cursor-pointer flex items-center justify-center gap-2 ${activeTab === 'onsite_summary'
+            className={`px-3 py-2 sm:px-4 sm:py-3 sm:min-h-[52px] rounded-xl text-xs sm:text-sm font-extrabold transition-all cursor-pointer flex items-center justify-center gap-1.5 sm:gap-2 whitespace-nowrap flex-shrink-0 ${activeTab === 'onsite_summary'
               ? 'bg-[#FF6B00] text-black shadow-md'
               : 'text-slate-700 dark:text-slate-200 hover:bg-white/70 dark:hover:bg-white/[0.06]'
               }`}
           >
-            <CheckCircle2 className="w-4 h-4 shrink-0" />
-            <span>5. สรุปงานวันนี้</span>
-            <span className={`px-2 py-0.5 rounded-full text-xs font-mono font-black ${
+            <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+            <span className="sm:hidden">สรุปวันนี้</span>
+            <span className="hidden sm:inline">5. สรุปงานวันนี้</span>
+            <span className={`px-1.5 sm:px-2 py-0.5 rounded-full text-[10px] sm:text-xs font-mono font-black ${
               activeTab === 'onsite_summary' ? 'bg-black/15 text-black' : 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-300'
             }`}>
               {todayOnsiteCount}
@@ -1281,12 +1319,74 @@ export const FrontdeskView: React.FC = () => {
           <QueueSection
             icon={<PackageCheck className="w-6 h-6" />}
             title="ขั้นที่ 1: เลือกงานที่พร้อมส่ง เพื่อลงตารางรถพรุ่งนี้"
-            count={unscheduledReadyItems.length + unscheduledReadyRepairs.length}
+            count={step1Combined.length}
             accent="amber"
             emptyText="ยอดเยี่ยม! ไม่มีงานค้างรอจัดคิวแล้ว"
           >
+            {/* Route Filter Strip (สายรถ) */}
+            {step1Combined.length > 0 && (
+              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-2.5 mb-1">
+                <button
+                  type="button"
+                  onClick={() => { setStep1RouteFilter('all'); setStep1Page(1); }}
+                  className={`px-2.5 py-1.5 rounded-xl text-[11px] font-bold whitespace-nowrap flex-shrink-0 border transition cursor-pointer flex items-center gap-1.5 ${
+                    step1RouteFilter === 'all'
+                      ? 'bg-[#FF6B00] text-black border-[#FF6B00] shadow-sm'
+                      : 'bg-slate-100 dark:bg-white/[0.04] text-slate-700 dark:text-slate-300 border-slate-200 dark:border-white/[0.08]'
+                  }`}
+                >
+                  <span>ทุกสาย</span>
+                  <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono ${step1RouteFilter === 'all' ? 'bg-black/15 text-black' : 'bg-slate-200 dark:bg-white/10'}`}>
+                    {step1Combined.length}
+                  </span>
+                </button>
+                {(Object.keys(ROUTE_DEFINITIONS) as RouteCode[]).map((rCode) => {
+                  const cnt = step1RouteCounts[rCode] || 0;
+                  const rMeta = ROUTE_DEFINITIONS[rCode];
+                  const isActive = step1RouteFilter === rCode;
+                  return (
+                    <button
+                      key={rCode}
+                      type="button"
+                      onClick={() => { setStep1RouteFilter(rCode); setStep1Page(1); }}
+                      className={`px-2.5 py-1.5 rounded-xl text-[11px] font-bold whitespace-nowrap flex-shrink-0 border transition cursor-pointer flex items-center gap-1.5 ${
+                        isActive
+                          ? `${rMeta.badgeBg} ${rMeta.badgeBorder} ${rMeta.badgeText} shadow-sm ring-1 ring-current`
+                          : cnt > 0
+                            ? 'bg-white dark:bg-white/[0.04] text-slate-800 dark:text-slate-200 border-slate-300 dark:border-white/[0.12]'
+                            : 'bg-slate-50 dark:bg-white/[0.02] text-slate-400 dark:text-slate-500 border-slate-200/70 dark:border-white/[0.05] opacity-60'
+                      }`}
+                    >
+                      <span>{rMeta.shortName}</span>
+                      <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono bg-black/10 dark:bg-white/10">
+                        {cnt}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {step1Filtered.length === 0 ? (
+              <div className="py-5 text-center space-y-2 rounded-2xl border border-dashed border-slate-300 dark:border-white/[0.1] bg-white/60 dark:bg-white/[0.02]">
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  {step1RouteFilter === 'all'
+                    ? 'ไม่มีงานรอจัดคิว'
+                    : `ไม่มีงานรอจัดคิวใน ${ROUTE_DEFINITIONS[step1RouteFilter].shortName}`}
+                </p>
+                {step1RouteFilter !== 'all' && (
+                  <button
+                    type="button"
+                    onClick={() => { setStep1RouteFilter('all'); setStep1Page(1); }}
+                    className="px-3 py-1.5 rounded-xl bg-[#FF6B00] text-black font-bold text-[11px] cursor-pointer active:scale-95 transition"
+                  >
+                    แสดงทุกสาย ({step1Combined.length})
+                  </button>
+                )}
+              </div>
+            ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {step1PageEntries.map(entry => {
+                const entryRouteMeta = ROUTE_DEFINITIONS[entry.routeCode];
                 if (entry.kind === 'item') {
                   const it = entry.item;
                   const ord = orders.find(o => o.id === it.order_id);
@@ -1297,9 +1397,14 @@ export const FrontdeskView: React.FC = () => {
                     <div key={it.id} className="p-3.5 rounded-2xl bg-white dark:bg-white/[0.03] border border-slate-200 dark:border-white/[0.08] flex flex-col justify-between gap-2.5 text-xs">
                       <div className="space-y-1">
                         <div className="flex items-center justify-between gap-2 flex-wrap">
-                          <span className="font-mono font-extrabold text-[#FF6B00]">
-                            {prj ? prj.id : (ord?.bill_no || ord?.sales_ref || it.id)}
-                          </span>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-mono font-extrabold text-[#FF6B00]">
+                              {prj ? prj.id : (ord?.bill_no || ord?.sales_ref || it.id)}
+                            </span>
+                            <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold border ${entryRouteMeta.badgeBg} ${entryRouteMeta.badgeBorder} ${entryRouteMeta.badgeText}`}>
+                              {entryRouteMeta.shortName}
+                            </span>
+                          </div>
                           {urg.hasDate && (
                             <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${
                               urg.daysRemaining < 0
@@ -1354,9 +1459,14 @@ export const FrontdeskView: React.FC = () => {
                   <div key={t.id} className="p-3.5 rounded-2xl bg-white dark:bg-white/[0.03] border border-cyan-300 dark:border-cyan-500/30 flex flex-col justify-between gap-2.5 text-xs">
                     <div className="space-y-1">
                       <div className="flex items-center justify-between gap-2 flex-wrap">
-                        <span className="font-mono font-extrabold text-cyan-700 dark:text-cyan-300">
-                          {t.ticket_no} (ส่งคืนซ่อม)
-                        </span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-mono font-extrabold text-cyan-700 dark:text-cyan-300">
+                            {t.ticket_no} (ส่งคืนซ่อม)
+                          </span>
+                          <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold border ${entryRouteMeta.badgeBg} ${entryRouteMeta.badgeBorder} ${entryRouteMeta.badgeText}`}>
+                            {entryRouteMeta.shortName}
+                          </span>
+                        </div>
                         {urg.hasDate && (
                           <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${
                             urg.daysRemaining < 0
@@ -1404,10 +1514,11 @@ export const FrontdeskView: React.FC = () => {
                 );
               })}
             </div>
+            )}
             {step1TotalPages > 1 && (
               <div className="flex flex-wrap items-center justify-between gap-2 pt-3 mt-1 border-t border-slate-200 dark:border-white/[0.08] text-xs">
                 <span className="text-slate-600 dark:text-slate-400 font-medium">
-                  แสดง <strong>{step1Start + 1}–{Math.min(step1Start + STEP1_PAGE_SIZE, step1Combined.length)}</strong> จากทั้งหมด <strong>{step1Combined.length}</strong> งาน
+                  แสดง <strong>{step1Start + 1}–{Math.min(step1Start + STEP1_PAGE_SIZE, step1Filtered.length)}</strong> จากทั้งหมด <strong>{step1Filtered.length}</strong> งาน
                 </span>
                 <div className="flex items-center gap-2">
                   <button
@@ -1618,37 +1729,37 @@ export const FrontdeskView: React.FC = () => {
 
       {/* ===================== COUNTER TAB ===================== */}
       {activeTab === 'counter' && (
-        <div className="space-y-6">
+        <div className="space-y-4 sm:space-y-6">
           {/* Quick actions */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-2 sm:gap-3">
             <button
               type="button"
               onClick={() => setIntakeOpen(true)}
-              className="group flex items-center gap-3 p-4 rounded-2xl bg-gradient-to-br from-[#FF6B00] to-[#FF8F3C] text-white shadow-lg shadow-[#FF6B00]/20 hover:shadow-xl transition-all active:scale-[0.98] min-h-[72px]"
+              className="group flex items-center gap-2 sm:gap-3 p-2.5 sm:p-4 rounded-xl sm:rounded-2xl bg-gradient-to-br from-[#FF6B00] to-[#FF8F3C] text-white shadow-lg shadow-[#FF6B00]/20 hover:shadow-xl transition-all active:scale-[0.98] sm:min-h-[72px]"
             >
-              <span className="flex items-center justify-center w-11 h-11 rounded-xl bg-white/20 shrink-0">
-                <Plus className="w-6 h-6" />
+              <span className="flex items-center justify-center w-8 h-8 sm:w-11 sm:h-11 rounded-lg sm:rounded-xl bg-white/20 shrink-0">
+                <Plus className="w-4 h-4 sm:w-6 sm:h-6" />
               </span>
-              <span className="text-left flex-1">
-                <span className="block text-base sm:text-lg font-black">รับเครื่องซ่อมหน้าร้าน</span>
-                <span className="block text-xs sm:text-sm text-white/90">กดปุ่มนี้เมื่อลูกค้าถือเครื่องมาซ่อมที่ร้าน</span>
+              <span className="text-left flex-1 min-w-0">
+                <span className="block text-xs sm:text-lg font-black leading-tight">รับเครื่องซ่อมหน้าร้าน</span>
+                <span className="hidden sm:block text-xs sm:text-sm text-white/90">กดปุ่มนี้เมื่อลูกค้าถือเครื่องมาซ่อมที่ร้าน</span>
               </span>
-              <ArrowRight className="w-5 h-5 opacity-70 group-hover:translate-x-0.5 transition-transform" />
+              <ArrowRight className="hidden sm:block w-5 h-5 opacity-70 group-hover:translate-x-0.5 transition-transform" />
             </button>
 
             <button
               type="button"
               onClick={() => setOnsiteOpen(true)}
-              className="group flex items-center gap-3 p-4 rounded-2xl bg-gradient-to-br from-sky-600 to-cyan-500 text-white shadow-lg shadow-sky-600/20 hover:shadow-xl transition-all active:scale-[0.98] min-h-[72px]"
+              className="group flex items-center gap-2 sm:gap-3 p-2.5 sm:p-4 rounded-xl sm:rounded-2xl bg-gradient-to-br from-sky-600 to-cyan-500 text-white shadow-lg shadow-sky-600/20 hover:shadow-xl transition-all active:scale-[0.98] sm:min-h-[72px]"
             >
-              <span className="flex items-center justify-center w-11 h-11 rounded-xl bg-white/20 shrink-0">
-                <PhoneCall className="w-6 h-6" />
+              <span className="flex items-center justify-center w-8 h-8 sm:w-11 sm:h-11 rounded-lg sm:rounded-xl bg-white/20 shrink-0">
+                <PhoneCall className="w-4 h-4 sm:w-6 sm:h-6" />
               </span>
-              <span className="text-left flex-1">
-                <span className="block text-base sm:text-lg font-black">นัดช่างไปหาลูกค้า</span>
-                <span className="block text-xs sm:text-sm text-white/90">กดปุ่มนี้เมื่อลูกค้าโทรตามช่างไปดูหน้างาน / รับเครื่อง</span>
+              <span className="text-left flex-1 min-w-0">
+                <span className="block text-xs sm:text-lg font-black leading-tight">นัดช่างไปหาลูกค้า</span>
+                <span className="hidden sm:block text-xs sm:text-sm text-white/90">กดปุ่มนี้เมื่อลูกค้าโทรตามช่างไปดูหน้างาน / รับเครื่อง</span>
               </span>
-              <ArrowRight className="w-5 h-5 opacity-70 group-hover:translate-x-0.5 transition-transform" />
+              <ArrowRight className="hidden sm:block w-5 h-5 opacity-70 group-hover:translate-x-0.5 transition-transform" />
             </button>
           </div>
 
@@ -2705,16 +2816,13 @@ export const FrontdeskView: React.FC = () => {
       {/* ========================================================================= */}
       {dispatchProject && createPortal(
         <div
-          className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-4 animate-fade-in overscroll-contain"
+          className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 animate-fade-in overscroll-contain"
           onClick={() => setDispatchProjectId(null)}
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-t-3xl sm:rounded-3xl w-full sm:w-[92vw] max-w-4xl max-h-[94dvh] sm:max-h-[90vh] flex flex-col overflow-hidden pb-[env(safe-area-inset-bottom)] animate-modal-pop"
+            className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-3xl w-full sm:w-[92vw] max-w-4xl max-h-[94dvh] sm:max-h-[82dvh] sm:max-h-[86dvh] flex flex-col overflow-hidden animate-modal-pop"
           >
-            <div className="sm:hidden flex justify-center pt-2.5 pb-1 flex-shrink-0">
-              <span className="h-1.5 w-10 rounded-full bg-slate-300 dark:bg-white/20" />
-            </div>
 
             <div className="p-4 sm:p-5 bg-slate-50/90 dark:bg-slate-900/95 border-b border-slate-200 dark:border-slate-800 flex items-start justify-between gap-2 flex-shrink-0">
               <div className="min-w-0">
@@ -2967,13 +3075,13 @@ export const FrontdeskView: React.FC = () => {
       {/* ========================================================================= */}
       {scheduleTarget && createPortal(
         <div
-          className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-4 animate-fade-in overscroll-contain"
+          className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 animate-fade-in overscroll-contain"
           onClick={() => setScheduleTarget(null)}
         >
           <form
             onSubmit={handleConfirmScheduleJob}
             onClick={(e) => e.stopPropagation()}
-            className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-t-3xl sm:rounded-3xl w-full sm:w-[92vw] max-w-lg p-5 space-y-4 pb-[env(safe-area-inset-bottom)] animate-modal-pop"
+            className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-3xl w-full sm:w-[92vw] max-w-lg p-5 space-y-4 animate-modal-pop"
           >
             <div className="flex items-center justify-between gap-2">
               <div className="min-w-0">

@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useRef } from 'r
 import { UserAccount, Order, Item, RepairTicket, RepairStatus, RepairLifecycleStatus, ServiceType, RouteCode, JobCategory, Product, StockPO, ProductCategory, getRouteByDistrict, ActivityLog, computeWarrantyExpire, REPAIR_LIFECYCLE_META, ReceivedChannel, ROUTE_DEFINITIONS, WarrantyLookupResult, lookupWarrantyBySerial as lookupWarrantyHelper, Project, ProjectItem, ProjectItemType, ProjectMaterialRequestStatus, Contract, ContractItem, BILLING_BADGE_META, getOrderBillingBadgeKey, SiteVisit, SiteVisitItemRef, SiteVisitPrepStatus, SiteVisitStatus } from '../types';
 import { INITIAL_USERS, INITIAL_ORDERS, INITIAL_ITEMS, INITIAL_REPAIR_TICKETS, INITIAL_PRODUCTS, INITIAL_STOCK_POS, INITIAL_PROJECTS, INITIAL_CONTRACTS } from '../data/initialData';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { newUuid, isSerialDuplicate, isNonPrepCableOrConsumable } from '../utils/domainHelpers';
+import { newUuid, isSerialDuplicate, isNonPrepCableOrConsumable, isServiceItem } from '../utils/domainHelpers';
 
 const safeLoadJson = <T,>(key: string, fallback: T): T => {
   try {
@@ -1218,8 +1218,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const matchedOrderItem = (targetOrder?.items_list || []).find(
         oi => (oi.model_name || '').trim().toLowerCase() === normalizedModel
       );
-      const isService = plan.item_type === 'service' || matchedOrderItem?.item_type === 'service';
-      const bypassPrep = isService || isNonPrepCableOrConsumable(plan.model_name);
+      const isService = isServiceItem(
+        plan.model_name,
+        plan.item_type ?? matchedOrderItem?.item_type,
+        products
+      );
+      if (isService) return; // บริการ/ค่าแรง ไม่ต้องตัดสต๊อกและไม่สร้าง Item เข้าคลัง
+      const bypassPrep = isNonPrepCableOrConsumable(plan.model_name);
 
       // หาสต๊อกจริงในคลังที่ตรงรุ่น (ให้ความสำคัญ in_stock ก่อน raw_stock)
       const availablePool = isService

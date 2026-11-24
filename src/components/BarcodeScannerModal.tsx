@@ -274,7 +274,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
             onClick={handleClose}
         >
             <div
-                className="w-full max-w-md max-h-[92dvh] overflow-y-auto overscroll-contain rounded-3xl shadow-2xl border border-slate-200 dark:border-white/10 bg-white dark:bg-[#12141A] text-slate-900 dark:text-white pb-[env(safe-area-inset-bottom)] animate-modal-pop"
+                className="w-full max-w-md max-h-[92dvh] overflow-y-auto overscroll-contain rounded-3xl shadow-2xl border border-slate-200 dark:border-white/10 bg-white dark:bg-[#12141A] text-slate-900 dark:text-white animate-modal-pop"
                 onClick={(e) => e.stopPropagation()}
             >
                 {/* Header */}

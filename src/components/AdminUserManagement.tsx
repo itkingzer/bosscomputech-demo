@@ -112,7 +112,7 @@ export const AdminUserManagement: React.FC = () => {
       </div>
 
       {/* Users Table in Liquid Glass */}
-      <div className="liquid-glass rounded-3xl p-6 shadow-2xl border border-slate-200 dark:border-white/[0.08]">
+      <div className="liquid-glass rounded-3xl p-4 sm:p-6 shadow-2xl border border-slate-200 dark:border-white/[0.08]">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
             <Users className="w-4 h-4 text-[#FF6B00]" />
@@ -120,7 +120,51 @@ export const AdminUserManagement: React.FC = () => {
           </h3>
         </div>
 
-        <div className="overflow-x-auto">
+        {/* Mobile Cards (< md) */}
+        <div className="md:hidden space-y-2.5">
+          {users.map((u) => (
+            <div key={u.id} className="p-3.5 rounded-2xl border border-slate-200 dark:border-white/[0.08] bg-white/80 dark:bg-white/[0.03] space-y-2.5">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-9 h-9 rounded-xl bg-slate-100 dark:bg-white/[0.05] border border-slate-200 dark:border-white/[0.08] flex items-center justify-center font-bold text-xs text-[#FF6B00] flex-shrink-0">
+                    {u.name.slice(0, 1)}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="font-bold text-slate-900 dark:text-white text-sm truncate">{u.name}</div>
+                    <div className="font-mono font-bold text-xs text-[#FF6B00] truncate">@{u.username}</div>
+                  </div>
+                </div>
+                {u.id === 'u-admin' ? (
+                  <span className="text-[10px] text-slate-500 italic flex-shrink-0">บัญชีหลัก</span>
+                ) : (
+                  <button
+                    onClick={() => {
+                      if (confirm(`คุณต้องการลบผู้ใช้ "${u.name}" ใช่หรือไม่?`)) {
+                        deleteUser(u.id);
+                        showNotice('ลบผู้ใช้เรียบร้อยแล้ว');
+                      }
+                    }}
+                    className="p-2 rounded-xl border border-slate-200 dark:border-white/[0.08] text-slate-400 hover:text-rose-400 hover:border-rose-500/40 transition cursor-pointer flex-shrink-0"
+                    title="ลบผู้ใช้"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 dark:border-white/[0.06] text-xs">
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold border border-[#FF6B00]/30 bg-[#FF6B00]/10 text-slate-800 dark:text-slate-200">
+                  {roleLabel[u.role]}
+                </span>
+                <span className="text-[11px] text-slate-500 dark:text-slate-400 font-mono">
+                  {u.phone || '-'} {u.badge ? `• ${u.badge}` : ''}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Desktop Table (>= md) */}
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead className="bg-slate-100 dark:bg-white/[0.03] text-slate-600 dark:text-slate-400 border-b border-slate-200 dark:border-white/[0.06]">
               <tr>
@@ -176,11 +220,8 @@ export const AdminUserManagement: React.FC = () => {
 
       {/* Add User Modal */}
       {showAddModal && createPortal(
-        <div className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-4 animate-fade-in">
-          <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-t-3xl sm:rounded-3xl w-full sm:w-[95vw] max-w-md max-h-[92dvh] sm:max-h-[90vh] overflow-y-auto overscroll-contain p-4 sm:p-7 pb-[max(1rem,env(safe-area-inset-bottom))] relative animate-modal-pop">
-            <div className="sm:hidden flex justify-center pt-1 pb-3">
-              <span className="h-1.5 w-10 rounded-full bg-slate-300 dark:bg-white/20" />
-            </div>
+        <div className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 animate-fade-in">
+          <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-3xl w-full max-w-md max-h-[82dvh] sm:max-h-[86dvh] overflow-y-auto overscroll-contain p-4 sm:p-7 relative animate-modal-pop">
             <h3 className="text-base font-bold text-slate-900 dark:text-white mb-1 flex items-center gap-2">
               <UserPlus className="w-5 h-5 text-[#FF6B00]" />
               เพิ่มผู้ใช้งานใหม่

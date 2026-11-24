@@ -134,6 +134,43 @@
     min-height: 40px;
   }
 
+  /* Compact list sort / pagination bars on mobile so they don't dominate cards */
+  .list-controls-bar select {
+    min-height: 30px;
+    height: 30px;
+    font-size: 11px;
+    padding-top: 2px;
+    padding-bottom: 2px;
+  }
+
+  .list-controls-bar button {
+    min-height: 28px;
+    min-width: 28px;
+  }
+
+  .activity-log-toggle {
+    min-height: 24px;
+  }
+
+  /* Refined, proportional mobile modal forms & controls (both role="dialog" and fixed portals) */
+  [role='dialog'] input:not([type='checkbox']):not([type='radio']),
+  [role='dialog'] select,
+  [role='dialog'] textarea,
+  .fixed.inset-0 input:not([type='checkbox']):not([type='radio']),
+  .fixed.inset-0 select,
+  .fixed.inset-0 textarea {
+    min-height: 36px;
+    font-size: 13px;
+    max-width: 100%;
+  }
+
+  [role='dialog'] button,
+  [role='dialog'] [role='button'],
+  .fixed.inset-0 button,
+  .fixed.inset-0 [role='button'] {
+    min-height: 34px;
+  }
+
   /* Checkbox / radio rows: enlarge the tappable area */
   input[type='checkbox'],
   input[type='radio'] {

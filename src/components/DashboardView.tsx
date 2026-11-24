@@ -468,7 +468,49 @@ export const DashboardView: React.FC = () => {
                     </h3>
                     <span className="text-[11px] text-[#FF6B00] font-semibold">คลิกแถวเพื่อดูรายละเอียด & GP</span>
                   </div>
-                  <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-white/[0.08] bg-white dark:bg-transparent">
+                  {/* Mobile Cards (< md) */}
+                  <div className="md:hidden space-y-2.5">
+                    {matchedOrders.map((o) => {
+                      const orderItems = items.filter((it) => it.order_id === o.id);
+                      const orderRepairs = repairTickets.filter((t) =>
+                        orderItems.some(
+                          (it) =>
+                            t.item_id === it.id ||
+                            (it.serial_number &&
+                              (t.walkin_sn === it.serial_number || t.replacement_sn === it.serial_number))
+                        )
+                      );
+                      const live = resolveLiveOrderStatus(o, orderItems, orderRepairs);
+                      return (
+                        <button
+                          key={o.id}
+                          type="button"
+                          onClick={() => setSelectedDoc({ kind: 'order', order: o })}
+                          className="w-full text-left p-3.5 rounded-2xl border border-slate-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.03] hover:bg-slate-50 dark:hover:bg-white/[0.06] transition space-y-2 cursor-pointer active:scale-[0.99]"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <div className="font-mono font-bold text-sm text-[#FF6B00] truncate">{o.sales_ref || '-'}</div>
+                              <div className="font-mono text-[11px] text-slate-500 dark:text-slate-400 truncate">{o.bill_no || 'รอออกบิล'}</div>
+                            </div>
+                            <span className="inline-flex items-center gap-0.5 text-[#FF6B00] font-bold text-[11px] flex-shrink-0">
+                              เปิดดู <ChevronRight className="w-3.5 h-3.5" />
+                            </span>
+                          </div>
+                          <div className="font-bold text-sm text-slate-900 dark:text-white truncate">{o.customer_name}</div>
+                          <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-100 dark:border-white/[0.06]">
+                            {renderLiveStatusBadge(live)}
+                            <span className="text-[11px] text-slate-500 dark:text-slate-400 font-mono">
+                              {o.salesperson || '-'} • {formatThaiDateTime(o.created_at_log || o.created_at)}
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Desktop Table (>= md) */}
+                  <div className="hidden md:block overflow-x-auto rounded-2xl border border-slate-200 dark:border-white/[0.08] bg-white dark:bg-transparent">
                     <table className="w-full text-left text-xs">
                       <thead className="bg-slate-100 dark:bg-white/[0.04] text-slate-600 dark:text-slate-400 border-b border-slate-200 dark:border-white/[0.06]">
                         <tr>
@@ -534,7 +576,41 @@ export const DashboardView: React.FC = () => {
                     </h3>
                     <span className="text-[11px] text-[#FF6B00] font-semibold">คลิกแถวเพื่อดูรายการรับเข้า & ประวัติ</span>
                   </div>
-                  <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-white/[0.08] bg-white dark:bg-transparent">
+                  {/* Mobile Cards (< md) */}
+                  <div className="md:hidden space-y-2.5">
+                    {matchedStockPOs.map((p) => {
+                      const poItems = items.filter((it) => it.stock_po_id === p.id);
+                      const live = resolveLiveStockPOStatus(p, poItems);
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => setSelectedDoc({ kind: 'stock_po', stockPO: p })}
+                          className="w-full text-left p-3.5 rounded-2xl border border-slate-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.03] hover:bg-slate-50 dark:hover:bg-white/[0.06] transition space-y-2 cursor-pointer active:scale-[0.99]"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="font-mono font-bold text-sm text-emerald-600 dark:text-emerald-400">{p.po_number}</span>
+                            <span className="inline-flex items-center gap-0.5 text-[#FF6B00] font-bold text-[11px] flex-shrink-0">
+                              เปิดดู <ChevronRight className="w-3.5 h-3.5" />
+                            </span>
+                          </div>
+                          <div className="font-bold text-sm text-slate-900 dark:text-white">{p.product_name}</div>
+                          <div className="text-[11px] text-slate-600 dark:text-slate-400">
+                            Supplier: <span className="font-medium text-slate-800 dark:text-slate-200">{p.supplier || '-'}</span> • จำนวน <span className="font-mono font-bold">{p.qty}</span>
+                          </div>
+                          <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-100 dark:border-white/[0.06]">
+                            {renderLiveStatusBadge(live)}
+                            <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
+                              {formatThaiDateTime(p.ordered_at || p.created_at)}
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Desktop Table (>= md) */}
+                  <div className="hidden md:block overflow-x-auto rounded-2xl border border-slate-200 dark:border-white/[0.08] bg-white dark:bg-transparent">
                     <table className="w-full text-left text-xs">
                       <thead className="bg-slate-100 dark:bg-white/[0.04] text-slate-600 dark:text-slate-400 border-b border-slate-200 dark:border-white/[0.06]">
                         <tr>
@@ -596,7 +672,7 @@ export const DashboardView: React.FC = () => {
       </div>
 
       {/* Live Units Table in Liquid Glass */}
-      <div className="liquid-glass rounded-3xl p-6 shadow-2xl border border-white/[0.08]">
+      <div className="liquid-glass rounded-3xl p-4 sm:p-6 shadow-2xl border border-white/[0.08]">
         <h3 className="text-sm font-bold text-slate-900 dark:text-white mb-3 flex items-center gap-2">
           <Package className="w-4 h-4 text-[#FF6B00]" />
           รายการสินค้าหมุนเวียนในระบบล่าสุด ({items.length} ชิ้น)
@@ -616,7 +692,64 @@ export const DashboardView: React.FC = () => {
           unit="ชิ้น"
           className="mb-3"
         />
-        <div className="overflow-x-auto">
+
+        {/* Mobile Cards (< md) */}
+        <div className="md:hidden space-y-2.5">
+          {liveItemsList.pageItems.map((i) => {
+            const ord = i.order_id ? orders.find(o => o.id === i.order_id) || null : null;
+            const linkedRepairs = repairTickets.filter(
+              t => t.item_id === i.id || (i.serial_number && (t.walkin_sn === i.serial_number || t.replacement_sn === i.serial_number))
+            );
+            const liveDelivery = resolveDeliveryStatus(i, ord);
+            const repSummary = resolveRepairStatus(linkedRepairs);
+            return (
+              <button
+                key={i.id}
+                type="button"
+                onClick={() => {
+                  const matches = searchSnRecords(i.serial_number || i.id, [i], ord ? [ord] : [], linkedRepairs, projects);
+                  if (matches[0]) setSelectedMatch(matches[0]);
+                }}
+                className="w-full text-left p-3.5 rounded-2xl border border-slate-200 dark:border-white/[0.08] bg-white/80 dark:bg-white/[0.03] hover:bg-slate-50 dark:hover:bg-white/[0.06] transition space-y-2 cursor-pointer active:scale-[0.99]"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <span className="font-mono font-extrabold text-sm text-[#FF6B00] break-all">
+                    {i.serial_number || <span className="text-slate-400 dark:text-slate-500 font-normal italic">รอใส่ S/N</span>}
+                  </span>
+                  {i.void_date || i.warranty_void_date ? (
+                    <span className="text-[10px] font-mono text-emerald-700 dark:text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 flex-shrink-0">
+                      วอย {i.void_date || formatDateDMY(i.warranty_void_date)}
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-slate-400 dark:text-slate-500 italic flex-shrink-0">ยังไม่ติดวอย</span>
+                  )}
+                </div>
+                <div className="text-sm font-bold text-slate-900 dark:text-white">{i.model_name}</div>
+                <div className="text-xs text-slate-600 dark:text-slate-300">
+                  {ord ? ord.customer_name : (i.status === 'in_stock' ? <span className="text-emerald-600 dark:text-emerald-400 font-medium">สต๊อกร้าน BossComputech</span> : '-')}
+                  {(i.assigned_onsite_tech || i.assigned_techs?.[0]) && (
+                    <span className="text-slate-400"> • ช่าง: {i.assigned_onsite_tech || i.assigned_techs?.[0]}</span>
+                  )}
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-100 dark:border-white/[0.06]">
+                  {renderLiveStatusBadge(liveDelivery)}
+                  {repSummary && (() => {
+                    const repTone = getToneClasses(repSummary.status.tone);
+                    return (
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border ${repTone.badge}`}>
+                        <Wrench className="w-3 h-3" />
+                        <span>ซ่อม{repSummary.totalCount > 1 ? ` (${repSummary.totalCount})` : ''}: {repSummary.status.label}</span>
+                      </span>
+                    );
+                  })()}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Desktop Table (>= md) */}
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead className="bg-slate-100 dark:bg-white/[0.03] text-slate-600 dark:text-slate-400 border-b border-slate-200 dark:border-white/[0.06]">
               <tr>

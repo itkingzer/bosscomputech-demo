@@ -14,6 +14,29 @@ export const isNonPrepCableOrConsumable = (modelName?: string | null): boolean =
   );
 };
 
+/**
+ * ตรวจสอบว่าเป็นรายการ "ค่าบริการ / ค่าแรง" ที่ไม่ต้องตัดสต๊อกและไม่ต้องเข้าคลังสินค้า
+ * เช่น ค่าบริการเดินสาย LAN ท่อร้อยสาย และจัดตู้ Rack Server (ต่อจุด), ค่าติดตั้ง, ค่า MA
+ */
+export const isServiceItem = (
+  modelName?: string | null,
+  itemType?: 'hardware' | 'service' | string | null,
+  products?: { name: string; category?: string; item_type?: string }[]
+): boolean => {
+  if (itemType === 'service') return true;
+  const name = (modelName || '').trim();
+  if (!name) return false;
+  if (/ค่าบริการ|ค่าแรง/.test(name)) return true;
+  if (products && products.length > 0) {
+    const key = name.toLowerCase();
+    const matched = products.find((p) => (p.name || '').trim().toLowerCase() === key);
+    if (matched && (matched.category === 'service' || matched.item_type === 'service')) {
+      return true;
+    }
+  }
+  return false;
+};
+
 export const fmtCurrency = (n: number): string =>
   n.toLocaleString('th-TH', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 

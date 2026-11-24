@@ -435,11 +435,32 @@ export const PrepView: React.FC = () => {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3 sm:space-y-6">
       <ToastBanner message={toast} onClose={() => setToast('')} />
 
-      {/* Role Rule & Logic Banner: แยก Stage A (เข้าคลัง) และ Stage B (จัดส่งตามออเดอร์) ชัดเจน */}
-      <div className="p-4 rounded-2xl liquid-glass border border-[#FF6B00]/40 flex items-start gap-3.5 text-slate-700 dark:text-slate-300 relative overflow-hidden">
+      {/* Role Rule & Logic Banner: มือถือพับเก็บได้ / เดสก์ท็อปแสดงเต็ม */}
+      <details className="sm:hidden rounded-2xl liquid-glass border border-[#FF6B00]/40 overflow-hidden group">
+        <summary className="px-3 py-2 flex items-center justify-between gap-2 cursor-pointer select-none list-none text-xs font-bold text-slate-900 dark:text-white">
+          <span className="flex items-center gap-2 min-w-0">
+            <span className="p-1 rounded-lg bg-[#FF6B00]/15 text-[#C2410C] dark:text-[#FF6B00] border border-[#FF6B00]/30 flex-shrink-0">
+              <ShieldCheck className="w-3.5 h-3.5" />
+            </span>
+            <span className="truncate">ขั้นตอนช่างเตรียมสินค้า (แตะเพื่อดู)</span>
+          </span>
+          <span className="text-[10px] text-[#FF6B00] font-semibold flex-shrink-0 group-open:hidden">เปิดดู</span>
+          <span className="text-[10px] text-slate-400 font-semibold flex-shrink-0 hidden group-open:inline">ซ่อน</span>
+        </summary>
+        <div className="px-3 pb-3 pt-1 text-[11px] leading-relaxed text-slate-700 dark:text-slate-300 border-t border-slate-200/70 dark:border-white/[0.06] space-y-1">
+          <div>
+            <span className="text-emerald-700 dark:text-emerald-300 font-bold">Stage A (Stock PO):</span> รับจากห้อง DOA → เทส สแกน S/N &amp; <strong className="text-slate-900 dark:text-white">ติดโลโก้ครั้งเดียว</strong> → เข้าคลัง (<code className="font-mono">in_stock</code>)
+          </div>
+          <div>
+            <span className="text-[#C2410C] dark:text-[#FF6B00] font-bold">Stage B (Order Prep):</span> ตัดจากคลังพร้อมขาย → <strong className="text-slate-900 dark:text-white">เก็บรอวันส่งมอบ</strong> หรือ <strong className="text-slate-900 dark:text-white">ติดวอยประกัน &amp; ส่งออก</strong>
+          </div>
+        </div>
+      </details>
+
+      <div className="hidden sm:flex p-4 rounded-2xl liquid-glass border border-[#FF6B00]/40 items-start gap-3.5 text-slate-700 dark:text-slate-300 relative overflow-hidden">
         <div className="p-2 rounded-xl bg-[#FF6B00]/15 dark:bg-[#FF6B00]/20 text-[#C2410C] dark:text-[#FF6B00] border border-[#FF6B00]/30 flex-shrink-0">
           <ShieldCheck className="w-5 h-5" />
         </div>
@@ -451,7 +472,7 @@ export const PrepView: React.FC = () => {
       </div>
 
       {/* Prep View Tabs: Stage A vs Stage B vs รอติดวอยปล่อยของ vs คลังสต๊อกพร้อมขาย */}
-      <div className="flex gap-2 pb-1 overflow-x-auto">
+      <div className="flex gap-1.5 sm:gap-2 pb-1 overflow-x-auto no-scrollbar">
         <button
           onClick={() => setPrepTab('stageA')}
           className={`px-4 py-2.5 text-xs font-semibold rounded-2xl transition-all cursor-pointer flex items-center gap-2 whitespace-nowrap ${prepTab === 'stageA'
@@ -1030,7 +1051,30 @@ export const PrepView: React.FC = () => {
                 className="mb-3"
               />
 
-              <div className="overflow-x-auto">
+              {/* Mobile Cards (< md) */}
+              <div className="md:hidden space-y-2.5">
+                {generalStockList.pageItems.map((item) => (
+                  <div key={item.id} className="p-3.5 rounded-2xl border border-slate-200 dark:border-white/[0.08] bg-white/80 dark:bg-white/[0.03] space-y-2 text-xs">
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="font-mono font-extrabold text-sm text-[#C2410C] dark:text-[#FF6B00] break-all">
+                        {item.serial_number || '-'}
+                      </span>
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-300 dark:bg-emerald-500/15 dark:text-emerald-300 dark:border-emerald-500/30 flex-shrink-0">
+                        <BadgeCheck className="w-3 h-3" />
+                        ติดโลโก้แล้ว
+                      </span>
+                    </div>
+                    <div className="text-sm font-bold text-slate-900 dark:text-white">{item.model_name}</div>
+                    <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 font-mono pt-1 border-t border-slate-100 dark:border-white/[0.06]">
+                      <span>{item.po_no || '-'} • {item.supplier || 'สต๊อกร้าน'}</span>
+                      <span>{item.prepped_at ? new Date(item.prepped_at).toLocaleDateString('th-TH') : '-'}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Desktop Table (>= md) */}
+              <div className="hidden md:block overflow-x-auto">
                 <table className="w-full text-left text-xs">
                   <thead className="bg-slate-100 dark:bg-white/[0.04] text-slate-600 dark:text-slate-400 border-b border-slate-200 dark:border-white/[0.06]">
                     <tr>
@@ -1281,21 +1325,66 @@ export const PrepView: React.FC = () => {
                         ))}
                       </div>
 
-                      <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-[11px] text-emerald-900 dark:bg-emerald-500/10 dark:border-emerald-500/20 dark:text-emerald-300 text-center font-medium">
-                        เทสฮาร์ดแวร์ สแกน S/N และติดโลโก้ BossComputech ให้เรียบร้อย (ยังไม่ติดวอยประกัน)
-                      </div>
+                      {(group.order_id || group.project_id) ? (
+                        <div className="space-y-2.5">
+                          <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-900 dark:bg-amber-500/10 dark:border-amber-500/20 dark:text-amber-300 font-medium">
+                            งานนี้สต๊อกตัดผูกบิล/โปรเจกต์มาให้แล้ว — สามารถเทส สแกน S/N ติดโลโก้ และติดวอยประกัน <strong>จบในขั้นตอนเดียว</strong> ได้เลย
+                          </div>
+                          <div>
+                            <label className={modalLabelClass}>วันที่ติดวอยประกัน (กรณีจบงานพร้อมส่งทันที)</label>
+                            <input
+                              type="date"
+                              value={voidDateInputs[group.items[0].id] || todayStr}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                const next = { ...voidDateInputs };
+                                group.items.forEach(it => { next[it.id] = val; });
+                                setVoidDateInputs(next);
+                              }}
+                              className={modalInputClass + ' font-mono'}
+                            />
+                          </div>
+                          <button
+                            onClick={() => {
+                              const ok = isProjectGroup
+                                ? group.items.every(it => handleFinishProjectEquipment(it))
+                                : group.items.every(it => handleFinishAndDispatch(it));
+                              if (ok) closeGroupModal();
+                            }}
+                            className="w-full py-3 bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-[#FF6B00]/25 border border-white/20 active:scale-95"
+                          >
+                            <BadgeCheck className="w-4 h-4" />
+                            <span>
+                              {isProjectGroup
+                                ? `เทส + ติดโลโก้ + ติดวอย → ส่งเข้าไซต์เลย${group.items.length > 1 ? ` (${group.items.length})` : ''}`
+                                : `เทส + ติดโลโก้ + ติดวอย → พร้อมส่งออกเลย${group.items.length > 1 ? ` (${group.items.length})` : ''}`}
+                            </span>
+                          </button>
+                          <button
+                            onClick={() => { if (group.items.every(it => handleStageAComplete(it))) closeGroupModal(); }}
+                            className="w-full py-2 rounded-xl text-[11px] font-bold bg-slate-100 hover:bg-slate-200 dark:bg-white/[0.06] dark:hover:bg-white/[0.1] text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-white/[0.1] transition cursor-pointer flex items-center justify-center gap-1.5 active:scale-95"
+                          >
+                            <Warehouse className="w-3.5 h-3.5" />
+                            <span>ติดโลโก้เสร็จ → พักไว้ Stage B (ยังไม่ติดวอย)</span>
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-[11px] text-emerald-900 dark:bg-emerald-500/10 dark:border-emerald-500/20 dark:text-emerald-300 text-center font-medium">
+                            เทสฮาร์ดแวร์ สแกน S/N และติดโลโก้ BossComputech ให้เรียบร้อย (ยังไม่ติดวอยประกัน)
+                          </div>
 
-                      <button
-                        onClick={() => { if (group.items.every(it => handleStageAComplete(it))) closeGroupModal(); }}
-                        className={`w-full py-2.5 bg-gradient-to-r ${accentGradient} text-black font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg border border-white/20 active:scale-95`}
-                      >
-                        <Warehouse className="w-4 h-4" />
-                        <span>
-                          {(group.order_id || group.project_id)
-                            ? `ติดโลโก้เสร็จ → ส่งต่อ Stage B ติดวอย${group.items.length > 1 ? ` (${group.items.length})` : ''}`
-                            : `ติดโลโก้เสร็จ → ยิงเข้าคลังสต๊อกพร้อมขาย (in_stock)${group.items.length > 1 ? ` (${group.items.length})` : ''}`}
-                        </span>
-                      </button>
+                          <button
+                            onClick={() => { if (group.items.every(it => handleStageAComplete(it))) closeGroupModal(); }}
+                            className={`w-full py-2.5 bg-gradient-to-r ${accentGradient} text-black font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg border border-white/20 active:scale-95`}
+                          >
+                            <Warehouse className="w-4 h-4" />
+                            <span>
+                              ติดโลโก้เสร็จ → ยิงเข้าคลังสต๊อกพร้อมขาย (in_stock){group.items.length > 1 ? ` (${group.items.length})` : ''}
+                            </span>
+                          </button>
+                        </>
+                      )}
                     </>
                   ) : (
                     /* Stage B — Customer Order Prep (order_id exists): Existing S/N + Logo Applied badge + ONLY Hold or Void & Dispatch */
@@ -1394,7 +1483,7 @@ export const PrepView: React.FC = () => {
       {/* Nested DOA Defect Report Modal (z-[10000]) */}
       {doaTargetItem && createPortal(
         <div
-          className="fixed inset-0 z-[10000] flex items-end sm:items-center justify-center sm:p-4 bg-black/70 dark:bg-black/80 backdrop-blur-md overflow-y-auto overscroll-contain animate-fade-in"
+          className="fixed inset-0 z-[10000] flex items-center justify-center p-4 sm:p-6 bg-black/70 dark:bg-black/80 backdrop-blur-md overflow-y-auto overscroll-contain animate-fade-in"
           role="dialog"
           aria-modal="true"
           aria-label="แจ้งพบของเสีย DOA กลับฝ่ายจัดซื้อ PO"
@@ -1402,7 +1491,7 @@ export const PrepView: React.FC = () => {
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="w-full sm:w-[95vw] max-w-lg max-h-[92dvh] sm:max-h-[88dvh] flex flex-col overflow-hidden rounded-t-3xl sm:rounded-3xl shadow-2xl border border-rose-500/40 bg-white text-slate-900 dark:bg-[#12141A] dark:text-white animate-modal-pop"
+            className="w-full max-w-lg max-h-[82dvh] sm:max-h-[86dvh] flex flex-col overflow-hidden rounded-3xl shadow-2xl border border-rose-500/40 bg-white text-slate-900 dark:bg-[#12141A] dark:text-white animate-modal-pop"
           >
             {/* Header */}
             <div className="flex items-start justify-between gap-3 px-4 sm:px-6 py-3.5 border-b border-slate-200 dark:border-white/[0.1] flex-shrink-0 bg-rose-50/70 dark:bg-rose-500/[0.07]">
