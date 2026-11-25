@@ -168,6 +168,7 @@ export function ProductCatalogModal({
                           <>
                             <span className="text-[10px] text-slate-600 dark:text-slate-400">จำนวน:</span>
                             <NumberInput
+                              finishOnEnter
                               min={1}
                               value={quantities[item.id]}
                               aria-label={"จำนวน " + item.name}

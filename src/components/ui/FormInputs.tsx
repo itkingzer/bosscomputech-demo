@@ -31,7 +31,13 @@ export function PhoneInput({ value, defaultValue, onChange, ...props }: PhoneInp
   );
 }
 
-export function NumberInput({ value, onChange, onBlur, step, ...props }: Omit<InputProps, 'type'>) {
+type NumberInputProps = Omit<InputProps, 'type'> & {
+  finishOnEnter?: boolean;
+};
+
+export function NumberInput({
+  value, onChange, onBlur, onKeyDown, step, finishOnEnter, enterKeyHint, ...props
+}: NumberInputProps) {
   const [isCleared, setIsCleared] = useState(false);
   const allowsDecimals = step === 'any' || !Number.isInteger(Number(step ?? 1));
 
@@ -40,8 +46,15 @@ export function NumberInput({ value, onChange, onBlur, step, ...props }: Omit<In
       {...props}
       type="number"
       inputMode={allowsDecimals ? 'decimal' : 'numeric'}
+      enterKeyHint={enterKeyHint ?? (finishOnEnter ? 'done' : undefined)}
       step={step}
       value={isCleared ? '' : value}
+      onKeyDown={(event) => {
+        onKeyDown?.(event);
+        if (!finishOnEnter || event.defaultPrevented || event.key !== 'Enter' || event.nativeEvent.isComposing) return;
+        event.preventDefault();
+        event.currentTarget.blur();
+      }}
       onChange={(event) => {
         const input = event.currentTarget;
         if (input.validity.badInput) return;

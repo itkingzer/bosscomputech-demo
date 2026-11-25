@@ -1198,6 +1198,7 @@ export const RepairView: React.FC = () => {
                   />
                   <label className={modalLabelClass + ' mt-2'}>ค่าใช้จ่าย (บาท)</label>
                   <NumberInput
+                    finishOnEnter
                     min={0}
                     step="0.01"
                     placeholder="0"

@@ -5,6 +5,7 @@ import { formatDateDMY, getStockPoDocument, type StockPO } from '../types';
 import companyLogo from '../assets/BossCom.jpg';
 import { getStockPoSupplierDetails } from '../data/stockPoSuppliers';
 import { COMPANY_ADDRESS, COMPANY_NAME } from './RepairReceiptPrintDocument';
+import { NumberInput } from './ui/FormInputs';
 import './StockPurchaseOrderPrintModal.css';
 
 const money = new Intl.NumberFormat('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -91,7 +92,7 @@ export function StockPurchaseOrderPrintModal({ selectedPo, stockPOs, onClose }: 
             ))}
             <label>
               ส่วนลดรวม (บาท)
-              <input type="number" min="0" max={subtotal / 100} step="0.01" value={discountInput}
+              <NumberInput finishOnEnter min="0" max={subtotal / 100} step="0.01" value={discountInput}
                 onChange={event => setDiscountInput(event.target.value)} />
             </label>
             <label>

@@ -257,6 +257,7 @@ export const RepairReceiptPrintModal: React.FC<RepairReceiptPrintModalProps> = (
           <div>
             <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 mb-0.5">ประเมินค่าซ่อม (บาท)</label>
             <NumberInput
+              finishOnEnter
               step="0.01"
               value={repairCost}
               onChange={(e) => setRepairCost(e.target.value)}

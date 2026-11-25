@@ -2442,6 +2442,7 @@ export const PurchasingStockView: React.FC = () => {
                           {it.model_name} <span className="text-slate-500">(x{it.quantity})</span>
                         </div>
                         <NumberInput
+                          finishOnEnter
                           min={0}
                           placeholder="ราคาทุน/หน่วย"
                           value={getItemCost(actionOrder.id, idx, it.unit_cost) || ''}
@@ -2454,6 +2455,7 @@ export const PurchasingStockView: React.FC = () => {
                   <div className="flex items-center justify-between gap-2 pt-2 border-t border-rose-200 dark:border-rose-500/15">
                     <label className="text-[11px] text-slate-700 dark:text-slate-300">ต้นทุนค่าแรง/อื่นๆ (Extra Job Cost)</label>
                     <NumberInput
+                      finishOnEnter
                       min={0}
                       placeholder="0"
                       value={getExtraCost(actionOrder.id, actionOrder.extra_cost) || ''}
@@ -2689,6 +2691,7 @@ export const PurchasingStockView: React.FC = () => {
               <div>
                 <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1.5">จำนวนที่ส่งช่างเทส & ติดโลโก้</label>
                 <NumberInput
+                  finishOnEnter
                   min={1}
                   max={batchDetail.itemIds.length}
                   value={batchSendQty[batchDetail.key] ?? batchDetail.itemIds.length}
@@ -3071,6 +3074,7 @@ export const PurchasingStockView: React.FC = () => {
           onClose={() => setIsPoCatalogModalOpen(false)}
           renderActions={item => (
             <NumberInput
+              finishOnEnter
               min={0}
               step="any"
               value={poCatalogPicks[item.id]?.unit_cost ?? 0}
@@ -3608,6 +3612,7 @@ export const PurchasingStockView: React.FC = () => {
                                         เบิกงวดที่ {nextBatchNo}:
                                       </label>
                                       <NumberInput
+                                        finishOnEnter
                                         min={0}
                                         max={row.releasableNow}
                                         disabled={row.releasableNow === 0}

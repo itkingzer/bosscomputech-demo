@@ -386,6 +386,7 @@ export const OrderFormPrintModal: React.FC<OrderFormPrintModalProps> = ({
             <div>
               <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 mb-0.5">เครดิต (วัน)</label>
               <NumberInput
+                finishOnEnter
                 min={0}
                 value={creditDays}
                 onChange={(e) => setCreditDays(e.target.value)}
@@ -433,6 +434,7 @@ export const OrderFormPrintModal: React.FC<OrderFormPrintModalProps> = ({
             <div>
               <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 mb-0.5">มัดจำแล้ว (บาท)</label>
               <NumberInput
+                finishOnEnter
                 min={0}
                 step="0.01"
                 value={depositAmount}
