@@ -120,7 +120,7 @@ export const OnsiteDispatchRosterModal: React.FC<OnsiteDispatchRosterModalProps>
 
     // 1. Scheduled Sales / Project Items (grouped by order_id or standalone)
     const scheduledItems = items.filter(
-      it => it.scheduled_date === targetDate && it.status !== 'delivered'
+      it => it.scheduled_date === targetDate && it.status !== 'delivered' && !it.site_visit_id
     );
     const itemsByOrder = new Map<string, Item[]>();
     scheduledItems.forEach(it => {
@@ -191,7 +191,7 @@ export const OnsiteDispatchRosterModal: React.FC<OnsiteDispatchRosterModalProps>
         }
         const itemsText = [...quantities].map(([name, quantity]) => `${name} × ${quantity} ชิ้น`);
         const prepNote =
-          sv.prep_status === 'ready_for_pickup'
+          sv.prep_status === 'dispatched' ? 'จ่ายออกแล้ว' : sv.prep_status === 'ready_for_pickup'
             ? 'ของที่ตัดเทสแล้ว (พร้อมขึ้นรถ)'
             : sv.prep_status === 'prepping'
               ? 'กำลังเทส/ติดวอย (ของยังไม่ครบ)'

@@ -986,7 +986,7 @@ export const OnsiteView: React.FC = () => {
                                 ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300'
                                 : 'bg-slate-100 text-slate-700 dark:bg-white/10 dark:text-slate-300'
                             }`}>
-                              {sv.prep_status === 'ready_for_pickup' ? 'ของพร้อมขึ้นรถ' : sv.prep_status === 'prepping' ? 'ช่างเตรียมกำลังเทส' : 'รอจัดซื้อตัดสต๊อก'}
+                              {sv.prep_status === 'dispatched' ? 'จ่ายออกแล้ว' : sv.prep_status === 'ready_for_pickup' ? 'ของพร้อมขึ้นรถ' : sv.prep_status === 'prepping' ? 'ช่างเตรียมกำลังเทส' : 'รอจัดซื้อตัดสต๊อก'}
                             </span>
                           </div>
                         </div>
@@ -2460,7 +2460,7 @@ export const OnsiteView: React.FC = () => {
                                 onClick={() => {
                                   updateSiteVisit(activeProject.id, sv.id, {
                                     visit_status: 'completed',
-                                    prep_status: 'dispatched',
+                                    prep_status: sv.prep_status === 'ready_for_pickup' ? 'dispatched' : sv.prep_status,
                                     progress_note: dailyNoteInput.trim() || `ปิดรอบเข้าไซต์ ${formatDateDMY(sv.visit_date)} เรียบร้อย`,
                                     photo_urls: dailyPhotosInput
                                   });

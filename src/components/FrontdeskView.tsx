@@ -270,6 +270,14 @@ const QueueSection: React.FC<{
 // ---------------------------------------------------------------------------
 type TabId = 'counter' | 'scheduler' | 'prep_ready' | 'tracker' | 'onsite_summary';
 
+type JobReference = { projectId?: string | null; orderId?: string | null };
+
+function getJobGroupKey({ projectId, orderId }: JobReference, fallback: string) {
+  if (projectId) return `project:${projectId}`;
+  if (orderId) return `order:${orderId}`;
+  return fallback;
+}
+
 const toLocalDateKey = (iso?: string | null): string => {
   if (!iso) return '';
   const d = new Date(iso);
@@ -670,7 +678,7 @@ export const FrontdeskView: React.FC = () => {
   const prepOverviewGroups = useMemo(() => {
     const groups = new Map<string, { key: string; members: Item[]; latestDate: string }>();
     for (const item of filteredPrepOverviewItems) {
-      const key = item.order_id ? `order:${item.order_id}` : `item:${item.id}`;
+      const key = getJobGroupKey({ projectId: item.project_id, orderId: item.order_id }, `item:${item.id}`);
       const date = item.warranty_applied_at || item.prepped_at || item.created_at;
       const group = groups.get(key);
       if (group) {
@@ -712,7 +720,7 @@ export const FrontdeskView: React.FC = () => {
 
   const [selectedCompletedBill, setSelectedCompletedBill] = useState<string | null>(null);
   const onsiteCompletedJobs = useMemo(() => {
-    const rows: OnsiteCompletedReportRow[] = [];
+    const rows: (OnsiteCompletedReportRow & { projectId?: string })[] = [];
 
     items.forEach((it) => {
       if (it.status !== 'delivered' || !it.delivered_at) return;
@@ -723,6 +731,7 @@ export const FrontdeskView: React.FC = () => {
             ? [it.assigned_onsite_tech]
             : [];
       const ord = it.order_id ? orders.find((o) => o.id === it.order_id) : null;
+      const prj = it.project_id ? projects.find(p => p.id === it.project_id) : undefined;
       if (techs.length === 0 && ord?.delivery_mode === 'customer_pickup') return;
       if (techs.length === 0) return;
 
@@ -731,12 +740,13 @@ export const FrontdeskView: React.FC = () => {
         dateKey: toLocalDateKey(it.delivered_at),
         kind: 'ส่งมอบสินค้า',
         orderId: it.order_id || undefined,
+        projectId: it.project_id || undefined,
         productModel: it.model_name,
-        refNo: ord?.bill_no || ord?.sales_ref || it.order_id || it.serial_number || it.id,
-        customerName: ord?.customer_name || 'ไม่ระบุลูกค้า',
+        refNo: it.project_id || ord?.bill_no || ord?.sales_ref || it.order_id || it.serial_number || it.id,
+        customerName: prj?.customer_name || ord?.customer_name || 'ไม่ระบุลูกค้า',
         detail: `${it.model_name}${it.serial_number ? ` (S/N: ${it.serial_number})` : ''}`,
         techs,
-        location: ord?.delivery_location || ord?.district || '-',
+        location: prj?.location || prj?.district || ord?.delivery_location || ord?.district || '-',
         completedAt: it.delivered_at
       });
     });
@@ -769,11 +779,27 @@ export const FrontdeskView: React.FC = () => {
     });
 
     projects.forEach((p) => {
+      for (const visit of p.site_visits || []) {
+        if (visit.visit_status !== 'completed' || !visit.completed_at) continue;
+        rows.push({
+          id: `visit-${visit.id}`,
+          dateKey: toLocalDateKey(visit.completed_at),
+          kind: 'ปิดรอบเข้าไซต์',
+          projectId: p.id,
+          refNo: p.id,
+          customerName: p.customer_name,
+          detail: `${visit.id} · ${visit.visit_scope}`,
+          techs: visit.assigned_techs,
+          location: p.location || p.district || '-',
+          completedAt: visit.completed_at
+        });
+      }
       if (p.status !== 'completed' || !p.completed_at) return;
       rows.push({
         id: `prj-${p.id}`,
         dateKey: toLocalDateKey(p.completed_at),
         kind: 'ปิดงานโปรเจกต์',
+        projectId: p.id,
         refNo: p.id,
         customerName: p.customer_name,
         detail: `${p.site_name} (100%)`,
@@ -789,7 +815,7 @@ export const FrontdeskView: React.FC = () => {
   const todayOnsiteCount = useMemo(
     () => new Set(onsiteCompletedJobs
       .filter(job => job.dateKey === todayDateKey)
-      .map(job => job.orderId ? `order:${job.orderId}` : job.id)).size,
+      .map(job => getJobGroupKey(job, job.id))).size,
     [onsiteCompletedJobs, todayDateKey]
   );
 
@@ -802,12 +828,12 @@ export const FrontdeskView: React.FC = () => {
   }, [onsiteCompletedJobs, reportShowAllDates, reportDate, reportTechFilter]);
 
   const completedJobGroups = useMemo(() => {
-    const groups = new Map<string, { key: string; orderId?: string; jobs: typeof filteredOnsiteJobs }>();
+    const groups = new Map<string, { key: string; jobs: typeof filteredOnsiteJobs }>();
     for (const job of filteredOnsiteJobs) {
-      const key = job.orderId ? `order:${job.orderId}` : job.id;
+      const key = getJobGroupKey(job, job.id);
       const group = groups.get(key);
       if (group) group.jobs.push(job);
-      else groups.set(key, { key, orderId: job.orderId, jobs: [job] });
+      else groups.set(key, { key, jobs: [job] });
     }
     return [...groups.values()];
   }, [filteredOnsiteJobs]);
@@ -909,13 +935,13 @@ export const FrontdeskView: React.FC = () => {
   const [schedItemIds, setSchedItemIds] = useState<string[]>([]);
   const [schedSaving, setSchedSaving] = useState(false);
 
-  // Unscheduled Ready Pool: Sales/Project items in ready_for_dispatch (or assigned_onsite without scheduled_date)
+  // Project jobs are scheduled from the site visit panel.
   const unscheduledReadyItems = useMemo(() => {
     return items
       .filter(i => {
-        if (i.scheduled_date || orders.find(o => o.id === i.order_id)?.delivery_mode === 'customer_pickup') return false;
+        if (i.project_id || i.scheduled_date || orders.find(o => o.id === i.order_id)?.delivery_mode === 'customer_pickup') return false;
         if (i.status === 'ready_for_dispatch') return true;
-        return i.status === 'assigned_onsite' && !i.project_id;
+        return i.status === 'assigned_onsite';
       })
       .sort((a, b) => {
         const ordA = orders.find(o => o.id === a.order_id);
@@ -943,7 +969,7 @@ export const FrontdeskView: React.FC = () => {
   const [step1RouteFilter, setStep1RouteFilter] = useState<'all' | RouteCode>('all');
   const STEP1_PAGE_SIZE = 4;
   const step1Combined = useMemo(() => {
-    const goodsByBill = new Map<string, { kind: 'item'; item: Item; members: Item[]; routeCode: RouteCode }>();
+    const goodsByJob = new Map<string, { kind: 'item'; item: Item; members: Item[]; routeCode: RouteCode }>();
     for (const it of unscheduledReadyItems) {
       const ord = orders.find(o => o.id === it.order_id);
       const prj = projects.find(p => p.id === it.project_id);
@@ -951,13 +977,13 @@ export const FrontdeskView: React.FC = () => {
         prj?.route_code ||
         ord?.route_code ||
         (ord?.district || prj?.district ? getRouteByDistrict(ord?.district || prj?.district || '') : 'route_5');
-      const key = ord && !it.project_id ? `order:${ord.id}` : `item:${it.id}`;
-      const group = goodsByBill.get(key);
+      const key = getJobGroupKey({ projectId: it.project_id, orderId: it.order_id }, `item:${it.id}`);
+      const group = goodsByJob.get(key);
       if (group) group.members.push(it);
-      else goodsByBill.set(key, { kind: 'item', item: it, members: [it], routeCode });
+      else goodsByJob.set(key, { kind: 'item', item: it, members: [it], routeCode });
     }
     return [
-      ...goodsByBill.values(),
+      ...goodsByJob.values(),
       ...unscheduledReadyRepairs.map(t => {
         const routeCode: RouteCode = t.route_code || (t.district ? getRouteByDistrict(t.district) : 'route_5');
         return { kind: 'repair' as const, ticket: t, routeCode };
@@ -982,7 +1008,7 @@ export const FrontdeskView: React.FC = () => {
 
   // Daily Dispatch Roster for selected rosterDate (Items + Site Visits + Repairs)
   const dailyRosterItems = useMemo(
-    () => items.filter(i => i.scheduled_date === rosterDate && i.status !== 'delivered'),
+    () => items.filter(i => i.scheduled_date === rosterDate && i.status !== 'delivered' && !i.site_visit_id),
     [items, rosterDate]
   );
   const dailyRosterRepairs = useMemo(
@@ -1001,18 +1027,20 @@ export const FrontdeskView: React.FC = () => {
     return out;
   }, [projects, rosterDate]);
 
-  const morningBriefingRows: MorningBriefingRow[] = useMemo(() => {
-    const rows: MorningBriefingRow[] = [];
+  const morningBriefingRows = useMemo(() => {
+    const rows: (MorningBriefingRow & JobReference)[] = [];
     dailyRosterItems.forEach(it => {
       const ord = orders.find(o => o.id === it.order_id);
       const prj = projects.find(p => p.id === it.project_id);
       rows.push({
         id: `item-${it.id}`,
-        kindLabel: prj ? 'โปรเจกต์' : 'บิลขาย',
-        routeZone: it.dispatch_route_zone || (ord?.route_code ? ROUTE_DEFINITIONS[ord.route_code].shortName : 'สาย 1 ในเมือง'),
+        projectId: it.project_id,
+        orderId: it.order_id,
+        kindLabel: it.project_id ? 'โปรเจกต์' : 'บิลขาย',
+        routeZone: it.dispatch_route_zone || ROUTE_DEFINITIONS[prj?.route_code || ord?.route_code || 'route_1'].shortName,
         techs: it.assigned_techs || [],
         timeSlot: it.scheduled_time_slot || 'ทั้งวัน',
-        refNo: prj ? prj.id : (ord?.bill_no || ord?.sales_ref || it.id),
+        refNo: it.project_id || ord?.bill_no || ord?.sales_ref || it.order_id || it.id,
         customerName: prj ? prj.customer_name : (ord?.customer_name || '-'),
         location: prj ? `${prj.site_name} (${prj.location})` : (ord?.delivery_location || '-'),
         detail: `${it.model_name}${it.serial_number ? ` (S/N: ${it.serial_number})` : ''}`,
@@ -1023,6 +1051,7 @@ export const FrontdeskView: React.FC = () => {
     dailyRosterVisits.forEach(({ project: prj, visit: sv }) => {
       rows.push({
         id: `visit-${sv.id}`,
+        projectId: prj.id,
         kindLabel: 'เข้าไซต์ PRJ',
         routeZone: prj.route_code ? ROUTE_DEFINITIONS[prj.route_code].shortName : 'สาย 1 ในเมือง',
         techs: sv.assigned_techs || [],
@@ -1031,7 +1060,7 @@ export const FrontdeskView: React.FC = () => {
         customerName: prj.customer_name,
         location: `${prj.site_name} — ${prj.location}`,
         detail: `${sv.visit_scope}${sv.items_to_take.length > 0 ? ` | เบิก: ${sv.items_to_take.map(x => `${x.name} x${x.qty}`).join(', ')}` : ''}`,
-        prepStatusLabel: sv.prep_status === 'ready_for_pickup' ? 'ของพร้อมขึ้นรถ' : sv.prep_status === 'prepping' ? 'กำลังเทส/ติดวอย' : 'รอตัดสต๊อก'
+        prepStatusLabel: sv.prep_status === 'dispatched' ? 'จ่ายออกแล้ว' : sv.prep_status === 'ready_for_pickup' ? 'ของพร้อมขึ้นรถ' : sv.prep_status === 'prepping' ? 'กำลังเทส/ติดวอย' : 'รอตัดสต๊อก'
       });
     });
     dailyRosterRepairs.forEach(t => {
@@ -1053,17 +1082,15 @@ export const FrontdeskView: React.FC = () => {
   }, [dailyRosterItems, dailyRosterVisits, dailyRosterRepairs, orders, projects]);
 
   const dailyRosterGroups = useMemo(() => {
-    const orderByRowId = new Map(dailyRosterItems.map(item => [`item-${item.id}`, item.order_id]));
-    const groups = new Map<string, { key: string; orderId?: string | null; rows: MorningBriefingRow[] }>();
+    const groups = new Map<string, { key: string; refNo: string; rows: typeof morningBriefingRows }>();
     for (const row of morningBriefingRows) {
-      const orderId = orderByRowId.get(row.id);
-      const key = orderId ? `order:${orderId}` : row.id;
+      const key = getJobGroupKey(row, row.id);
       const group = groups.get(key);
       if (group) group.rows.push(row);
-      else groups.set(key, { key, orderId, rows: [row] });
+      else groups.set(key, { key, refNo: row.projectId || row.refNo, rows: [row] });
     }
     return [...groups.values()];
-  }, [dailyRosterItems, morningBriefingRows]);
+  }, [morningBriefingRows]);
 
   const renderRosterRow = (row: MorningBriefingRow) => (
     <div key={row.id} className="p-3.5 rounded-2xl bg-white dark:bg-white/[0.03] border border-slate-200 dark:border-white/[0.08] flex flex-col justify-between gap-2 text-xs">
@@ -1122,7 +1149,6 @@ export const FrontdeskView: React.FC = () => {
   );
 
   const selectedRosterGroup = dailyRosterGroups.find(group => group.key === selectedRosterKey);
-  const selectedRosterOrder = orders.find(order => order.id === selectedRosterGroup?.orderId);
 
   const openScheduleJobModal = (
     target:
@@ -1144,7 +1170,7 @@ export const FrontdeskView: React.FC = () => {
       const ord = orders.find(o => o.id === target.item.order_id);
       const prj = projects.find(p => p.id === target.item.project_id);
       const dist = prj?.district || ord?.district || '';
-      const rc = ord?.route_code || (dist ? getRouteByDistrict(dist) : 'route_5');
+      const rc = prj?.route_code || ord?.route_code || (dist ? getRouteByDistrict(dist) : 'route_5');
       autoRoute = ROUTE_DEFINITIONS[rc]?.name || ROUTE_DEFINITIONS.route_5.name;
     }
     setSchedRouteZone(ROUTE_ZONE_OPTIONS.includes(autoRoute) ? autoRoute : ROUTE_DEFINITIONS.route_5.name);
@@ -1169,10 +1195,7 @@ export const FrontdeskView: React.FC = () => {
       if (scheduleTarget.kind === 'item') {
         const selected = schedItems.filter(item => schedItemIds.includes(item.id));
         if (selected.length === 0) return;
-        const results = await Promise.allSettled(selected.map(item => scheduleItemDispatch(item.id, {
-          ...payload,
-          job_category: item.project_id ? 'installation' : 'delivery'
-        })));
+        const results = await Promise.allSettled(selected.map(item => scheduleItemDispatch(item.id, payload)));
         const failed = selected.filter((_, index) => results[index].status === 'rejected');
         if (failed.length) {
           const saved = new Set(selected.filter((_, index) => results[index].status === 'fulfilled').map(item => item.id));
@@ -1251,7 +1274,9 @@ export const FrontdeskView: React.FC = () => {
       items_to_take: itemsToTake
     });
     if (created) {
-      showToast(`นัดเข้าไซต์ ${dispatchProject.id} วันที่ ${formatDateDMY(visitDate)} (${visitTechs.join(', ')}) — ส่งคิวเบิกของแล้ว`);
+      const prepLabel = created.prep_status === 'pending_stock' ? 'รอจัดซื้อตัดสต๊อก'
+        : created.prep_status === 'prepping' ? 'รอช่างเตรียมของ' : 'พร้อมเข้าไซต์';
+      showToast(`นัดเข้าไซต์ ${dispatchProject.id} วันที่ ${formatDateDMY(visitDate)} (${visitTechs.join(', ')}) — ${prepLabel}`);
       setShowScheduleForm(false);
     }
   };
@@ -1559,6 +1584,7 @@ export const FrontdeskView: React.FC = () => {
                   const grouped = entry.members.length > 1;
                   const ord = orders.find(o => o.id === it.order_id);
                   const prj = projects.find(p => p.id === it.project_id);
+                  const refNo = it.project_id || ord?.bill_no || ord?.sales_ref || it.order_id || it.id;
                   const due = prj?.due_date || ord?.delivery_date;
                   const urg = getDeliveryUrgency(due);
                   return (
@@ -1567,7 +1593,7 @@ export const FrontdeskView: React.FC = () => {
                         <div className="flex items-center justify-between gap-2 flex-wrap">
                           <div className="flex items-center gap-1.5 flex-wrap">
                             <span className="font-mono font-extrabold text-[#FF6B00]">
-                              {prj ? prj.id : (ord?.bill_no || ord?.sales_ref || it.id)}
+                              {refNo}
                             </span>
                             <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold border ${entryRouteMeta.badgeBg} ${entryRouteMeta.badgeBorder} ${entryRouteMeta.badgeText}`}>
                               {entryRouteMeta.shortName}
@@ -1619,7 +1645,7 @@ export const FrontdeskView: React.FC = () => {
                           openScheduleJobModal({
                             kind: 'item',
                             item: it,
-                            title: `${prj ? prj.id : (ord?.bill_no || ord?.sales_ref || it.id)} — ${grouped ? `${entry.members.length} รายการ` : it.model_name}`,
+                            title: `${refNo} — ${grouped ? `${entry.members.length} รายการ` : it.model_name}`,
                             subtitle: prj ? `${prj.customer_name} (${prj.site_name})` : (ord?.customer_name || '-'),
                             defaultRoute: entryRouteMeta.name
                           }, entry.members)
@@ -1627,7 +1653,7 @@ export const FrontdeskView: React.FC = () => {
                         className="w-full py-2 rounded-xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold text-xs cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
                       >
                         <Calendar className="w-3.5 h-3.5" />
-                        <span>{grouped ? 'ลงตารางรวมตามบิล' : 'ลงตารางวิ่งงาน'}</span>
+                        <span>{grouped ? 'ลงตารางรวม' : 'ลงตารางวิ่งงาน'}</span>
                       </button>
                     </div>
                   );
@@ -1838,10 +1864,10 @@ export const FrontdeskView: React.FC = () => {
               </div>
             ) : (
               <div className="grid grid-cols-1 items-start md:grid-cols-2 gap-3">
-                {dailyRosterGroups.map(({ key, orderId, rows }) => {
-                  if (!orderId) return rows.map(renderRosterRow);
-
-                  const order = orders.find(order => order.id === orderId);
+                {dailyRosterGroups.map(({ key, refNo, rows }) => {
+                  const [first] = rows;
+                  if (!first.projectId && !first.orderId) return renderRosterRow(first);
+                  const unit = first.projectId ? 'รายการ' : 'ชิ้น';
                   const schedules = [...new Set(rows.map(row => `${row.routeZone} · ${row.timeSlot}`))];
                   return (
                     <button
@@ -1852,10 +1878,10 @@ export const FrontdeskView: React.FC = () => {
                       className="min-w-0 cursor-pointer rounded-2xl border border-slate-200 bg-white p-4 text-left text-slate-900 hover:border-orange-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-orange-600 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-white"
                     >
                       <span className="flex flex-wrap justify-between gap-2 text-xs font-bold">
-                        <span className="font-mono text-orange-800 dark:text-orange-300">{order?.bill_no || order?.sales_ref || orderId}</span>
-                        <span>{rows.length} ชิ้น</span>
+                        <span className="font-mono text-orange-800 dark:text-orange-300">{refNo}</span>
+                        <span>{rows.length} {unit}</span>
                       </span>
-                      <span className="mt-1 block break-words text-sm font-bold">{order?.customer_name || rows[0].customerName}</span>
+                      <span className="mt-1 block break-words text-sm font-bold">{first.customerName}</span>
                       <span className="mt-1 block truncate text-xs text-slate-600 dark:text-slate-300">{schedules[0]}{schedules.length > 1 && ` +${schedules.length - 1} รอบ`}</span>
                       <span className="mt-2 block text-xs font-bold text-orange-800 dark:text-orange-300">ดูรายละเอียด</span>
                     </button>
@@ -1866,8 +1892,8 @@ export const FrontdeskView: React.FC = () => {
             <Modal
               open={Boolean(selectedRosterGroup)}
               onClose={() => setSelectedRosterKey(null)}
-              title={selectedRosterOrder?.bill_no || selectedRosterOrder?.sales_ref || selectedRosterGroup?.orderId || 'รายละเอียดตารางรถ'}
-              subtitle={selectedRosterGroup && `${selectedRosterOrder?.customer_name || selectedRosterGroup.rows[0].customerName} · ${selectedRosterGroup.rows.length} ชิ้น`}
+              title={selectedRosterGroup?.refNo || 'รายละเอียดตารางรถ'}
+              subtitle={selectedRosterGroup && `${selectedRosterGroup.rows[0].customerName} · ${selectedRosterGroup.rows.length} ${selectedRosterGroup.rows[0].projectId ? 'รายการ' : 'ชิ้น'}`}
               maxWidthClass="max-w-2xl"
             >
               <div className="space-y-2">{selectedRosterGroup?.rows.map(renderRosterRow)}</div>
@@ -2074,11 +2100,15 @@ export const FrontdeskView: React.FC = () => {
                     {prepReadyOverviewList.pageItems.map(({ key, members }) => {
                       const [item] = members;
                       const ord = item.order_id ? orders.find(o => o.id === item.order_id) : null;
+                      const prj = item.project_id ? projects.find(p => p.id === item.project_id) : undefined;
                       const readyCount = members.filter(member => member.status === 'ready_for_dispatch').length;
                       const pendingCount = members.length - readyCount;
                       const isPickup = ord?.delivery_mode === 'customer_pickup';
-                      const rMeta = ord?.route_code ? ROUTE_DEFINITIONS[ord.route_code] : null;
-                      const addressText = [ord?.delivery_location, ord?.district].filter(Boolean).join(' · ');
+                      const route = prj?.route_code || ord?.route_code;
+                      const rMeta = route ? ROUTE_DEFINITIONS[route] : null;
+                      const addressText = [prj?.location || ord?.delivery_location, prj?.district || ord?.district].filter(Boolean).join(' · ');
+                      const phone = prj?.phone || ord?.customer_phone;
+                      const dueDate = prj?.due_date || ord?.delivery_date;
                       return (
                         <div
                           key={key}
@@ -2090,13 +2120,13 @@ export const FrontdeskView: React.FC = () => {
                         >
                           <div className="flex items-center justify-between gap-2">
                             <span className="text-xs font-mono font-extrabold px-2 py-0.5 rounded-lg bg-[#FF6B00] text-black truncate">
-                              {ord?.bill_no || ord?.sales_ref || item.order_id || item.serial_number || item.id}
+                              {item.project_id || ord?.bill_no || ord?.sales_ref || item.order_id || item.serial_number || item.id}
                             </span>
                           </div>
 
                           <div className="min-w-0 space-y-1">
                             <div className="text-sm sm:text-base font-extrabold text-slate-900 dark:text-white leading-snug">
-                              {ord?.customer_name || 'สต๊อก / ไม่ระบุลูกค้า'}
+                              {prj?.customer_name || ord?.customer_name || 'สต๊อก / ไม่ระบุลูกค้า'}
                             </div>
                             <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs font-bold">
                               {readyCount > 0 && (
@@ -2109,7 +2139,7 @@ export const FrontdeskView: React.FC = () => {
                           </div>
 
                           {/* ที่อยู่และเบอร์โทรลูกค้า */}
-                          {(addressText || ord?.customer_phone || rMeta) && (
+                          {(addressText || phone || rMeta) && (
                             <div className="rounded-xl p-2.5 bg-slate-50 dark:bg-white/[0.04] border border-slate-200 dark:border-white/[0.08] space-y-1 text-xs">
                               {addressText && (
                                 <div className="flex items-start gap-1.5 font-semibold text-slate-800 dark:text-slate-100 leading-snug">
@@ -2118,21 +2148,21 @@ export const FrontdeskView: React.FC = () => {
                                 </div>
                               )}
                               <div className="flex flex-wrap items-center gap-2 text-[11px] font-semibold text-slate-700 dark:text-slate-200">
-                                {ord?.customer_phone && (
-                                  toTelHref(ord.customer_phone) ? (
+                                {phone && (
+                                  toTelHref(phone) ? (
                                     <a
-                                      href={toTelHref(ord.customer_phone)!}
+                                      href={toTelHref(phone)!}
                                       onClick={(e) => e.stopPropagation()}
                                       title="กดเพื่อโทรออก"
                                       className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-300 hover:underline cursor-pointer"
                                     >
                                       <Phone className="w-3 h-3" />
-                                      {ord.customer_phone}
+                                      {phone}
                                     </a>
                                   ) : (
                                     <span className="inline-flex items-center gap-1">
                                       <Phone className="w-3 h-3 text-slate-500 dark:text-slate-400" />
-                                      {ord.customer_phone}
+                                      {phone}
                                     </span>
                                   )
                                 )}
@@ -2147,8 +2177,8 @@ export const FrontdeskView: React.FC = () => {
 
                           <div className="mt-auto pt-2 border-t border-slate-200 dark:border-white/[0.08] flex items-center justify-between gap-2 text-xs">
                             <span className="font-bold text-slate-700 dark:text-slate-200">
-                              {isPickup ? 'รับเองหน้าร้าน' : 'จัดส่ง Onsite'}
-                              {ord?.delivery_date ? ` · ส่ง ${formatDateDMY(ord.delivery_date)}` : ''}
+                              {item.project_id ? 'งานโปรเจกต์' : isPickup ? 'รับเองหน้าร้าน' : 'จัดส่ง Onsite'}
+                              {dueDate ? ` · ส่ง ${formatDateDMY(dueDate)}` : ''}
                             </span>
                           </div>
 
@@ -2302,9 +2332,9 @@ export const FrontdeskView: React.FC = () => {
                 unit="งาน"
               />
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {onsiteJobsList.pageItems.map(({ key, orderId, jobs }) => {
+                {onsiteJobsList.pageItems.map(({ key, jobs }) => {
                   const [first] = jobs;
-                  if (!orderId) return renderCompletedJob(first);
+                  if (!first.projectId && !first.orderId) return renderCompletedJob(first);
                   const techs = [...new Set(jobs.flatMap(job => job.techs))];
                   return (
                     <button
@@ -2316,7 +2346,7 @@ export const FrontdeskView: React.FC = () => {
                     >
                       <span className="flex flex-wrap justify-between gap-2 text-xs font-bold">
                         <span className="break-all font-mono text-orange-800 dark:text-orange-300">{first.refNo}</span>
-                        <span className="text-emerald-800 dark:text-emerald-300">ส่งมอบ {jobs.length} ชิ้น</span>
+                        <span className="text-emerald-800 dark:text-emerald-300">{first.projectId ? `${jobs.length} รายการ` : `ส่งมอบ ${jobs.length} ชิ้น`}</span>
                       </span>
                       <span className="mt-1 block break-words text-sm font-extrabold text-slate-900 dark:text-white">{first.customerName}</span>
                       <span className="mt-1 block truncate text-xs text-slate-600 dark:text-slate-300">{first.location}</span>
@@ -2332,7 +2362,7 @@ export const FrontdeskView: React.FC = () => {
             open={Boolean(selectedCompletedGroup)}
             onClose={() => setSelectedCompletedBill(null)}
             title={selectedCompletedGroup?.jobs[0].refNo || 'รายละเอียดงานส่งมอบ'}
-            subtitle={selectedCompletedGroup && `${selectedCompletedGroup.jobs[0].customerName} · ${selectedCompletedGroup.jobs.length} ชิ้น`}
+            subtitle={selectedCompletedGroup && `${selectedCompletedGroup.jobs[0].customerName} · ${selectedCompletedGroup.jobs.length} ${selectedCompletedGroup.jobs[0].projectId ? 'รายการ' : 'ชิ้น'}`}
             maxWidthClass="max-w-2xl"
           >
             <div className="space-y-2">{selectedCompletedGroup?.jobs.map(renderCompletedJob)}</div>

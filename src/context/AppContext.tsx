@@ -57,6 +57,18 @@ const appendLog = (logs: ActivityLog[] | undefined | null, entry: ActivityLog): 
   entry
 ];
 
+function hasPendingSiteVisitPrep(
+  items: Item[], projectId: string, refs: SiteVisitItemRef[], visitId?: string, preparedItemId?: string
+) {
+  return items.some(item => {
+    if (item.project_id !== projectId || item.status !== 'pending_prep' || item.id === preparedItemId) return false;
+    if (item.site_visit_id) return item.site_visit_id === visitId;
+    return refs.some(ref => ref.project_item_id && item.project_item_id
+      ? ref.project_item_id === item.project_item_id
+      : ref.name === item.model_name);
+  });
+}
+
 const recordPrepEvent = (
   entry: ActivityLog, kind: NonNullable<ActivityLog['prep_event']>['kind'], item: Item, serial = item.serial_number
 ) => {
@@ -2397,6 +2409,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     )) {
       throw new Error('Item is no longer available for scheduling');
     }
+    if (target.project_id) throw new Error('Project work must be scheduled as a site visit');
     const entry = makeLog(
       `ลงตารางวิ่งงานล่วงหน้า (${payload.scheduled_date})`,
       actor?.name || 'หน้าร้าน',
@@ -3787,8 +3800,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const targetProject = projects.find(p => p.id === projectId);
     if (!targetProject) return null;
 
-    const validReleases = payload.items.filter(r => r.qty > 0);
-    if (validReleases.length === 0) return null;
+    const requestedByItem = new Map<string, number>();
+    for (const { project_item_id, qty } of payload.items) {
+      if (!Number.isSafeInteger(qty) || qty <= 0) continue;
+      requestedByItem.set(project_item_id, (requestedByItem.get(project_item_id) ?? 0) + qty);
+    }
 
     const now = new Date().toISOString();
     const actor = currentUserRef.current;
@@ -3798,18 +3814,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const claimedStockIds = new Set<string>();
     const consumedStockMap: Record<string, { projectItem: ProjectItem }> = {};
     const consumedConsumableIds = new Set<string>();
-    const newEquipmentItems: Item[] = [];
     const batchLineRecords: Project['batches'][number]['items'] = [];
 
     let equipmentCount = 0;
     let consumableCount = 0;
 
-    validReleases.forEach((rel, relIdx) => {
-      const prjItem = targetProject.items.find(it => it.id === rel.project_item_id);
+    requestedByItem.forEach((requestedQty, projectItemId) => {
+      const prjItem = targetProject.items.find(it => it.id === projectItemId);
       if (!prjItem) return;
       const remainingQty = Math.max(0, (prjItem.qty_required || 0) - (prjItem.qty_allocated || 0));
       if (remainingQty <= 0) return;
-      const qtyToRelease = Math.min(remainingQty, Math.max(1, rel.qty));
+      const qtyToRelease = Math.min(remainingQty, requestedQty);
       const normModel = (prjItem.model_name || '').trim().toLowerCase();
 
       const availablePool = items
@@ -3819,7 +3834,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             !claimedStockIds.has(it.id) &&
             (it.model_name || '').trim().toLowerCase() === normModel
         )
-        .sort((a, b) => (a.status === 'in_stock' ? -1 : b.status === 'in_stock' ? 1 : 0));
+        .sort((a, b) => Number(b.status === 'in_stock') - Number(a.status === 'in_stock'));
 
       const isLabor = /ค่าบริการ|ค่าแรง/.test(prjItem.model_name || '');
       const actualQtyToRelease = isLabor
@@ -3827,7 +3842,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         : Math.min(qtyToRelease, availablePool.length);
       if (actualQtyToRelease <= 0) return;
 
-      if (prjItem.item_type === 'equipment' && !isNonPrepCableOrConsumable(prjItem.model_name)) {
+      if (!isLabor && prjItem.item_type === 'equipment' && !isNonPrepCableOrConsumable(prjItem.model_name)) {
         equipmentCount += actualQtyToRelease;
         const createdItemIds: string[] = [];
         for (let i = 0; i < actualQtyToRelease; i++) {
@@ -3842,13 +3857,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           project_item_id: prjItem.id,
           model_name: prjItem.model_name,
           item_type: 'equipment',
-          qty: qtyToRelease,
+          qty: actualQtyToRelease,
           item_ids: createdItemIds
         });
       } else {
         // Consumable / Labor: bypass Prep Tech directly to Onsite Tech
-        consumableCount += qtyToRelease;
-        for (let i = 0; i < qtyToRelease; i++) {
+        consumableCount += actualQtyToRelease;
+        for (let i = 0; i < actualQtyToRelease; i++) {
           const stockMatch = availablePool.shift();
           if (stockMatch) {
             claimedStockIds.add(stockMatch.id);
@@ -3859,13 +3874,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           project_item_id: prjItem.id,
           model_name: prjItem.model_name,
           item_type: 'consumable',
-          qty: qtyToRelease
+          qty: actualQtyToRelease
         });
       }
     });
 
+    if (batchLineRecords.length === 0) return null;
+
     setItems(prev => {
-      const updated = prev
+      return prev
         .filter(it => !consumedConsumableIds.has(it.id))
         .map(it => {
           const match = consumedStockMap[it.id];
@@ -3902,7 +3919,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             )
           };
         });
-      return [...newEquipmentItems, ...updated];
     });
 
     const batchLog = makeLog(
@@ -3914,10 +3930,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     updateProjectById(projectId, p => {
       const nextItems = p.items.map(it => {
-        const rel = validReleases.find(r => r.project_item_id === it.id);
+        const rel = batchLineRecords.find(r => r.project_item_id === it.id);
         if (!rel) return it;
         const nextAlloc = it.qty_allocated + rel.qty;
-        const isDirectReady = it.item_type === 'consumable' || isNonPrepCableOrConsumable(it.model_name);
+        const isDirectReady = rel.item_type === 'consumable';
         const nextPrep = isDirectReady ? Math.min(it.qty_required, it.qty_prepared + rel.qty) : it.qty_prepared;
         return {
           ...it,
@@ -3967,10 +3983,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const actor = currentUserRef.current;
     const techName = actor?.name || target.assigned_prep_tech || 'ช่างเตรียมสินค้า';
     const parentProject = projects.find(p => p.id === target.project_id);
+    const siteVisit = parentProject?.site_visits?.find(visit => visit.id === target.site_visit_id);
     const assignedTechs =
-      parentProject && parentProject.assigned_techs.length > 0
+      siteVisit?.assigned_techs ?? (parentProject && parentProject.assigned_techs.length > 0
         ? parentProject.assigned_techs
-        : target.assigned_techs;
+        : target.assigned_techs);
     const warrantyExpire = computeWarrantyExpire(now, target.warranty_years, target.warranty_months);
 
     const itemLog = makeLog(
@@ -4018,11 +4035,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         };
       });
       const nextSiteVisits = (p.site_visits || []).map(sv => {
-        if (!target.site_visit_id || sv.id !== target.site_visit_id) return sv;
-        const remainingForVisit = items.filter(
-          i => i.id !== itemId && i.site_visit_id === sv.id && i.status === 'pending_prep'
-        ).length;
-        return remainingForVisit === 0 && sv.prep_status !== 'dispatched'
+        if (sv.visit_status === 'completed' || sv.prep_status !== 'prepping') return sv;
+        return !hasPendingSiteVisitPrep(items, p.id, sv.items_to_take, sv.id, itemId)
           ? { ...sv, prep_status: 'ready_for_pickup' as const }
           : sv;
       });
@@ -4065,12 +4079,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (!pi) return true;
       return (pi.qty_allocated || 0) < (pi.qty_required || 0);
     });
-    const hasPendingPrepInProject = items.some(
-      it => it.project_id === projectId && it.status === 'pending_prep'
-    );
+    const hasPendingPrep = hasPendingSiteVisitPrep(items, projectId, validVisitItems);
     const initialPrepStatus: SiteVisitPrepStatus = needsStockAllocation
       ? 'pending_stock'
-      : hasPendingPrepInProject
+      : hasPendingPrep
         ? 'prepping'
         : 'ready_for_pickup';
 
@@ -4137,31 +4149,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const target = projects.find(p => p.id === projectId);
     if (!target) return null;
     const visit = (target.site_visits || []).find(v => v.id === visitId);
-    if (!visit) return null;
+    if (!visit || visit.prep_status !== 'pending_stock' || visit.visit_status === 'completed') return null;
 
     // ตรวจสอบเฉพาะส่วนที่ "ยังไม่ได้เบิกเข้าโปรเจกต์" ว่ามีในคลัง (in_stock + raw_stock) ครบหรือไม่
     // (หาก Stock เบิกให้โปรเจกต์นี้ครบแล้วก่อนหน้าร้านนัดคิว จะไม่นับว่าขาดและไม่ตัดสต๊อกซ้ำ)
     const releaseItems: { project_item_id: string; qty: number }[] = [];
+    const requestedByModel = new Map<string, number>();
     const hasAllStock = (visit.items_to_take || []).every(ref => {
       if (/ค่าบริการ|ค่าแรง/.test(ref.name || '')) return true;
       const pi =
         (ref.project_item_id && target.items.find(i => i.id === ref.project_item_id)) ||
         target.items.find(i => i.model_name === ref.name);
-      const unallocatedInPrj = pi
-        ? Math.max(0, (pi.qty_required || 0) - (pi.qty_allocated || 0))
-        : (ref.qty || 0);
+      if (!pi) return false;
+      const unallocatedInPrj = Math.max(0, (pi.qty_required || 0) - (pi.qty_allocated || 0));
       const neededFromWarehouse = Math.min(ref.qty || 0, unallocatedInPrj);
       if (neededFromWarehouse <= 0) return true;
-      const norm = (ref.name || '').trim().toLowerCase();
+      const norm = pi.model_name.trim().toLowerCase();
+      const requested = (requestedByModel.get(norm) || 0) + neededFromWarehouse;
+      requestedByModel.set(norm, requested);
       const avail = items.filter(
         it =>
           (it.status === 'in_stock' || it.status === 'raw_stock') &&
           (it.model_name || '').trim().toLowerCase() === norm
       ).length;
-      if (avail < neededFromWarehouse) return false;
-      if (pi) {
-        releaseItems.push({ project_item_id: pi.id, qty: neededFromWarehouse });
-      }
+      if (avail < requested) return false;
+      releaseItems.push({ project_item_id: pi.id, qty: neededFromWarehouse });
       return true;
     });
     if (!hasAllStock) return null;
@@ -4173,14 +4185,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         note: `ตัดสต๊อกรอบเข้าไซต์ ${visit.visit_date} (${visit.id})`,
         site_visit_id: visit.id
       });
+      if (!result) return null;
     }
 
-    const hasPendingPrepInProject = items.some(
-      it => it.project_id === projectId && it.status === 'pending_prep'
-    );
-    const hasEquipmentToPrep = result
-      ? result.equipmentCount > 0
-      : hasPendingPrepInProject;
+    const hasEquipmentToPrep = Boolean(result?.equipmentCount)
+      || hasPendingSiteVisitPrep(items, projectId, visit.items_to_take, visit.id);
 
     const now = new Date().toISOString();
     const actor = currentUserRef.current;
