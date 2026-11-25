@@ -90,7 +90,7 @@ export const LoginPage: React.FC<{ onBackToLanding?: () => void }> = ({ onBackTo
           <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent pointer-events-none" />
           <div className="absolute bottom-0 left-0 right-0 p-7">
             <p className="text-white font-extrabold text-lg leading-tight drop-shadow-lg">
-              Boss Computech and Service Co., Ltd.
+              Boss Computech <span className="text-orange-400">and Service Co., Ltd.</span>
             </p>
             <p className="text-white/70 text-xs mt-1">Liquid Glass Enterprise System</p>
           </div>
@@ -111,8 +111,8 @@ export const LoginPage: React.FC<{ onBackToLanding?: () => void }> = ({ onBackTo
           </div>
 
           <div className="text-center mb-6">
-            <h2 className="text-xl sm:text-2xl font-extrabold tracking-tight text-slate-900 dark:text-white">
-              Boss Computech and Service Co., Ltd.
+            <h2 className="text-xl sm:text-2xl font-extrabold tracking-tight text-[var(--text-primary)]">
+              Boss Computech <span className="text-orange-700 dark:text-orange-400">and Service Co., Ltd.</span>
             </h2>
             <div className="flex items-center justify-center gap-1.5 mt-1.5 flex-wrap">
               <span className="text-xs text-slate-500 dark:text-slate-400">ระบบบริหารงานองค์กร</span>
