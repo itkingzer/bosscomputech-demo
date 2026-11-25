@@ -1,3 +1,4 @@
+import { PhoneInput, normalizePhone } from './ui/FormInputs';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Wrench, Printer, ScanLine, CheckCircle2 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
@@ -17,6 +18,7 @@ import {
 } from './ui/Modal';
 import { BarcodeScannerModal } from './BarcodeScannerModal';
 import { RepairReceiptPrintModal } from './RepairReceiptPrintModal';
+import { EvidencePhotoUploader } from './EvidencePhotoUploader';
 import { lookupPurchaseBySn } from '../utils/snLookup';
 
 const DISTRICT_OPTIONS = [
@@ -91,12 +93,17 @@ export const RepairIntakeModal: React.FC<RepairIntakeModalProps> = ({
   const [inAutoFilledSn, setInAutoFilledSn] = useState<string | null>(null);
   const [lastIntakeTicket, setLastIntakeTicket] = useState<RepairTicket | null>(null);
   const [printModalTicket, setPrintModalTicket] = useState<RepairTicket | null>(null);
+  const [photos, setPhotos] = useState<string[]>([]);
+  const [uploadingPhotos, setUploadingPhotos] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const isOnsiteServiceSheet = receivedChannel === 'onsite_service_sheet';
 
   useEffect(() => {
     if (!open) return;
     if (initialValues) {
       if (initialValues.customer_name) setInName(initialValues.customer_name);
-      if (initialValues.customer_phone) setInPhone(initialValues.customer_phone);
+      if (initialValues.customer_phone) setInPhone(normalizePhone(initialValues.customer_phone));
       if (initialValues.district && DISTRICT_OPTIONS.some((d) => d.district === initialValues.district)) {
         setInDistrict(initialValues.district);
       }
@@ -116,7 +123,7 @@ export const RepairIntakeModal: React.FC<RepairIntakeModalProps> = ({
     const res = lookupPurchaseBySn(val, items, orders, repairTickets);
     if (res.found) {
       if (res.customerName) setInName(res.customerName);
-      if (res.customerPhone) setInPhone(res.customerPhone);
+      if (res.customerPhone) setInPhone(normalizePhone(res.customerPhone));
       if (res.deviceModel) setInDevice(res.deviceModel);
       if (res.district && DISTRICT_OPTIONS.some((d) => d.district === res.district)) {
         setInDistrict(res.district);
@@ -149,6 +156,8 @@ export const RepairIntakeModal: React.FC<RepairIntakeModalProps> = ({
     setInLocation('');
     setInMatchedItemId(null);
     setInAutoFilledSn(null);
+    setPhotos([]);
+    setSaveError('');
   };
 
   const toggleAccessory = (acc: string) => {
@@ -164,46 +173,62 @@ export const RepairIntakeModal: React.FC<RepairIntakeModalProps> = ({
 
   const submitIntake = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (saving || uploadingPhotos) return;
     if (!inName.trim() || !inSymptom.trim()) {
       onToast?.('กรุณากรอกชื่อลูกค้าและอาการเสีย');
       return;
     }
-    const created = await createRepairTicket({
-      item_id: inMatchedItemId,
-      walkin_sn: inSn.trim(),
-      customer_name: inName.trim(),
-      customer_phone: inPhone.trim() || null,
-      intake_channel: intakeChannel,
-      device_model: inDevice.trim() || null,
-      accessories: inAccessories,
-      accessories_other: inAccessoriesOther.trim() || null,
-      fault_symptom: inSymptom.trim(),
-      repair_detail: null,
-      parts_used: null,
-      repair_outcome: null,
-      district: inDistrict,
-      route_code: getRouteByDistrict(inDistrict),
-      delivery_location: inLocation.trim(),
-      job_category: 'repair_pickup',
-      assigned_techs: [],
-      assigned_onsite_tech: null,
-      finished_at: null,
-      received_by: currentUser?.name || 'ระบบ',
-      received_channel: receivedChannel,
-      service_type: 'in_house_repair',
-      repair_status: 'pending_check'
-    });
-    setLastIntakeTicket(created);
+    setSaving(true);
+    setSaveError('');
+    try {
+      const created = await createRepairTicket({
+        item_id: inMatchedItemId,
+        walkin_sn: inSn.trim(),
+        customer_name: inName.trim(),
+        customer_phone: inPhone.trim() || null,
+        intake_channel: intakeChannel,
+        device_model: inDevice.trim() || null,
+        accessories: inAccessories,
+        accessories_other: inAccessoriesOther.trim() || null,
+        fault_symptom: inSymptom.trim(),
+        repair_detail: null,
+        parts_used: null,
+        repair_outcome: null,
+        district: inDistrict,
+        route_code: getRouteByDistrict(inDistrict),
+        delivery_location: inLocation.trim(),
+        job_category: 'repair_pickup',
+        assigned_techs: [],
+        assigned_onsite_tech: null,
+        finished_at: null,
+        received_by: currentUser?.name || 'ระบบ',
+        received_channel: receivedChannel,
+        service_type: 'in_house_repair',
+        repair_status: 'pending_check',
+        ...(isOnsiteServiceSheet && photos.length ? { photo_urls: photos } : {})
+        });
+        setLastIntakeTicket(created);
+        onClose();
+        resetIntake();
+        onToast?.('สร้างใบรับซ่อมสำเร็จ ส่งเข้าคิวช่างซ่อมในร้านแล้ว');
+    } catch {
+      setSaveError('บันทึกใบรับซ่อมไม่สำเร็จ กรุณาลองอีกครั้ง');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const closeIntake = () => {
+    if (saving || uploadingPhotos) return;
+    if (isOnsiteServiceSheet) resetIntake();
     onClose();
-    resetIntake();
-    onToast?.('สร้างใบรับซ่อมสำเร็จ ส่งเข้าคิวช่างซ่อมในร้านแล้ว');
   };
 
   return (
     <>
       <Modal
         open={open}
-        onClose={onClose}
+        onClose={closeIntake}
         title={title}
         subtitle={subtitle}
         icon={<Wrench className="w-5 h-5" />}
@@ -211,17 +236,28 @@ export const RepairIntakeModal: React.FC<RepairIntakeModalProps> = ({
         accentClass="border-[#FF6B00]/40"
         footer={
           <div className="flex gap-2">
-            <button type="button" onClick={onClose} className={modalSecondaryBtnClass}>
+            <button type="button" onClick={closeIntake} disabled={saving || uploadingPhotos} className={modalSecondaryBtnClass}>
               ยกเลิก
             </button>
-            <button type="submit" form="shared-repair-intake-form" className={modalPrimaryBtnClass}>
+            <button type="submit" form="shared-repair-intake-form" disabled={saving || uploadingPhotos} className={modalPrimaryBtnClass}>
               <Printer className="w-4 h-4" />
-              บันทึก & พิมพ์ใบรับซ่อม
+              {saving ? 'กำลังบันทึก…' : 'บันทึก & พิมพ์ใบรับซ่อม'}
             </button>
           </div>
         }
       >
         <form id="shared-repair-intake-form" onSubmit={submitIntake} className="space-y-3.5">
+          {isOnsiteServiceSheet && (
+            <EvidencePhotoUploader
+              value={photos}
+              onChange={setPhotos}
+              onUploadingChange={setUploadingPhotos}
+              editable={!saving}
+              folder="onsite"
+              label="รูปอุปกรณ์ที่รับกลับมาซ่อม"
+              helperText="ถ่ายสภาพเครื่อง ตำหนิ หรืออุปกรณ์ที่รับมาด้วย แนบได้สูงสุด 3 รูป"
+            />
+          )}
           {/* S/N Smart Search & Auto-Fill */}
           <div className="rounded-2xl p-3.5 border border-slate-200 dark:border-white/[0.1] bg-slate-50 dark:bg-white/[0.03] space-y-2">
             <div className="flex items-center justify-between gap-2">
@@ -307,12 +343,11 @@ export const RepairIntakeModal: React.FC<RepairIntakeModalProps> = ({
               />
             </div>
             <div>
-              <label className={modalLabelClass}>เบอร์โทรศัพท์</label>
-              <input
-                type="tel"
+              <label htmlFor="repair-intake-phone" className={modalLabelClass}>เบอร์โทรศัพท์</label>
+              <PhoneInput
+                id="repair-intake-phone"
                 value={inPhone}
                 onChange={(e) => setInPhone(e.target.value)}
-                placeholder="08x-xxx-xxxx"
                 className={modalInputClass}
               />
             </div>
@@ -386,6 +421,7 @@ export const RepairIntakeModal: React.FC<RepairIntakeModalProps> = ({
               ))}
             </select>
           </div>
+          {saveError && <p role="alert" className="text-sm text-rose-600 dark:text-rose-300">{saveError}</p>}
         </form>
       </Modal>
 

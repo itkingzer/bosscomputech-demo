@@ -1,3 +1,4 @@
+import { ModalBackdrop } from './ui/ModalBackdrop';
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from '../context/AppContext';
@@ -53,8 +54,8 @@ export const SettingsModal: React.FC<{ isOpen: boolean; onClose: () => void }> =
   };
 
   return createPortal(
-    <div
-      onClick={onClose}
+    <ModalBackdrop
+      onDismiss={onClose}
       role="dialog"
       aria-modal="true"
       aria-label="ตั้งค่าการเชื่อมต่อ Supabase"
@@ -137,7 +138,7 @@ export const SettingsModal: React.FC<{ isOpen: boolean; onClose: () => void }> =
           </div>
         </form>
       </div>
-    </div>,
+    </ModalBackdrop>,
     document.body
   );
 };

@@ -1,11 +1,12 @@
-import React, { useState } from 'react';
+import { ModalBackdrop } from './ui/ModalBackdrop';
+import React, { useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from '../context/AppContext';
 import {
   PackageSearch, BadgeCheck, CheckCircle, RefreshCw,
   Warehouse, Send, ShieldCheck, Layers, MapPin,
   UserCheck, PackagePlus, Lock, Camera, ClipboardList, ArrowRight, Search,
-  AlertTriangle, X, Calendar, Clock
+  AlertTriangle, X, Calendar, Clock, History
 } from 'lucide-react';
 import {
   ROUTE_DEFINITIONS, RouteCode, PRODUCT_CATEGORY_LABELS, Item,
@@ -17,6 +18,9 @@ import { ActivityTimeline, LatestUpdateBadge } from './ActivityTimeline';
 import { BarcodeScannerModal } from './BarcodeScannerModal';
 import { EvidencePhotoUploader } from './EvidencePhotoUploader';
 import { ToastBanner } from './ui/ToastBanner';
+import { PrepActionConfirmation, type PrepConfirmation } from './PrepActionConfirmation';
+import { PrepDailyHistory } from './PrepDailyHistory';
+import { isSerialDuplicate, newUuid } from '../utils/domainHelpers';
 import {
   Modal, modalInputClass, modalLabelClass,
   modalSecondaryBtnClass
@@ -74,6 +78,17 @@ interface ItemGroup {
   category?: Item['category'];
   unit_cost?: number;
 }
+
+type PrepAction = 'hold' | 'dispatch' | 'project' | 'release' | 'stageB' | 'stock';
+
+const actionTitles: Record<PrepAction, string> = {
+  hold: 'ยืนยันเก็บสินค้ารอส่งมอบ',
+  dispatch: 'ยืนยันติดวอยและส่งต่อหน้าร้าน',
+  project: 'ยืนยันติดวอยและส่งต่อทีมเข้าไซต์',
+  release: 'ยืนยันปล่อยของไปหน้าร้าน',
+  stageB: 'ยืนยันส่งต่อคิวติดวอยประกัน',
+  stock: 'ยืนยันนำสินค้าเข้าคลังพร้อมขาย'
+};
 
 const groupItems = (list: Item[]): ItemGroup[] => {
   const map = new Map<string, ItemGroup>();
@@ -146,14 +161,13 @@ export const PrepView: React.FC = () => {
   // - 'stageB': Stage B — Customer Order Prep (order_id มีอยู่ -> ติดวอยประกัน / เก็บรอวันส่งมอบ)
   // - 'stage2': คิวรอติดวอยปล่อยของ (prepped_in_stock)
   // - 'stock': คลังสต๊อกพร้อมขาย (in_stock)
-  const [prepTab, setPrepTab] = useState<'stageA' | 'stageB' | 'stage2' | 'stock'>('stageA');
+  const [prepTab, setPrepTab] = useState<'stageA' | 'stageB' | 'stage2' | 'stock' | 'history'>('stageA');
 
   // Filter by route in outbound queue
   const [routeFilter, setRouteFilter] = useState<'all' | RouteCode>('all');
 
   // Stage 1: S/N inputs & notes (keyed by item id)
   const [snInputs, setSnInputs] = useState<Record<string, string>>({});
-  const [prepNotesInputs] = useState<Record<string, string>>({});
 
   // Stage 2: Void date inputs (keyed by item id)
   const [voidDateInputs, setVoidDateInputs] = useState<Record<string, string>>({});
@@ -165,7 +179,14 @@ export const PrepView: React.FC = () => {
   const [stockSearch, setStockSearch] = useState('');
 
   const [toast, setToast] = useState('');
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = getLocalDateStr();
+  const [confirmation, setConfirmation] = useState<PrepConfirmation | null>(null);
+  const [confirmBusy, setConfirmBusy] = useState(false);
+  const [confirmError, setConfirmError] = useState('');
+  const actionLock = useRef(false);
+  const [isAccepting, setIsAccepting] = useState(false);
+  const latestItems = useRef(items);
+  latestItems.current = items;
 
   // Barcode scanner modal: which item S/N field is currently being scanned
   const [scanTarget, setScanTarget] = useState<string | null>(null);
@@ -240,111 +261,128 @@ export const PrepView: React.FC = () => {
     setTimeout(() => setToast(''), ms);
   };
 
-  // Accept an entire stacked batch at once
-  const handleAcceptGroup = (group: ItemGroup) => {
-    group.items.forEach(it => {
-      if (!it.assigned_prep_tech) acceptPrepTask(it.id, currentTechName);
+  const openConfirmation = (summary: PrepConfirmation) => {
+    setConfirmError('');
+    setConfirmation(summary);
+  };
+
+  const confirmAction = async () => {
+    if (!confirmation || actionLock.current) return;
+    actionLock.current = true;
+    setConfirmBusy(true);
+    try {
+      await confirmation.run();
+      setConfirmation(null);
+    } catch (error) {
+      setConfirmError(error instanceof Error ? error.message : 'บันทึกไม่สำเร็จ กรุณาปิดหน้าสรุปแล้วลองอีกครั้ง');
+    } finally {
+      setConfirmBusy(false);
+      actionLock.current = false;
+    }
+  };
+
+  const summarizeItem = (item: Item, serial?: string, warrantyDate?: string) => ({
+    id: item.id,
+    model: item.model_name,
+    serial,
+    reference: item.project_id ? `โปรเจกต์ ${item.project_id} · งวด ${item.project_batch_no || 1}`
+      : item.order_id ? `บิลขาย ${orders.find(order => order.id === item.order_id)?.sales_ref || item.order_id}`
+      : item.po_no ? `PO ${item.po_no}` : undefined,
+    warrantyDate,
+  });
+
+  const acceptGroup = async (group: ItemGroup) => {
+    if (actionLock.current) return;
+    const targets = group.items.filter(item => !item.assigned_prep_tech);
+    if (!targets.length) return;
+    actionLock.current = true;
+    setIsAccepting(true);
+    let accepted = 0;
+    try {
+      for (const item of targets) {
+        await acceptPrepTask(item.id, currentTechName);
+        accepted += 1;
+      }
+      showToast(`รับงานแล้ว ${accepted} ชิ้น`);
+    } catch {
+      showToast(accepted
+        ? `รับงานแล้ว ${accepted} จาก ${targets.length} ชิ้น กรุณาตรวจรายการที่ยังค้าง`
+        : 'รับงานไม่สำเร็จ กรุณาตรวจรายการแล้วลองใหม่');
+    } finally {
+      setIsAccepting(false);
+      actionLock.current = false;
+    }
+  };
+
+  const requestGroupAction = (group: ItemGroup, action: PrepAction) => {
+    const targets = group.items;
+    if (!targets.length) return;
+    const writesSerial = action !== 'release';
+    const autoSerial = action === 'stock' || action === 'stageB';
+    const appliesWarranty = action === 'dispatch' || action === 'project' || action === 'release';
+    const rows = targets.map(item => {
+      const serial = (writesSerial ? snInputs[item.id] ?? item.serial_number ?? '' : item.serial_number ?? '').trim();
+      return summarizeItem(
+        item,
+        serial || (autoSerial ? `BC-${action === 'stock' ? 'STK-' : ''}${new Date().getFullYear()}-${newUuid().slice(0, 8).toUpperCase()}` : undefined),
+        appliesWarranty ? voidDateInputs[item.id] || todayStr : undefined,
+      );
     });
-    showToast(`ช่าง "${currentTechName}" รับงานทั้งชุด ${group.items.length} เครื่องเรียบร้อยแล้ว`, 3500);
-  };
-
-  // Stage B Finish (Option 1): เก็บรอวันส่งมอบ (prepped_in_stock, ยังไม่ติดวอยประกัน)
-  const handleFinishToHold = (item: Item): boolean => {
-    const existingSn = (item.serial_number || '').trim();
-    const sn = (snInputs[item.id] ?? existingSn).trim();
-    if (!sn) {
-      alert('กรุณาสแกนหรือระบุ Serial Number (S/N) ก่อนบันทึก');
-      return false;
+    const validateSerials = (current: Item[]) => {
+      if (!writesSerial) return;
+      const used = new Set<string>();
+      for (const row of rows) {
+        if (!row.serial) throw new Error('กรุณาสแกนหรือกรอก S/N ให้ครบทุกชิ้นก่อนบันทึก');
+        const normalized = row.serial.toLowerCase();
+        if (used.has(normalized) || isSerialDuplicate(current, row.serial, row.id)) {
+          throw new Error(`S/N ${row.serial} ซ้ำ กรุณาตรวจสอบก่อนบันทึก`);
+        }
+        used.add(normalized);
+      }
+    };
+    try {
+      validateSerials(items);
+    } catch (error) {
+      showToast((error as Error).message);
+      return;
     }
-    const note = prepNotesInputs[item.id] || 'เก็บรอวันส่งมอบ (ยังไม่ติดวอยประกัน)';
-
-    const success = prepFinishToStock(item.id, sn, note);
-    if (!success) {
-      alert(`Serial Number "${sn}" นี้ถูกใช้งานแล้วในระบบ! โปรดใช้หมายเลขอื่น`);
-      return false;
-    }
-
-    showToast(`เก็บ S/N: ${sn} รอวันส่งมอบ (prepped_in_stock) เรียบร้อยแล้ว`);
-    return true;
-  };
-
-  // Stage B Finish (Option 2): ติดวอยประกัน & พร้อมส่งออกเลย -> ready_for_dispatch
-  const handleFinishAndDispatch = (item: Item): boolean => {
-    const existingSn = (item.serial_number || '').trim();
-    const sn = (snInputs[item.id] ?? existingSn).trim();
-    if (!sn) {
-      alert('กรุณาสแกนหรือระบุ Serial Number (S/N) ก่อนติดวอยประกัน');
-      return false;
-    }
-    const voidDate = voidDateInputs[item.id] || todayStr;
-    const note = prepNotesInputs[item.id] || 'ติดวอยประกัน & พร้อมส่งออกเลย';
-
-    const success = prepFinishAndDispatch(item.id, sn, voidDate, note);
-    if (!success) {
-      alert(`Serial Number "${sn}" นี้ถูกใช้งานแล้วในระบบ! โปรดใช้หมายเลขอื่น`);
-      return false;
-    }
-
-    showToast(`ติดวอยประกัน (${voidDate}) ให้ S/N: ${sn} เรียบร้อย! ส่งตรงไปหน้าร้านจัดสายรถแล้ว`);
-    return true;
-  };
-
-  // Project Batch Equipment Finish: ติดวอยประกัน & พร้อมส่งเข้าไซต์งาน -> assigned_onsite
-  const handleFinishProjectEquipment = (item: Item): boolean => {
-    const existingSn = (item.serial_number || '').trim();
-    const sn = (snInputs[item.id] ?? existingSn).trim();
-    if (!sn) {
-      alert('กรุณาสแกนหรือระบุ Serial Number (S/N) ก่อนติดวอยประกันส่งเข้าไซต์งาน');
-      return false;
-    }
-    const voidDate = voidDateInputs[item.id] || todayStr;
-    const note = prepNotesInputs[item.id] || `ติดวอยประกัน & พร้อมส่งเข้าไซต์งาน ${item.project_id}`;
-
-    const success = prepFinishProjectEquipment(item.id, sn, voidDate, note);
-    if (!success) {
-      alert(`Serial Number "${sn}" นี้ถูกใช้งานแล้วในระบบ! โปรดใช้หมายเลขอื่น`);
-      return false;
-    }
-
-    showToast(`ติดวอยประกัน (${voidDate}) ให้ S/N: ${sn} เรียบร้อย! ส่งเข้าไซต์งาน ${item.project_id} • งวดที่ ${item.project_batch_no || 1} แล้ว`);
-    return true;
-  };
-  // Hold Queue Finish: แปะวอยประกัน & ยืนยันปล่อยของออก (บันทึกวันที่ติดวอยผูกกับ S/N)
-  const handleDispatchStage2 = (itemId: string, sn: string | null): boolean => {
-    const voidDate = voidDateInputs[itemId] || todayStr;
-    applyVoidAndDispatch(itemId, voidDate);
-
-    showToast(`ติดวอยประกัน (${voidDate}) ให้เครื่อง S/N: ${sn || '-'} เรียบร้อย! ส่งไปหน้าร้านจัดสายรถแล้ว`);
-    return true;
-  };
-
-  // Stage A Finish: เทส + สแกน S/N + ติดโลโก้ ->
-  // - ถ้าเป็น Stock PO (!order_id && !project_id): ยิงเข้าคลังสต๊อกพร้อมขาย (in_stock)
-  // - ถ้าผูกออเดอร์หรือโปรเจกต์แล้ว: ติดโลโก้เสร็จ -> ส่งต่อเข้า Stage B เพื่อติดวอยประกัน
-  const handleStageAComplete = (item: Item): boolean => {
-    const isLinkedJob = Boolean(item.order_id || item.project_id);
-    const defaultSn = `BC-${isLinkedJob ? '' : 'STK-'}${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`;
-    const sn = (snInputs[item.id] ?? item.serial_number ?? defaultSn).trim() || defaultSn;
-    const note = prepNotesInputs[item.id] || (
-      isLinkedJob
-        ? 'เทสฮาร์ดแวร์ + สแกน S/N + ติดโลโก้เสร็จ → ส่งต่อ Stage B ติดวอยประกัน'
-        : 'เทสฮาร์ดแวร์ + สแกน S/N + ติดโลโก้เสร็จ ยิงเข้าคลังพร้อมขาย (in_stock)'
-    );
-
-    const success = isLinkedJob
-      ? prepFinishLogoToStageB(item.id, sn, note)
-      : movePrepStockToReady(item.id, sn, note);
-    if (!success) {
-      alert(`Serial Number "${sn}" นี้ถูกใช้งานแล้วในระบบ! โปรดใช้หมายเลขอื่น`);
-      return false;
-    }
-
-    showToast(
-      isLinkedJob
-        ? `ติดโลโก้เสร็จ → ส่ง S/N: ${sn} เข้า Stage B (รอติดวอยประกัน) เรียบร้อย!`
-        : `ติดโลโก้เสร็จ → ยิง S/N: ${sn} เข้าคลังสต๊อกพร้อมขาย (in_stock) เรียบร้อย!`
-    );
-    return true;
+    openConfirmation({
+      title: actionTitles[action],
+      actor: currentTechName,
+      rows,
+      run: async () => {
+        const current = latestItems.current;
+        if (targets.some(target => {
+          const item = current.find(candidate => candidate.id === target.id);
+          return !item || item.status !== target.status || item.logo_applied !== target.logo_applied ||
+            item.assigned_prep_tech !== target.assigned_prep_tech;
+        })) throw new Error('สถานะงานเปลี่ยนแล้ว กรุณาปิดหน้าสรุปและตรวจรายการล่าสุด');
+        validateSerials(current);
+        let completed = 0;
+        try {
+          for (const row of rows) {
+            const serial = row.serial ?? '';
+            const date = row.warrantyDate ?? todayStr;
+            const success = await {
+              hold: () => prepFinishToStock(row.id, serial),
+              dispatch: () => prepFinishAndDispatch(row.id, serial, date),
+              project: () => prepFinishProjectEquipment(row.id, serial, date),
+              release: () => applyVoidAndDispatch(row.id, date),
+              stageB: () => prepFinishLogoToStageB(row.id, serial),
+              stock: () => movePrepStockToReady(row.id, serial),
+            }[action]();
+            if (success === false) throw new Error('Prep action failed');
+            completed += 1;
+          }
+        } catch {
+          throw new Error(completed
+            ? `บันทึกแล้ว ${completed} จาก ${rows.length} ชิ้น กรุณาปิดหน้าสรุปและตรวจรายการที่ยังค้าง`
+            : 'บันทึกไม่สำเร็จ กรุณาปิดหน้าสรุปและลองใหม่');
+        }
+        closeGroupModal();
+        showToast(`${actionTitles[action].replace('ยืนยัน', '')}แล้ว ${completed} ชิ้น`);
+      }
+    });
   };
 
   const openDoaReportModal = (item: Item) => {
@@ -362,7 +400,7 @@ export const PrepView: React.FC = () => {
     );
   };
 
-  const handleSubmitDoaReport = async (e: React.FormEvent) => {
+  const handleSubmitDoaReport = (e: React.FormEvent) => {
     e.preventDefault();
     if (!doaTargetItem) return;
     const combinedReason = [
@@ -370,19 +408,31 @@ export const PrepView: React.FC = () => {
       doaNotesInput.trim()
     ].filter(Boolean).join(', ');
     if (!combinedReason) {
-      alert('กรุณาเลือกอาการเสียอย่างน้อย 1 รายการ หรือระบุหมายเหตุเพิ่มเติม');
+      showToast('กรุณาเลือกอาการเสียหรือระบุหมายเหตุเพิ่มเติม');
       return;
     }
 
-    await reportItemDOA(doaTargetItem.id, {
+    const target = doaTargetItem;
+    const payload = {
       serialNumber: doaSnInput.trim(),
       reason: combinedReason,
       notes: doaNotesInput.trim() || undefined,
       photoUrls: doaPhotos.length > 0 ? doaPhotos : undefined
+    };
+    openConfirmation({
+      title: 'ยืนยันแจ้งเคลม DOA ไปฝ่ายจัดซื้อ',
+      actor: currentTechName,
+      rows: [summarizeItem(target, payload.serialNumber)],
+      detail: `อาการเสีย: ${combinedReason}${doaPhotos.length ? ` · รูปแนบ ${doaPhotos.length} รูป` : ''}`,
+      run: async () => {
+        if (latestItems.current.find(item => item.id === target.id)?.status !== target.status) {
+          throw new Error('สถานะสินค้าเปลี่ยนแล้ว กรุณาตรวจรายการล่าสุด');
+        }
+        await reportItemDOA(target.id, payload);
+        showToast('ส่งแจ้งเคลม DOA ให้ฝ่ายจัดซื้อแล้ว');
+        setDoaTargetItem(null);
+      }
     });
-
-    showToast(`แจ้งเคลม DOA (${combinedReason}) กลับฝ่ายจัดซื้อ PO เรียบร้อยแล้ว`);
-    setDoaTargetItem(null);
   };
 
   const generateNewSn = (itemId: string) => {
@@ -471,51 +521,28 @@ export const PrepView: React.FC = () => {
         </div>
       </div>
 
-      {/* Prep View Tabs: Stage A vs Stage B vs รอติดวอยปล่อยของ vs คลังสต๊อกพร้อมขาย */}
-      <div className="flex gap-1.5 sm:gap-2 pb-1 overflow-x-auto no-scrollbar">
-        <button
-          onClick={() => setPrepTab('stageA')}
-          className={`px-4 py-2.5 text-xs font-semibold rounded-2xl transition-all cursor-pointer flex items-center gap-2 whitespace-nowrap ${prepTab === 'stageA'
-            ? 'liquid-glass-active font-extrabold shadow-lg shadow-emerald-500/25'
-            : 'liquid-glass-card text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-            }`}
-        >
-          <PackagePlus className="w-4 h-4" />
-          <span>Stage A: เตรียมเข้าคลัง (Stock PO) ({stageAItems.length})</span>
-        </button>
-
-        <button
-          onClick={() => setPrepTab('stageB')}
-          className={`px-4 py-2.5 text-xs font-semibold rounded-2xl transition-all cursor-pointer flex items-center gap-2 whitespace-nowrap ${prepTab === 'stageB'
-            ? 'liquid-glass-active font-extrabold shadow-lg shadow-[#FF6B00]/25'
-            : 'liquid-glass-card text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-            }`}
-        >
-          <PackageSearch className="w-4 h-4" />
-          <span>Stage B: เตรียมส่งตามออเดอร์ ({stageBItems.length})</span>
-        </button>
-
-        <button
-          onClick={() => setPrepTab('stage2')}
-          className={`px-4 py-2.5 text-xs font-semibold rounded-2xl transition-all cursor-pointer flex items-center gap-2 whitespace-nowrap ${prepTab === 'stage2'
-            ? 'liquid-glass-active font-extrabold shadow-lg shadow-[#FF6B00]/25'
-            : 'liquid-glass-card text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-            }`}
-        >
-          <Send className="w-4 h-4" />
-          <span>รอติดวอยปล่อยของ ({stage2Items.length})</span>
-        </button>
-
-        <button
-          onClick={() => setPrepTab('stock')}
-          className={`px-4 py-2.5 text-xs font-semibold rounded-2xl transition-all cursor-pointer flex items-center gap-2 whitespace-nowrap ${prepTab === 'stock'
-            ? 'liquid-glass-active font-extrabold shadow-lg shadow-[#FF6B00]/25'
-            : 'liquid-glass-card text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-            }`}
-        >
-          <Warehouse className="w-4 h-4" />
-          <span>ประวัติเข้าคลังแล้ว ({generalStockItems.length})</span>
-        </button>
+      <div role="group" aria-label="มุมมองงานเตรียมสินค้า" className="flex flex-wrap gap-2 pb-1">
+        {([
+          { id: 'stageA', icon: PackagePlus, label: `เตรียมและติดโลโก้ (${stageAItems.length})` },
+          { id: 'stageB', icon: PackageSearch, label: `เตรียมส่งตามงาน (${stageBItems.length})` },
+          { id: 'stage2', icon: Send, label: `รอติดวอยปล่อยของ (${stage2Items.length})` },
+          { id: 'stock', icon: Warehouse, label: `สินค้าในคลังพร้อมขาย (${generalStockItems.length})` },
+          { id: 'history', icon: History, label: 'ประวัติงานรายวัน' },
+        ] as const).map(({ id, icon: Icon, label }) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => setPrepTab(id)}
+            aria-pressed={prepTab === id}
+            className={`flex min-h-11 cursor-pointer items-center gap-2 whitespace-nowrap rounded-2xl px-4 py-2.5 text-xs font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-600 dark:focus-visible:outline-orange-400 ${prepTab === id
+              ? 'liquid-glass-active font-extrabold shadow-lg shadow-[#FF6B00]/25'
+              : 'liquid-glass-card text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'
+              }`}
+          >
+            <Icon className="size-4" aria-hidden="true" />
+            <span>{label}</span>
+          </button>
+        ))}
       </div>
 
       {/* ========================================================================= */}
@@ -544,7 +571,7 @@ export const PrepView: React.FC = () => {
             <div className="text-center py-12 text-slate-500 border border-dashed border-slate-300 dark:border-white/[0.1] rounded-2xl">
               <CheckCircle className="w-10 h-10 mx-auto mb-2 text-emerald-500 dark:text-emerald-400 opacity-70" />
               <p className="text-sm font-medium text-slate-800 dark:text-slate-200">ไม่มีสินค้าจาก Stock PO ค้างเตรียมเข้าคลัง</p>
-              <p className="text-xs text-slate-500 mt-0.5">สินค้าทุกชิ้นถูกเทส ติดโลโก้ และยิงเข้าคลังพร้อมขายเรียบร้อยแล้ว</p>
+              <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">สินค้าทุกชิ้นถูกเทส ติดโลโก้ และยิงเข้าคลังพร้อมขายเรียบร้อยแล้ว</p>
             </div>
           ) : (
             <div className="space-y-4">
@@ -582,7 +609,7 @@ export const PrepView: React.FC = () => {
                           <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border ${isAccepted ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-500/15 dark:text-emerald-400 dark:border-emerald-500/30' : 'bg-slate-100 text-slate-700 border-slate-300 dark:bg-white/[0.05] dark:text-slate-400 dark:border-white/[0.1]'}`}>
                             {isAccepted ? 'กำลังเทส & ติดโลโก้' : 'รอช่างกดรับงาน'}
                           </span>
-                          <span className="text-[11px] text-slate-500 font-mono data-meta">
+                          <span className="text-[11px] text-slate-600 dark:text-slate-400 font-mono data-meta">
                             PO: {group.po_no || '-'}
                           </span>
                         </div>
@@ -619,7 +646,7 @@ export const PrepView: React.FC = () => {
                       <div className="pt-2 border-t border-slate-200 dark:border-white/[0.08]">
                         <button
                           onClick={() => openGroupModal(group.key)}
-                          className="w-full py-2.5 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:brightness-105 text-black font-extrabold rounded-xl text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-500/25 border border-white/20 active:scale-[0.97]"
+                          className="w-full py-2.5 bg-gradient-to-r from-emerald-700 to-teal-800 hover:from-emerald-800 text-white font-extrabold rounded-xl text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-500/25 border border-white/20 active:scale-[0.97]"
                         >
                           <ClipboardList className="w-4 h-4" />
                           <span>{isAccepted ? 'เปิดจัดการ / เทส & ติดโลโก้' : 'เปิดจัดการ / กดรับงาน'}</span>
@@ -661,7 +688,7 @@ export const PrepView: React.FC = () => {
             <div className="text-center py-12 text-slate-500 border border-dashed border-slate-300 dark:border-white/[0.1] rounded-2xl">
               <CheckCircle className="w-10 h-10 mx-auto mb-2 text-emerald-500 dark:text-emerald-400 opacity-70" />
               <p className="text-sm font-medium text-slate-800 dark:text-slate-200">ไม่มีรายการสินค้าตามออเดอร์ค้างเตรียม</p>
-              <p className="text-xs text-slate-500 mt-0.5">สินค้าทุกออเดอร์ถูกเก็บรอวันส่งมอบ หรือติดวอยพร้อมส่งออกเรียบร้อยแล้ว</p>
+              <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">สินค้าทุกออเดอร์ถูกเก็บรอวันส่งมอบ หรือติดวอยพร้อมส่งออกเรียบร้อยแล้ว</p>
             </div>
           ) : (
             <div className="space-y-4">
@@ -742,7 +769,7 @@ export const PrepView: React.FC = () => {
                           <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${isAccepted ? 'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-500/15 dark:text-amber-400 dark:border-amber-500/30' : 'bg-slate-100 text-slate-700 border-slate-300 dark:bg-white/[0.05] dark:text-slate-400 dark:border-white/[0.1]'}`}>
                             {isAccepted ? (isProjectGroup ? 'พร้อมติดวอยส่งเข้าไซต์งาน' : 'พร้อมติดวอย / ส่งมอบ') : 'รอช่างกดรับงาน'}
                           </span>
-                          <span className="text-[11px] text-slate-500 font-mono data-meta">
+                          <span className="text-[11px] text-slate-600 dark:text-slate-400 font-mono data-meta">
                             {isProjectGroup ? `${group.project_id} • งวดที่ ${group.project_batch_no || 1}` : `บิล: ${order?.bill_no || group.po_no || '-'}`}
                           </span>
                         </div>
@@ -882,7 +909,7 @@ export const PrepView: React.FC = () => {
             <div className="text-center py-12 text-slate-500 border border-dashed border-slate-300 dark:border-white/[0.1] rounded-2xl">
               <CheckCircle className="w-10 h-10 mx-auto mb-2 text-emerald-500 dark:text-emerald-400 opacity-60" />
               <p className="text-sm font-medium text-slate-700 dark:text-slate-200">ไม่มีสินค้าค้างแปะวอยปล่อยของ</p>
-              <p className="text-xs text-slate-500 mt-0.5">สินค้าทุกชิ้นถูกส่งมอบให้ทีมรถ Onsite หรือส่งมอบให้ลูกค้าเรียบร้อยแล้ว</p>
+              <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">สินค้าทุกชิ้นถูกส่งมอบให้ทีมรถ Onsite หรือส่งมอบให้ลูกค้าเรียบร้อยแล้ว</p>
             </div>
           ) : (
             <div className="space-y-4">
@@ -958,7 +985,7 @@ export const PrepView: React.FC = () => {
                           order?.delivery_date,
                           order?.created_at_log || order?.created_at || group.items[0]?.created_at
                         )}
-                        <p className="text-xs text-slate-500 mt-1 flex items-start gap-1 data-meta">
+                        <p className="text-xs text-slate-600 dark:text-slate-400 mt-1 flex items-start gap-1 data-meta">
                           <MapPin className="w-3.5 h-3.5 text-slate-400 flex-shrink-0 mt-0.5" />
                           <span className="line-clamp-2">
                             {order ? `${order.delivery_location}` : '-'}
@@ -969,7 +996,7 @@ export const PrepView: React.FC = () => {
                       <div className="pt-3 border-t border-white/[0.08]">
                         <button
                           onClick={() => openGroupModal(group.key)}
-                          className="w-full py-2.5 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:brightness-105 text-black font-extrabold rounded-xl text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-500/25 border border-white/20 active:scale-[0.97]"
+                          className="w-full py-2.5 bg-gradient-to-r from-emerald-700 to-teal-800 hover:from-emerald-800 text-white font-extrabold rounded-xl text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-500/25 border border-white/20 active:scale-[0.97]"
                         >
                           <ClipboardList className="w-4 h-4" />
                           <span>{isAccepted ? 'เปิดจัดการ / แปะวอยปล่อยของ' : 'เปิดจัดการ / กดรับงาน'}</span>
@@ -988,6 +1015,7 @@ export const PrepView: React.FC = () => {
       {/* ========================================================================= */}
       {/* TAB 4: ประวัติเครื่องที่เตรียมเข้าคลังแล้ว (in_stock — Read-Only + ค้นหา S/N) */}
       {/* ========================================================================= */}
+      {prepTab === 'history' && <PrepDailyHistory items={items} orders={orders} />}
       {prepTab === 'stock' && (
         <div className="liquid-glass rounded-3xl p-6 shadow-2xl border border-slate-200 dark:border-white/[0.08]">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
@@ -1032,7 +1060,7 @@ export const PrepView: React.FC = () => {
               <p className="text-sm font-medium text-slate-800 dark:text-slate-200">
                 {stockSearch.trim() ? 'ไม่พบเครื่องที่ตรงกับคำค้นหา' : 'ยังไม่มีเครื่องในคลังพร้อมขาย'}
               </p>
-              <p className="text-xs text-slate-500 mt-0.5">เครื่องที่ผ่าน Stage A แล้วจะมาแสดงที่นี่</p>
+              <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">เครื่องที่ผ่าน Stage A แล้วจะมาแสดงที่นี่</p>
             </div>
           ) : (
             <>
@@ -1101,7 +1129,7 @@ export const PrepView: React.FC = () => {
                             ติดโลโก้แล้ว
                           </span>
                         </td>
-                        <td className="py-3 px-3 text-slate-500 font-mono text-[11px] data-meta">
+                        <td className="py-3 px-3 text-slate-600 dark:text-slate-400 font-mono text-[11px] data-meta">
                           {item.prepped_at ? new Date(item.prepped_at).toLocaleDateString('th-TH') : '-'}
                         </td>
                       </tr>
@@ -1164,6 +1192,7 @@ export const PrepView: React.FC = () => {
           <Modal
             open
             onClose={closeGroupModal}
+            closeOnEscape={!confirmation && !doaTargetItem && !scanTarget}
             ariaLabel="Prep Work"
             title={group.model_name}
             subtitle={stageLabel}
@@ -1249,11 +1278,12 @@ export const PrepView: React.FC = () => {
                     </span>
                   </div>
                   <button
-                    onClick={() => handleAcceptGroup(group)}
+                    disabled={isAccepting}
+                    onClick={() => void acceptGroup(group)}
                     className={`w-full py-3 bg-gradient-to-r ${accentGradient} text-black font-extrabold rounded-xl text-sm transition cursor-pointer flex items-center justify-center gap-2 shadow-lg border border-white/20 active:scale-95`}
                   >
                     <UserCheck className="w-4 h-4" />
-                    <span>กดรับงานนี้ (Accept Job)</span>
+                    <span>{isAccepting ? 'กำลังรับงาน…' : 'รับงานนี้'}</span>
                   </button>
                 </div>
               ) : (
@@ -1294,7 +1324,7 @@ export const PrepView: React.FC = () => {
                         </div>
                       ))}
                       <button
-                        onClick={() => { if (group.items.every(it => handleDispatchStage2(it.id, it.serial_number))) closeGroupModal(); }}
+                        onClick={() => requestGroupAction(group, 'release')}
                         className={`w-full py-2.5 bg-gradient-to-r ${accentGradient} text-black font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg border border-white/20 active:scale-95`}
                       >
                         <BadgeCheck className="w-4 h-4" />
@@ -1345,12 +1375,7 @@ export const PrepView: React.FC = () => {
                             />
                           </div>
                           <button
-                            onClick={() => {
-                              const ok = isProjectGroup
-                                ? group.items.every(it => handleFinishProjectEquipment(it))
-                                : group.items.every(it => handleFinishAndDispatch(it));
-                              if (ok) closeGroupModal();
-                            }}
+                            onClick={() => requestGroupAction(group, isProjectGroup ? 'project' : 'dispatch')}
                             className="w-full py-3 bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-[#FF6B00]/25 border border-white/20 active:scale-95"
                           >
                             <BadgeCheck className="w-4 h-4" />
@@ -1361,7 +1386,7 @@ export const PrepView: React.FC = () => {
                             </span>
                           </button>
                           <button
-                            onClick={() => { if (group.items.every(it => handleStageAComplete(it))) closeGroupModal(); }}
+                            onClick={() => requestGroupAction(group, 'stageB')}
                             className="w-full py-2 rounded-xl text-[11px] font-bold bg-slate-100 hover:bg-slate-200 dark:bg-white/[0.06] dark:hover:bg-white/[0.1] text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-white/[0.1] transition cursor-pointer flex items-center justify-center gap-1.5 active:scale-95"
                           >
                             <Warehouse className="w-3.5 h-3.5" />
@@ -1375,7 +1400,7 @@ export const PrepView: React.FC = () => {
                           </div>
 
                           <button
-                            onClick={() => { if (group.items.every(it => handleStageAComplete(it))) closeGroupModal(); }}
+                            onClick={() => requestGroupAction(group, 'stock')}
                             className={`w-full py-2.5 bg-gradient-to-r ${accentGradient} text-black font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg border border-white/20 active:scale-95`}
                           >
                             <Warehouse className="w-4 h-4" />
@@ -1436,8 +1461,8 @@ export const PrepView: React.FC = () => {
                       <div className="space-y-2 pt-1">
                         {isProjectGroup ? (
                           <button
-                            onClick={() => { if (group.items.every(it => handleFinishProjectEquipment(it))) closeGroupModal(); }}
-                            className="w-full py-3 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 text-black font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-500/25 border border-white/20 active:scale-95"
+                            onClick={() => requestGroupAction(group, 'project')}
+                            className="w-full py-3 bg-gradient-to-r from-emerald-700 to-teal-800 hover:from-emerald-800 text-white font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-500/25 border border-white/20 active:scale-95"
                           >
                             <BadgeCheck className="w-4 h-4" />
                             <span>ติดวอยประกัน & พร้อมส่งเข้าไซต์งาน{group.items.length > 1 ? ` (${group.items.length})` : ''}</span>
@@ -1445,15 +1470,15 @@ export const PrepView: React.FC = () => {
                         ) : (
                           <>
                             <button
-                              onClick={() => { if (group.items.every(it => handleFinishToHold(it))) closeGroupModal(); }}
+                              onClick={() => requestGroupAction(group, 'hold')}
                               className="w-full py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 text-black font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-amber-500/25 border border-white/20 active:scale-95"
                             >
                               <Warehouse className="w-4 h-4" />
                               <span>เก็บรอวันส่งมอบ (prepped_in_stock){group.items.length > 1 ? ` (${group.items.length})` : ''}</span>
                             </button>
                             <button
-                              onClick={() => { if (group.items.every(it => handleFinishAndDispatch(it))) closeGroupModal(); }}
-                              className="w-full py-2.5 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 text-black font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-500/25 border border-white/20 active:scale-95"
+                              onClick={() => requestGroupAction(group, 'dispatch')}
+                              className="w-full py-2.5 bg-gradient-to-r from-emerald-700 to-teal-800 hover:from-emerald-800 text-white font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-500/25 border border-white/20 active:scale-95"
                             >
                               <BadgeCheck className="w-4 h-4" />
                               <span>ติดวอยประกัน & พร้อมส่งออกเลย{group.items.length > 1 ? ` (${group.items.length})` : ''}</span>
@@ -1482,12 +1507,12 @@ export const PrepView: React.FC = () => {
 
       {/* Nested DOA Defect Report Modal (z-[10000]) */}
       {doaTargetItem && createPortal(
-        <div
+        <ModalBackdrop
           className="fixed inset-0 z-[10000] flex items-center justify-center p-4 sm:p-6 bg-black/70 dark:bg-black/80 backdrop-blur-md overflow-y-auto overscroll-contain animate-fade-in"
           role="dialog"
           aria-modal="true"
           aria-label="แจ้งพบของเสีย DOA กลับฝ่ายจัดซื้อ PO"
-          onClick={() => setDoaTargetItem(null)}
+          onDismiss={() => setDoaTargetItem(null)}
         >
           <div
             onClick={(e) => e.stopPropagation()}
@@ -1605,11 +1630,13 @@ export const PrepView: React.FC = () => {
               </div>
             </form>
           </div>
-        </div>,
+        </ModalBackdrop>,
         document.body
       )}
 
       {/* Reusable camera barcode/QR scanner */}
+      {confirmation && <PrepActionConfirmation summary={confirmation} busy={confirmBusy} error={confirmError}
+        onCancel={() => setConfirmation(null)} onConfirm={() => void confirmAction()} />}
       <BarcodeScannerModal
         open={scanTarget !== null}
         onClose={() => setScanTarget(null)}

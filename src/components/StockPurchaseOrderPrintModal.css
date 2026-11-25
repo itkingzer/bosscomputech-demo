@@ -1,0 +1,110 @@
+.stock-po-print-dialog {
+  inset: 0;
+  margin: auto;
+  width: min(100% - 1rem, 226mm);
+  max-width: none;
+  max-height: calc(100dvh - 1rem);
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 12px;
+  border-radius: 16px;
+  background: #eef2f8;
+  color: #172033;
+}
+
+.stock-po-print-dialog::backdrop { background: rgb(15 23 42 / 72%); }
+.stock-po-print-controls, .stock-po-sheet { margin: 0 auto; max-width: 210mm; background: #fff; }
+.stock-po-print-controls { padding: 14px; margin-bottom: 12px; border-radius: 10px; }
+.stock-po-print-controls label { display: grid; gap: 4px; font-size: .875rem; }
+.stock-po-print-controls :is(input, select) {
+  width: 100%;
+  min-height: 44px;
+  padding: 6px 10px;
+  border: 1px solid #94a3b8;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.stock-po-sheet {
+  display: flex;
+  flex-direction: column;
+  min-height: 297mm;
+  padding: 10mm;
+  font-family: Sarabun, Arial, sans-serif;
+  font-size: 11pt;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.stock-po-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 5mm; }
+.stock-po-header img { width: 62px; height: 62px; object-fit: contain; }
+.stock-po-header div { text-align: right; color: #373080; }
+.stock-po-header h1 { font-size: 20pt; font-weight: 700; line-height: 1.2; }
+.stock-po-header p { font-size: 9pt; letter-spacing: .07em; }
+.stock-po-parties { display: grid; grid-template-columns: 3fr 2fr; align-items: start; gap: 5mm; margin-bottom: 5mm; }
+.stock-po-sheet h2 { font-weight: 700; color: #373080; }
+.stock-po-supplier { margin-top: 3mm; }
+.stock-po-meta, .stock-po-totals dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 12px; }
+.stock-po-meta { background: #eeedfb; padding: 3mm; }
+.stock-po-meta dt { font-weight: 700; }
+.stock-po-lines { width: 100%; border-collapse: collapse; }
+.stock-po-lines th, .stock-po-lines td { padding: 2mm 1.5mm; text-align: right; vertical-align: top; }
+.stock-po-lines :is(th, td):nth-child(2) { text-align: left; width: 50%; }
+.stock-po-lines th { background: #eeedfb; color: #29245c; border-bottom: 1px solid #c8c4ed; }
+.stock-po-lines td { border-bottom: 1px solid #d9dfeb; font-variant-numeric: tabular-nums; }
+.stock-po-footer { padding-top: 8mm; }
+.stock-po-totals { width: min(100%, 84mm); margin-left: auto; }
+.stock-po-totals dl { padding: 2mm 3mm; }
+.stock-po-totals dd { text-align: right; font-variant-numeric: tabular-nums; }
+.stock-po-totals > div { display: flex; justify-content: space-between; gap: 8px; padding: 3mm; background: #eeedfb; color: #29245c; }
+.stock-po-notes { margin-top: 4mm; padding: 2mm 0; border-top: 1px solid #cbd5e1; }
+.stock-po-notes p { white-space: pre-wrap; }
+.stock-po-signatures { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6mm; margin-top: auto; padding-top: 4mm; text-align: center; }
+.stock-po-signatures p { min-height: 11mm; align-content: end; border-bottom: 1px solid #94a3b8; }
+
+@media screen and (max-width: 560px) {
+  .stock-po-sheet { min-width: 160mm; min-height: 235mm; padding: 6mm; }
+}
+
+@page stock-po-a4 {
+  size: A4 portrait;
+  margin: 10mm;
+
+  /* Replace the browser's automatic date, URL, and page number. */
+  @top-left { content: ""; }
+  @top-center { content: ""; }
+  @top-right { content: ""; }
+  @bottom-left { content: ""; }
+  @bottom-center { content: ""; }
+  @bottom-right { content: ""; }
+}
+
+@media print {
+  html:has(.stock-po-print-dialog[open]), body:has(.stock-po-print-dialog[open]) {
+    page: stock-po-a4;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+  body:has(.stock-po-print-dialog[open]) > :not(.stock-po-print-dialog),
+  .stock-po-print-dialog::backdrop, .stock-po-print-controls { display: none !important; }
+  .stock-po-print-dialog[open] {
+    page: stock-po-a4;
+    position: static;
+    width: auto;
+    max-height: none;
+    margin: 0;
+    padding: 0;
+    overflow: visible;
+    border-radius: 0;
+    background: white;
+  }
+  .stock-po-sheet {
+    /* Leave 1mm for print rounding within the 277mm printable area. */
+    min-height: 276mm;
+    max-width: none;
+    padding: 0;
+    print-color-adjust: exact;
+  }
+  .stock-po-lines tr, .stock-po-parties, .stock-po-totals, .stock-po-signatures { break-inside: avoid; }
+  .stock-po-lines thead { display: table-header-group; }
+}

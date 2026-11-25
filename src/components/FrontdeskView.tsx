@@ -1,3 +1,5 @@
+import { ModalBackdrop } from './ui/ModalBackdrop';
+import { PhoneInput, NumberInput } from './ui/FormInputs';
 import React, { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from '../context/AppContext';
@@ -25,9 +27,9 @@ import { ToastBanner } from './ui/ToastBanner';
 import { RepairReceiptPrintModal } from './RepairReceiptPrintModal';
 import { RepairIntakeModal } from './RepairIntakeModal';
 import { OnsiteDailyReportPrintModal, OnsiteCompletedReportRow } from './OnsiteDailyReportPrintModal';
-import { MorningBriefingPrintModal, MorningBriefingRow } from './MorningBriefingPrintModal';
+import type { MorningBriefingRow } from './MorningBriefingPrintModal';
 import { OnsiteDispatchRosterModal } from './OnsiteDispatchRosterModal';
-import { toTelHref } from '../utils/domainHelpers';
+import { toTelHref, worksInPosition } from '../utils/domainHelpers';
 
 // ---------------------------------------------------------------------------
 // Static option data
@@ -299,7 +301,7 @@ export const FrontdeskView: React.FC = () => {
   };
 
   const onsiteTechs = useMemo(
-    () => users.filter(u => u.role === 'onsite' && u.is_active !== false),
+    () => users.filter(u => worksInPosition(u, 'onsite') && u.is_active !== false),
     [users]
   );
 
@@ -665,8 +667,24 @@ export const FrontdeskView: React.FC = () => {
     initialSort: 'newest'
   });
 
-  const prepReadyOverviewList = useListControls(filteredPrepOverviewItems, {
-    getDate: (i) => i.warranty_applied_at || i.prepped_at || i.created_at,
+  const prepOverviewGroups = useMemo(() => {
+    const groups = new Map<string, { key: string; members: Item[]; latestDate: string }>();
+    for (const item of filteredPrepOverviewItems) {
+      const key = item.order_id ? `order:${item.order_id}` : `item:${item.id}`;
+      const date = item.warranty_applied_at || item.prepped_at || item.created_at;
+      const group = groups.get(key);
+      if (group) {
+        group.members.push(item);
+        if (Date.parse(date) > Date.parse(group.latestDate)) group.latestDate = date;
+      } else {
+        groups.set(key, { key, members: [item], latestDate: date });
+      }
+    }
+    return [...groups.values()];
+  }, [filteredPrepOverviewItems]);
+
+  const prepReadyOverviewList = useListControls(prepOverviewGroups, {
+    getDate: (group) => group.latestDate,
     initialSort: 'newest',
     initialPageSize: 10
   });
@@ -692,7 +710,8 @@ export const FrontdeskView: React.FC = () => {
   const [reportTechFilter, setReportTechFilter] = useState<string>('all');
   const [onsiteReportPrintOpen, setOnsiteReportPrintOpen] = useState(false);
 
-  const onsiteCompletedJobs = useMemo<OnsiteCompletedReportRow[]>(() => {
+  const [selectedCompletedBill, setSelectedCompletedBill] = useState<string | null>(null);
+  const onsiteCompletedJobs = useMemo(() => {
     const rows: OnsiteCompletedReportRow[] = [];
 
     items.forEach((it) => {
@@ -711,7 +730,9 @@ export const FrontdeskView: React.FC = () => {
         id: `itm-${it.id}`,
         dateKey: toLocalDateKey(it.delivered_at),
         kind: 'ส่งมอบสินค้า',
-        refNo: ord?.sales_ref || it.serial_number || it.id,
+        orderId: it.order_id || undefined,
+        productModel: it.model_name,
+        refNo: ord?.bill_no || ord?.sales_ref || it.order_id || it.serial_number || it.id,
         customerName: ord?.customer_name || 'ไม่ระบุลูกค้า',
         detail: `${it.model_name}${it.serial_number ? ` (S/N: ${it.serial_number})` : ''}`,
         techs,
@@ -766,7 +787,9 @@ export const FrontdeskView: React.FC = () => {
   }, [items, orders, repairTickets, projects]);
 
   const todayOnsiteCount = useMemo(
-    () => onsiteCompletedJobs.filter((j) => j.dateKey === todayDateKey).length,
+    () => new Set(onsiteCompletedJobs
+      .filter(job => job.dateKey === todayDateKey)
+      .map(job => job.orderId ? `order:${job.orderId}` : job.id)).size,
     [onsiteCompletedJobs, todayDateKey]
   );
 
@@ -778,11 +801,57 @@ export const FrontdeskView: React.FC = () => {
     });
   }, [onsiteCompletedJobs, reportShowAllDates, reportDate, reportTechFilter]);
 
-  const onsiteJobsList = useListControls(filteredOnsiteJobs, {
-    getDate: (j) => j.completedAt,
+  const completedJobGroups = useMemo(() => {
+    const groups = new Map<string, { key: string; orderId?: string; jobs: typeof filteredOnsiteJobs }>();
+    for (const job of filteredOnsiteJobs) {
+      const key = job.orderId ? `order:${job.orderId}` : job.id;
+      const group = groups.get(key);
+      if (group) group.jobs.push(job);
+      else groups.set(key, { key, orderId: job.orderId, jobs: [job] });
+    }
+    return [...groups.values()];
+  }, [filteredOnsiteJobs]);
+  const selectedCompletedGroup = completedJobGroups.find(group => group.key === selectedCompletedBill);
+
+  const onsiteJobsList = useListControls(completedJobGroups, {
+    getDate: group => group.jobs[0].completedAt,
     initialSort: 'newest',
     initialPageSize: 10
   });
+
+  const renderCompletedJob = (job: OnsiteCompletedReportRow) => (
+    <div
+      key={job.id}
+      className="rounded-2xl border border-emerald-300 dark:border-emerald-500/30 bg-white dark:bg-white/[0.03] p-3.5 flex flex-col gap-2"
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[11px] font-mono font-extrabold px-2 py-0.5 rounded-lg bg-[#FF6B00] text-black truncate">
+          {job.refNo}
+        </span>
+        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 whitespace-nowrap">
+          {job.kind}
+        </span>
+      </div>
+      <div className="text-sm font-extrabold text-slate-900 dark:text-white leading-snug">
+        {job.customerName}
+      </div>
+      <div className="text-xs font-semibold text-slate-700 dark:text-slate-200 leading-snug">
+        {job.detail}
+      </div>
+      <div className="text-[11px] text-slate-600 dark:text-slate-300 flex items-start gap-1">
+        <MapPin className="w-3.5 h-3.5 text-[#FF6B00] shrink-0 mt-0.5" />
+        <span className="line-clamp-2">{job.location}</span>
+      </div>
+      <div className="mt-auto pt-2 border-t border-slate-200 dark:border-white/[0.08] flex items-center justify-between gap-2 text-[11px]">
+        <span className="font-bold text-sky-700 dark:text-sky-300 truncate">
+          ช่าง: {job.techs.join(', ') || '-'}
+        </span>
+        <span className="font-mono text-slate-500 dark:text-slate-400 shrink-0">
+          {formatThaiDateTime(job.completedAt)}
+        </span>
+      </div>
+    </div>
+  );
 
   // Sort projects by Deadline Risk urgency (critical/closest due_date first)
   const urgentSortedProjects = useMemo(
@@ -802,8 +871,8 @@ export const FrontdeskView: React.FC = () => {
   });
 
   // ---- 1-Day Advance Job & Route Scheduler State ----
+  const [selectedRosterKey, setSelectedRosterKey] = useState<string | null>(null);
   const [rosterDate, setRosterDate] = useState<string>(() => getLocalDateStr(1));
-  const [morningBriefingOpen, setMorningBriefingOpen] = useState(false);
   const [dispatchRosterOpen, setDispatchRosterOpen] = useState(false);
   const [vehicleMap, setVehicleMap] = useState<Record<string, string>>(() => {
     try {
@@ -836,14 +905,17 @@ export const FrontdeskView: React.FC = () => {
   const ROUTE_ZONE_OPTIONS = Object.values(ROUTE_DEFINITIONS).map(r => r.name);
   const [schedRouteZone, setSchedRouteZone] = useState<string>(ROUTE_DEFINITIONS.route_5.name);
   const [schedTechs, setSchedTechs] = useState<string[]>([]);
+  const [schedItems, setSchedItems] = useState<Item[]>([]);
+  const [schedItemIds, setSchedItemIds] = useState<string[]>([]);
+  const [schedSaving, setSchedSaving] = useState(false);
 
   // Unscheduled Ready Pool: Sales/Project items in ready_for_dispatch (or assigned_onsite without scheduled_date)
   const unscheduledReadyItems = useMemo(() => {
     return items
       .filter(i => {
+        if (i.scheduled_date || orders.find(o => o.id === i.order_id)?.delivery_mode === 'customer_pickup') return false;
         if (i.status === 'ready_for_dispatch') return true;
-        if (i.status === 'assigned_onsite' && !i.scheduled_date && !i.project_id) return true;
-        return false;
+        return i.status === 'assigned_onsite' && !i.project_id;
       })
       .sort((a, b) => {
         const ordA = orders.find(o => o.id === a.order_id);
@@ -870,24 +942,28 @@ export const FrontdeskView: React.FC = () => {
   const [step1Page, setStep1Page] = useState(1);
   const [step1RouteFilter, setStep1RouteFilter] = useState<'all' | RouteCode>('all');
   const STEP1_PAGE_SIZE = 4;
-  const step1Combined = useMemo(
-    () => [
-      ...unscheduledReadyItems.map(it => {
-        const ord = orders.find(o => o.id === it.order_id);
-        const prj = projects.find(p => p.id === it.project_id);
-        const routeCode: RouteCode =
-          prj?.route_code ||
-          ord?.route_code ||
-          (ord?.district || prj?.district ? getRouteByDistrict(ord?.district || prj?.district || '') : 'route_5');
-        return { kind: 'item' as const, item: it, routeCode };
-      }),
+  const step1Combined = useMemo(() => {
+    const goodsByBill = new Map<string, { kind: 'item'; item: Item; members: Item[]; routeCode: RouteCode }>();
+    for (const it of unscheduledReadyItems) {
+      const ord = orders.find(o => o.id === it.order_id);
+      const prj = projects.find(p => p.id === it.project_id);
+      const routeCode: RouteCode =
+        prj?.route_code ||
+        ord?.route_code ||
+        (ord?.district || prj?.district ? getRouteByDistrict(ord?.district || prj?.district || '') : 'route_5');
+      const key = ord && !it.project_id ? `order:${ord.id}` : `item:${it.id}`;
+      const group = goodsByBill.get(key);
+      if (group) group.members.push(it);
+      else goodsByBill.set(key, { kind: 'item', item: it, members: [it], routeCode });
+    }
+    return [
+      ...goodsByBill.values(),
       ...unscheduledReadyRepairs.map(t => {
         const routeCode: RouteCode = t.route_code || (t.district ? getRouteByDistrict(t.district) : 'route_5');
         return { kind: 'repair' as const, ticket: t, routeCode };
       })
-    ],
-    [unscheduledReadyItems, unscheduledReadyRepairs, orders, projects]
-  );
+    ];
+  }, [unscheduledReadyItems, unscheduledReadyRepairs, orders, projects]);
   const step1RouteCounts = useMemo(() => {
     const counts: Partial<Record<RouteCode, number>> = {};
     step1Combined.forEach(e => {
@@ -976,11 +1052,87 @@ export const FrontdeskView: React.FC = () => {
     return rows;
   }, [dailyRosterItems, dailyRosterVisits, dailyRosterRepairs, orders, projects]);
 
+  const dailyRosterGroups = useMemo(() => {
+    const orderByRowId = new Map(dailyRosterItems.map(item => [`item-${item.id}`, item.order_id]));
+    const groups = new Map<string, { key: string; orderId?: string | null; rows: MorningBriefingRow[] }>();
+    for (const row of morningBriefingRows) {
+      const orderId = orderByRowId.get(row.id);
+      const key = orderId ? `order:${orderId}` : row.id;
+      const group = groups.get(key);
+      if (group) group.rows.push(row);
+      else groups.set(key, { key, orderId, rows: [row] });
+    }
+    return [...groups.values()];
+  }, [dailyRosterItems, morningBriefingRows]);
+
+  const renderRosterRow = (row: MorningBriefingRow) => (
+    <div key={row.id} className="p-3.5 rounded-2xl bg-white dark:bg-white/[0.03] border border-slate-200 dark:border-white/[0.08] flex flex-col justify-between gap-2 text-xs">
+      <div className="space-y-1">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <span className="font-mono font-extrabold text-[#FF6B00]">{row.refNo}</span>
+          <div className="flex items-center gap-1.5">
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 text-indigo-800 dark:bg-indigo-500/20 dark:text-indigo-300">
+              {row.routeZone} ({row.timeSlot})
+            </span>
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300">
+              {row.prepStatusLabel}
+            </span>
+          </div>
+        </div>
+        <div className="font-bold text-slate-900 dark:text-white">{row.customerName}</div>
+        <div className="text-slate-700 dark:text-slate-200">{row.detail}</div>
+        <div className="text-[11px] text-slate-500 dark:text-slate-400">
+          ทีมช่าง: <strong>{row.techs.join(', ') || '-'}</strong> • {row.location}
+        </div>
+      </div>
+      <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-white/[0.06]">
+        {row.id.startsWith('item-') && (
+          <button
+            type="button"
+            onClick={() => unscheduleItemDispatch(row.id.replace('item-', ''))}
+            className="px-2.5 py-1 rounded-lg bg-rose-100 dark:bg-rose-500/15 text-rose-700 dark:text-rose-300 text-[11px] font-bold cursor-pointer"
+          >
+            ถอดออกจากตาราง
+          </button>
+        )}
+        {row.id.startsWith('rep-') && (
+          <button
+            type="button"
+            onClick={() => unscheduleRepairDispatch(row.id.replace('rep-', ''))}
+            className="px-2.5 py-1 rounded-lg bg-rose-100 dark:bg-rose-500/15 text-rose-700 dark:text-rose-300 text-[11px] font-bold cursor-pointer"
+          >
+            ถอดออกจากตาราง
+          </button>
+        )}
+        {row.id.startsWith('visit-') && (() => {
+          const vid = row.id.replace('visit-', '');
+          const ownerPrj = projects.find(p => (p.site_visits || []).some(v => v.id === vid));
+          return ownerPrj ? (
+            <button
+              type="button"
+              onClick={() => removeSiteVisit(ownerPrj.id, vid)}
+              className="px-2.5 py-1 rounded-lg bg-rose-100 dark:bg-rose-500/15 text-rose-700 dark:text-rose-300 text-[11px] font-bold cursor-pointer"
+            >
+              ยกเลิกรอบเข้าไซต์
+            </button>
+          ) : null;
+        })()}
+      </div>
+    </div>
+  );
+
+  const selectedRosterGroup = dailyRosterGroups.find(group => group.key === selectedRosterKey);
+  const selectedRosterOrder = orders.find(order => order.id === selectedRosterGroup?.orderId);
+
   const openScheduleJobModal = (
     target:
       | { kind: 'item'; item: Item; title: string; subtitle: string; defaultRoute: string }
-      | { kind: 'repair'; ticket: RepairTicket; title: string; subtitle: string; defaultRoute: string }
+      | { kind: 'repair'; ticket: RepairTicket; title: string; subtitle: string; defaultRoute: string },
+    groupItems?: Item[]
   ) => {
+    const selected = target.kind === 'item' ? groupItems || [target.item] : [];
+    setSchedItems(selected);
+    setSchedItemIds(selected.map(item => item.id));
     setScheduleTarget(target);
     setSchedDate(rosterDate || getLocalDateStr(1));
     setSchedTimeSlot('ทั้งวัน');
@@ -1001,30 +1153,45 @@ export const FrontdeskView: React.FC = () => {
 
   const handleConfirmScheduleJob = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!scheduleTarget) return;
+    if (!scheduleTarget || schedSaving) return;
     if (schedTechs.length === 0) {
       alert('กรุณาเลือกช่าง Onsite อย่างน้อย 1 คน');
       return;
     }
-    if (scheduleTarget.kind === 'item') {
-      await scheduleItemDispatch(scheduleTarget.item.id, {
-        scheduled_date: schedDate,
-        scheduled_time_slot: schedTimeSlot,
-        dispatch_route_zone: schedRouteZone,
-        assigned_techs: schedTechs,
-        job_category: scheduleTarget.item.project_id ? 'installation' : 'delivery'
-      });
-      showToast(`ลงตารางวิ่งงาน ${scheduleTarget.title} วันที่ ${formatDateDMY(schedDate)} เรียบร้อย`);
-    } else {
-      await scheduleRepairDispatch(scheduleTarget.ticket.id, {
-        scheduled_date: schedDate,
-        scheduled_time_slot: schedTimeSlot,
-        dispatch_route_zone: schedRouteZone,
-        assigned_techs: schedTechs
-      });
-      showToast(`ลงตารางส่งคืน ${scheduleTarget.ticket.ticket_no} วันที่ ${formatDateDMY(schedDate)} เรียบร้อย`);
+    setSchedSaving(true);
+    const payload = {
+      scheduled_date: schedDate,
+      scheduled_time_slot: schedTimeSlot,
+      dispatch_route_zone: schedRouteZone,
+      assigned_techs: schedTechs
+    };
+    try {
+      if (scheduleTarget.kind === 'item') {
+        const selected = schedItems.filter(item => schedItemIds.includes(item.id));
+        if (selected.length === 0) return;
+        const results = await Promise.allSettled(selected.map(item => scheduleItemDispatch(item.id, {
+          ...payload,
+          job_category: item.project_id ? 'installation' : 'delivery'
+        })));
+        const failed = selected.filter((_, index) => results[index].status === 'rejected');
+        if (failed.length) {
+          const saved = new Set(selected.filter((_, index) => results[index].status === 'fulfilled').map(item => item.id));
+          setSchedItems(prev => prev.filter(item => !saved.has(item.id)));
+          setSchedItemIds(failed.map(item => item.id));
+          showToast(`ลงตารางสำเร็จ ${selected.length - failed.length} รายการ · บันทึกไม่สำเร็จ ${failed.length} รายการ กรุณาตรวจสอบคิวก่อนลองใหม่`);
+          return;
+        }
+        showToast(`ลงตาราง ${selected.length} รายการ วันที่ ${formatDateDMY(schedDate)} เรียบร้อย`);
+      } else {
+        await scheduleRepairDispatch(scheduleTarget.ticket.id, payload);
+        showToast(`ลงตารางส่งคืน ${scheduleTarget.ticket.ticket_no} วันที่ ${formatDateDMY(schedDate)} เรียบร้อย`);
+      }
+      setScheduleTarget(null);
+    } catch {
+      showToast('บันทึกตารางไม่สำเร็จ กรุณาตรวจสอบคิวก่อนลองใหม่');
+    } finally {
+      setSchedSaving(false);
     }
-    setScheduleTarget(null);
   };
 
   // ---- Site Visit Dispatch Modal State (PRJ-...) ----
@@ -1389,6 +1556,7 @@ export const FrontdeskView: React.FC = () => {
                 const entryRouteMeta = ROUTE_DEFINITIONS[entry.routeCode];
                 if (entry.kind === 'item') {
                   const it = entry.item;
+                  const grouped = entry.members.length > 1;
                   const ord = orders.find(o => o.id === it.order_id);
                   const prj = projects.find(p => p.id === it.project_id);
                   const due = prj?.due_date || ord?.delivery_date;
@@ -1424,13 +1592,25 @@ export const FrontdeskView: React.FC = () => {
                           )}
                         </div>
                         <div className="font-bold text-slate-900 dark:text-white">{prj ? prj.customer_name : (ord?.customer_name || '-')}</div>
-                        <div className="text-slate-700 dark:text-slate-200">{it.model_name}</div>
-                        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] font-mono text-slate-500 dark:text-slate-400">
-                          <span>S/N: {it.serial_number || '-'}</span>
-                          {it.void_date && <span>• วอย {it.void_date}</span>}
-                          <span className="font-sans font-bold text-[#FF6B00]">
-                            • วันส่ง: {due ? formatDateDMY(due) : 'ยังไม่ระบุ'}
-                          </span>
+                        {grouped ? (
+                          <details className="text-slate-700 dark:text-slate-200">
+                            <summary className="cursor-pointer py-2 font-semibold">พร้อมลงตาราง {entry.members.length} รายการ</summary>
+                            <ul className="space-y-1 pl-4">
+                              {entry.members.map(member => (
+                                <li key={member.id}>{member.model_name} · S/N: {member.serial_number || '-'}</li>
+                              ))}
+                            </ul>
+                          </details>
+                        ) : (
+                          <>
+                            <div className="text-slate-700 dark:text-slate-200">{it.model_name}</div>
+                            <div className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
+                              S/N: {it.serial_number || '-'} {it.void_date && `· วอย ${it.void_date}`}
+                            </div>
+                          </>
+                        )}
+                        <div className="text-[11px] font-bold text-[#FF6B00]">
+                          วันส่ง: {due ? formatDateDMY(due) : 'ยังไม่ระบุ'}
                         </div>
                       </div>
                       <button
@@ -1439,15 +1619,15 @@ export const FrontdeskView: React.FC = () => {
                           openScheduleJobModal({
                             kind: 'item',
                             item: it,
-                            title: `${prj ? prj.id : (ord?.sales_ref || it.id)} — ${it.model_name}`,
+                            title: `${prj ? prj.id : (ord?.bill_no || ord?.sales_ref || it.id)} — ${grouped ? `${entry.members.length} รายการ` : it.model_name}`,
                             subtitle: prj ? `${prj.customer_name} (${prj.site_name})` : (ord?.customer_name || '-'),
-                            defaultRoute: 'สาย 1 ในเมือง'
-                          })
+                            defaultRoute: entryRouteMeta.name
+                          }, entry.members)
                         }
                         className="w-full py-2 rounded-xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold text-xs cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
                       >
                         <Calendar className="w-3.5 h-3.5" />
-                        <span>ลงตารางวิ่งงาน (Schedule Job)</span>
+                        <span>{grouped ? 'ลงตารางรวมตามบิล' : 'ลงตารางวิ่งงาน'}</span>
                       </button>
                     </div>
                   );
@@ -1627,35 +1807,27 @@ export const FrontdeskView: React.FC = () => {
                   <Truck className="w-6 h-6 text-[#FF6B00]" />
                   <span>ขั้นที่ 2: ตารางรถวิ่งงานประจำวัน</span>
                   <span className="px-2.5 py-0.5 rounded-full text-sm font-mono font-extrabold bg-[#FF6B00]/15 text-[#C2410C] dark:text-[#FF6B00]">
-                    {morningBriefingRows.length} งาน
+                    {dailyRosterGroups.length} งาน
                   </span>
                 </h3>
                 <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 mt-0.5">
-                  เลือกวันที่ต้องการดู แล้วกดปุ่มสีส้มด้านขวาเพื่อพิมพ์ใบประชุมเช้าได้เลยครับ
+                  เลือกวันที่เพื่อดูตารางและพิมพ์ใบจัดคิวรถ
                 </p>
               </div>
               <div className="flex items-center gap-2 flex-wrap">
                 <input
                   type="date"
                   value={rosterDate}
-                  onChange={(e) => setRosterDate(e.target.value)}
+                  onChange={(e) => { setRosterDate(e.target.value); setSelectedRosterKey(null); }}
                   className="px-3.5 py-2.5 min-h-[44px] rounded-xl text-sm font-bold bg-white dark:bg-slate-800 border-2 border-slate-300 dark:border-slate-700 cursor-pointer"
                 />
                 <button
                   type="button"
                   onClick={() => setDispatchRosterOpen(true)}
-                  className="px-4 py-2.5 min-h-[44px] rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-black text-sm cursor-pointer flex items-center gap-2 shadow-md"
-                >
-                  <Printer className="w-4 h-4" />
-                  <span>พิมพ์ใบจัดคิวพรุ่งนี้ (Print)</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setMorningBriefingOpen(true)}
                   className="px-5 py-2.5 min-h-[44px] rounded-xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-black text-sm cursor-pointer flex items-center gap-2 shadow-lg shadow-[#FF6B00]/20"
                 >
                   <Printer className="w-5 h-5" />
-                  <span>พิมพ์ใบประชุมเช้า (A4)</span>
+                  <span>พิมพ์ใบจัดคิวรถ</span>
                 </button>
               </div>
             </div>
@@ -1665,64 +1837,41 @@ export const FrontdeskView: React.FC = () => {
                 ยังไม่มีงานที่ลงตารางวิ่งงานสำหรับวันที่ {formatDateDMY(rosterDate)}
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {morningBriefingRows.map(row => (
-                  <div key={row.id} className="p-3.5 rounded-2xl bg-white dark:bg-white/[0.03] border border-slate-200 dark:border-white/[0.08] flex flex-col justify-between gap-2 text-xs">
-                    <div className="space-y-1">
-                      <div className="flex items-center justify-between gap-2 flex-wrap">
-                        <span className="font-mono font-extrabold text-[#FF6B00]">{row.refNo}</span>
-                        <div className="flex items-center gap-1.5">
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 text-indigo-800 dark:bg-indigo-500/20 dark:text-indigo-300">
-                            {row.routeZone} ({row.timeSlot})
-                          </span>
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300">
-                            {row.prepStatusLabel}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="font-bold text-slate-900 dark:text-white">{row.customerName}</div>
-                      <div className="text-slate-700 dark:text-slate-200">{row.detail}</div>
-                      <div className="text-[11px] text-slate-500 dark:text-slate-400">
-                        ทีมช่าง: <strong>{row.techs.join(', ') || '-'}</strong> • {row.location}
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-white/[0.06]">
-                      {row.id.startsWith('item-') && (
-                        <button
-                          type="button"
-                          onClick={() => unscheduleItemDispatch(row.id.replace('item-', ''))}
-                          className="px-2.5 py-1 rounded-lg bg-rose-100 dark:bg-rose-500/15 text-rose-700 dark:text-rose-300 text-[11px] font-bold cursor-pointer"
-                        >
-                          ถอดออกจากตาราง
-                        </button>
-                      )}
-                      {row.id.startsWith('rep-') && (
-                        <button
-                          type="button"
-                          onClick={() => unscheduleRepairDispatch(row.id.replace('rep-', ''))}
-                          className="px-2.5 py-1 rounded-lg bg-rose-100 dark:bg-rose-500/15 text-rose-700 dark:text-rose-300 text-[11px] font-bold cursor-pointer"
-                        >
-                          ถอดออกจากตาราง
-                        </button>
-                      )}
-                      {row.id.startsWith('visit-') && (() => {
-                        const vid = row.id.replace('visit-', '');
-                        const ownerPrj = projects.find(p => (p.site_visits || []).some(v => v.id === vid));
-                        return ownerPrj ? (
-                          <button
-                            type="button"
-                            onClick={() => removeSiteVisit(ownerPrj.id, vid)}
-                            className="px-2.5 py-1 rounded-lg bg-rose-100 dark:bg-rose-500/15 text-rose-700 dark:text-rose-300 text-[11px] font-bold cursor-pointer"
-                          >
-                            ยกเลิกรอบเข้าไซต์
-                          </button>
-                        ) : null;
-                      })()}
-                    </div>
-                  </div>
-                ))}
+              <div className="grid grid-cols-1 items-start md:grid-cols-2 gap-3">
+                {dailyRosterGroups.map(({ key, orderId, rows }) => {
+                  if (!orderId) return rows.map(renderRosterRow);
+
+                  const order = orders.find(order => order.id === orderId);
+                  const schedules = [...new Set(rows.map(row => `${row.routeZone} · ${row.timeSlot}`))];
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      aria-haspopup="dialog"
+                      onClick={() => setSelectedRosterKey(key)}
+                      className="min-w-0 cursor-pointer rounded-2xl border border-slate-200 bg-white p-4 text-left text-slate-900 hover:border-orange-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-orange-600 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-white"
+                    >
+                      <span className="flex flex-wrap justify-between gap-2 text-xs font-bold">
+                        <span className="font-mono text-orange-800 dark:text-orange-300">{order?.bill_no || order?.sales_ref || orderId}</span>
+                        <span>{rows.length} ชิ้น</span>
+                      </span>
+                      <span className="mt-1 block break-words text-sm font-bold">{order?.customer_name || rows[0].customerName}</span>
+                      <span className="mt-1 block truncate text-xs text-slate-600 dark:text-slate-300">{schedules[0]}{schedules.length > 1 && ` +${schedules.length - 1} รอบ`}</span>
+                      <span className="mt-2 block text-xs font-bold text-orange-800 dark:text-orange-300">ดูรายละเอียด</span>
+                    </button>
+                  );
+                })}
               </div>
             )}
+            <Modal
+              open={Boolean(selectedRosterGroup)}
+              onClose={() => setSelectedRosterKey(null)}
+              title={selectedRosterOrder?.bill_no || selectedRosterOrder?.sales_ref || selectedRosterGroup?.orderId || 'รายละเอียดตารางรถ'}
+              subtitle={selectedRosterGroup && `${selectedRosterOrder?.customer_name || selectedRosterGroup.rows[0].customerName} · ${selectedRosterGroup.rows.length} ชิ้น`}
+              maxWidthClass="max-w-2xl"
+            >
+              <div className="space-y-2">{selectedRosterGroup?.rows.map(renderRosterRow)}</div>
+            </Modal>
           </div>
         </div>
       )}
@@ -1919,111 +2068,120 @@ export const FrontdeskView: React.FC = () => {
                     onPageSizeChange={prepReadyOverviewList.setPageSize}
                     onPageChange={prepReadyOverviewList.setPage}
                     pageSizeOptions={[10, 20, 30]}
-                    unit="รายการ"
+                    unit="การ์ด"
                   />
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                    {prepReadyOverviewList.pageItems.map((item) => {
-                    const ord = item.order_id ? orders.find(o => o.id === item.order_id) : null;
-                    const isReady = item.status === 'ready_for_dispatch';
-                    const isPickup = ord?.delivery_mode === 'customer_pickup';
-                    const rMeta = ord?.route_code ? ROUTE_DEFINITIONS[ord.route_code] : null;
-                    const addressText = [ord?.delivery_location, ord?.district].filter(Boolean).join(' · ');
-                    return (
-                      <div
-                        key={item.id}
-                        className={`rounded-2xl border p-4 flex flex-col gap-2.5 bg-white dark:bg-white/[0.04] shadow-sm ${
-                          isReady
-                            ? 'border-emerald-400 dark:border-emerald-500/40'
-                            : 'border-amber-400 dark:border-amber-500/40'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-xs font-mono font-extrabold px-2 py-0.5 rounded-lg bg-[#FF6B00] text-black truncate">
-                            {ord?.sales_ref || item.serial_number || item.id}
-                          </span>
-                          <span
-                            className={`text-[11px] font-extrabold px-2.5 py-0.5 rounded-full border whitespace-nowrap ${
-                              isReady
-                                ? 'bg-emerald-500/15 text-emerald-800 dark:text-emerald-300 border-emerald-500/40'
-                                : 'bg-amber-500/15 text-amber-800 dark:text-amber-300 border-amber-500/40'
-                            }`}
-                          >
-                            {isReady ? 'ติดวอยพร้อมปล่อย' : 'รอช่างเตรียมแปะวอย'}
-                          </span>
-                        </div>
+                    {prepReadyOverviewList.pageItems.map(({ key, members }) => {
+                      const [item] = members;
+                      const ord = item.order_id ? orders.find(o => o.id === item.order_id) : null;
+                      const readyCount = members.filter(member => member.status === 'ready_for_dispatch').length;
+                      const pendingCount = members.length - readyCount;
+                      const isPickup = ord?.delivery_mode === 'customer_pickup';
+                      const rMeta = ord?.route_code ? ROUTE_DEFINITIONS[ord.route_code] : null;
+                      const addressText = [ord?.delivery_location, ord?.district].filter(Boolean).join(' · ');
+                      return (
+                        <div
+                          key={key}
+                          className={`rounded-2xl border p-4 flex flex-col gap-2.5 bg-white dark:bg-white/[0.04] shadow-sm ${
+                            pendingCount === 0
+                              ? 'border-emerald-400 dark:border-emerald-500/40'
+                              : 'border-amber-400 dark:border-amber-500/40'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-xs font-mono font-extrabold px-2 py-0.5 rounded-lg bg-[#FF6B00] text-black truncate">
+                              {ord?.bill_no || ord?.sales_ref || item.order_id || item.serial_number || item.id}
+                            </span>
+                          </div>
 
-                        <div className="min-w-0 space-y-1">
-                          <div className="text-sm sm:text-base font-extrabold text-slate-900 dark:text-white leading-snug">
-                            {ord?.customer_name || 'สต๊อก / ไม่ระบุลูกค้า'}
-                          </div>
-                          <div className="text-xs sm:text-sm font-bold text-slate-800 dark:text-slate-100 leading-snug">
-                            {item.model_name}
-                          </div>
-                          <div className="text-xs font-mono font-semibold text-slate-700 dark:text-slate-200 flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                            <span>S/N: {item.serial_number || '-'}</span>
-                            {isReady && item.void_date && (
-                              <span className="text-emerald-700 dark:text-emerald-300 font-bold">
-                                · วอย: {item.void_date}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* ที่อยู่และเบอร์โทรลูกค้า */}
-                        {(addressText || ord?.customer_phone || rMeta) && (
-                          <div className="rounded-xl p-2.5 bg-slate-50 dark:bg-white/[0.04] border border-slate-200 dark:border-white/[0.08] space-y-1 text-xs">
-                            {addressText && (
-                              <div className="flex items-start gap-1.5 font-semibold text-slate-800 dark:text-slate-100 leading-snug">
-                                <MapPin className="w-3.5 h-3.5 text-[#FF6B00] shrink-0 mt-0.5" />
-                                <span className="line-clamp-2">{addressText}</span>
-                              </div>
-                            )}
-                            <div className="flex flex-wrap items-center gap-2 text-[11px] font-semibold text-slate-700 dark:text-slate-200">
-                              {ord?.customer_phone && (
-                                toTelHref(ord.customer_phone) ? (
-                                  <a
-                                    href={toTelHref(ord.customer_phone)!}
-                                    onClick={(e) => e.stopPropagation()}
-                                    title="กดเพื่อโทรออก"
-                                    className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-300 hover:underline cursor-pointer"
-                                  >
-                                    <Phone className="w-3 h-3" />
-                                    {ord.customer_phone}
-                                  </a>
-                                ) : (
-                                  <span className="inline-flex items-center gap-1">
-                                    <Phone className="w-3 h-3 text-slate-500 dark:text-slate-400" />
-                                    {ord.customer_phone}
-                                  </span>
-                                )
+                          <div className="min-w-0 space-y-1">
+                            <div className="text-sm sm:text-base font-extrabold text-slate-900 dark:text-white leading-snug">
+                              {ord?.customer_name || 'สต๊อก / ไม่ระบุลูกค้า'}
+                            </div>
+                            <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs font-bold">
+                              {readyCount > 0 && (
+                                <span className="text-emerald-700 dark:text-emerald-300">ติดวอยพร้อมปล่อย {readyCount} ชิ้น</span>
                               )}
-                              {rMeta && (
-                                <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold border ${rMeta.badgeBg} ${rMeta.badgeBorder} ${rMeta.badgeText}`}>
-                                  {rMeta.shortName}
-                                </span>
+                              {pendingCount > 0 && (
+                                <span className="text-amber-800 dark:text-amber-300">รอช่างเตรียมแปะวอย {pendingCount} ชิ้น</span>
                               )}
                             </div>
                           </div>
-                        )}
 
-                        <div className="mt-auto pt-2 border-t border-slate-200 dark:border-white/[0.08] flex items-center justify-between gap-2 text-xs">
-                          <span className="font-bold text-slate-700 dark:text-slate-200">
-                            {isPickup ? 'รับเองหน้าร้าน' : 'จัดส่ง Onsite'}
-                            {ord?.delivery_date ? ` · ส่ง ${formatDateDMY(ord.delivery_date)}` : ''}
-                          </span>
-                          {isReady && (
-                            <button
-                              type="button"
-                              onClick={() => (isPickup ? openPickup(item.id) : openDispatch(item.id))}
-                              className="px-3 py-1.5 rounded-xl bg-[#FF6B00] hover:bg-[#FF8A24] text-black font-extrabold text-xs cursor-pointer whitespace-nowrap shadow-sm"
-                            >
-                              {isPickup ? 'ยืนยันรับสินค้า' : 'มอบหมาย / วันส่ง'}
-                            </button>
+                          {/* ที่อยู่และเบอร์โทรลูกค้า */}
+                          {(addressText || ord?.customer_phone || rMeta) && (
+                            <div className="rounded-xl p-2.5 bg-slate-50 dark:bg-white/[0.04] border border-slate-200 dark:border-white/[0.08] space-y-1 text-xs">
+                              {addressText && (
+                                <div className="flex items-start gap-1.5 font-semibold text-slate-800 dark:text-slate-100 leading-snug">
+                                  <MapPin className="w-3.5 h-3.5 text-[#FF6B00] shrink-0 mt-0.5" />
+                                  <span className="line-clamp-2">{addressText}</span>
+                                </div>
+                              )}
+                              <div className="flex flex-wrap items-center gap-2 text-[11px] font-semibold text-slate-700 dark:text-slate-200">
+                                {ord?.customer_phone && (
+                                  toTelHref(ord.customer_phone) ? (
+                                    <a
+                                      href={toTelHref(ord.customer_phone)!}
+                                      onClick={(e) => e.stopPropagation()}
+                                      title="กดเพื่อโทรออก"
+                                      className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-300 hover:underline cursor-pointer"
+                                    >
+                                      <Phone className="w-3 h-3" />
+                                      {ord.customer_phone}
+                                    </a>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1">
+                                      <Phone className="w-3 h-3 text-slate-500 dark:text-slate-400" />
+                                      {ord.customer_phone}
+                                    </span>
+                                  )
+                                )}
+                                {rMeta && (
+                                  <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold border ${rMeta.badgeBg} ${rMeta.badgeBorder} ${rMeta.badgeText}`}>
+                                    {rMeta.shortName}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
                           )}
+
+                          <div className="mt-auto pt-2 border-t border-slate-200 dark:border-white/[0.08] flex items-center justify-between gap-2 text-xs">
+                            <span className="font-bold text-slate-700 dark:text-slate-200">
+                              {isPickup ? 'รับเองหน้าร้าน' : 'จัดส่ง Onsite'}
+                              {ord?.delivery_date ? ` · ส่ง ${formatDateDMY(ord.delivery_date)}` : ''}
+                            </span>
+                          </div>
+
+                          <details className="text-sm text-slate-700 dark:text-slate-200">
+                            <summary className="cursor-pointer py-2 font-semibold focus-visible:outline focus-visible:outline-2">
+                              สินค้า {members.length} ชิ้น
+                            </summary>
+                            <ul className="divide-y divide-slate-200 dark:divide-white/[0.08]">
+                              {members.map(member => (
+                                <li key={member.id} className="space-y-1.5 py-2">
+                                  <div className="font-bold break-words">{member.model_name}</div>
+                                  <div className="text-xs">
+                                    S/N: {member.serial_number || '-'}
+                                    {member.void_date && ` · วอย: ${member.void_date}`}
+                                  </div>
+                                  {member.status === 'ready_for_dispatch' ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => (isPickup ? openPickup(member.id) : openDispatch(member.id))}
+                                      className="min-h-11 px-3 py-1.5 rounded-xl bg-[#FF6B00] hover:bg-[#FF8A24] text-black font-extrabold text-xs cursor-pointer shadow-sm"
+                                    >
+                                      {isPickup ? 'ยืนยันรับสินค้า' : 'มอบหมาย / วันส่ง'}
+                                    </button>
+                                  ) : (
+                                    <div className="text-xs font-semibold text-amber-800 dark:text-amber-300">รอช่างเตรียมแปะวอย</div>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
+                          </details>
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
                   </div>
                 </>
               )}
@@ -2124,7 +2282,7 @@ export const FrontdeskView: React.FC = () => {
                 ? 'ประวัติปิดงานเสร็จของช่าง Onsite (ทุกวัน)'
                 : `ประวัติปิดงานเสร็จของช่าง Onsite วันที่ ${formatDateDMY(reportDate)}`
             }
-            count={filteredOnsiteJobs.length}
+            count={completedJobGroups.length}
             accent="emerald"
             emptyText="ไม่มีรายการปิดงานเสร็จของช่าง Onsite ในวันที่เลือก"
           >
@@ -2144,42 +2302,41 @@ export const FrontdeskView: React.FC = () => {
                 unit="งาน"
               />
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {onsiteJobsList.pageItems.map((job) => (
-                  <div
-                    key={job.id}
-                    className="rounded-2xl border border-emerald-300 dark:border-emerald-500/30 bg-white dark:bg-white/[0.03] p-3.5 flex flex-col gap-2"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-[11px] font-mono font-extrabold px-2 py-0.5 rounded-lg bg-[#FF6B00] text-black truncate">
-                        {job.refNo}
+                {onsiteJobsList.pageItems.map(({ key, orderId, jobs }) => {
+                  const [first] = jobs;
+                  if (!orderId) return renderCompletedJob(first);
+                  const techs = [...new Set(jobs.flatMap(job => job.techs))];
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      aria-haspopup="dialog"
+                      onClick={() => setSelectedCompletedBill(key)}
+                      className="min-w-0 cursor-pointer rounded-2xl border border-emerald-300 bg-white p-4 text-left hover:border-emerald-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-600 dark:border-emerald-500/30 dark:bg-white/[0.03]"
+                    >
+                      <span className="flex flex-wrap justify-between gap-2 text-xs font-bold">
+                        <span className="break-all font-mono text-orange-800 dark:text-orange-300">{first.refNo}</span>
+                        <span className="text-emerald-800 dark:text-emerald-300">ส่งมอบ {jobs.length} ชิ้น</span>
                       </span>
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 whitespace-nowrap">
-                        {job.kind}
-                      </span>
-                    </div>
-                    <div className="text-sm font-extrabold text-slate-900 dark:text-white leading-snug">
-                      {job.customerName}
-                    </div>
-                    <div className="text-xs font-semibold text-slate-700 dark:text-slate-200 leading-snug">
-                      {job.detail}
-                    </div>
-                    <div className="text-[11px] text-slate-600 dark:text-slate-300 flex items-start gap-1">
-                      <MapPin className="w-3.5 h-3.5 text-[#FF6B00] shrink-0 mt-0.5" />
-                      <span className="line-clamp-2">{job.location}</span>
-                    </div>
-                    <div className="mt-auto pt-2 border-t border-slate-200 dark:border-white/[0.08] flex items-center justify-between gap-2 text-[11px]">
-                      <span className="font-bold text-sky-700 dark:text-sky-300 truncate">
-                        ช่าง: {job.techs.join(', ') || '-'}
-                      </span>
-                      <span className="font-mono text-slate-500 dark:text-slate-400 shrink-0">
-                        {formatThaiDateTime(job.completedAt)}
-                      </span>
-                    </div>
-                  </div>
-                ))}
+                      <span className="mt-1 block break-words text-sm font-extrabold text-slate-900 dark:text-white">{first.customerName}</span>
+                      <span className="mt-1 block truncate text-xs text-slate-600 dark:text-slate-300">{first.location}</span>
+                      <span className="mt-1 block truncate text-xs text-slate-600 dark:text-slate-300">ช่าง: {techs.join(', ') || '-'}</span>
+                      <span className="mt-2 block text-xs font-bold text-emerald-800 dark:text-emerald-300">ดูรายละเอียด</span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           </QueueSection>
+          <Modal
+            open={Boolean(selectedCompletedGroup)}
+            onClose={() => setSelectedCompletedBill(null)}
+            title={selectedCompletedGroup?.jobs[0].refNo || 'รายละเอียดงานส่งมอบ'}
+            subtitle={selectedCompletedGroup && `${selectedCompletedGroup.jobs[0].customerName} · ${selectedCompletedGroup.jobs.length} ชิ้น`}
+            maxWidthClass="max-w-2xl"
+          >
+            <div className="space-y-2">{selectedCompletedGroup?.jobs.map(renderCompletedJob)}</div>
+          </Modal>
         </div>
       )}
 
@@ -2339,12 +2496,11 @@ export const FrontdeskView: React.FC = () => {
               />
             </div>
             <div>
-              <label className={modalLabelClass}>เบอร์โทรศัพท์</label>
-              <input
-                type="tel"
+              <label htmlFor="frontdesk-onsite-phone" className={modalLabelClass}>เบอร์โทรศัพท์</label>
+              <PhoneInput
+                id="frontdesk-onsite-phone"
                 value={osPhone}
                 onChange={(e) => setOsPhone(e.target.value)}
-                placeholder="08x-xxx-xxxx"
                 className={modalInputClass}
               />
             </div>
@@ -2815,9 +2971,9 @@ export const FrontdeskView: React.FC = () => {
       {/* SITE VISIT DISPATCH MODAL (PRJ-..., createPortal, z-[9999])               */}
       {/* ========================================================================= */}
       {dispatchProject && createPortal(
-        <div
+        <ModalBackdrop
           className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 animate-fade-in overscroll-contain"
-          onClick={() => setDispatchProjectId(null)}
+          onDismiss={() => setDispatchProjectId(null)}
         >
           <div
             onClick={(e) => e.stopPropagation()}
@@ -2953,8 +3109,7 @@ export const FrontdeskView: React.FC = () => {
                                 {pi.item_type === 'equipment' ? 'อุปกรณ์หลัก (ต้องเทส/ติดวอย)' : 'วัสดุสิ้นเปลือง/ค่าแรง'} • ค้างเบิก {remaining}/{pi.qty_required}
                               </div>
                             </div>
-                            <input
-                              type="number"
+                            <NumberInput
                               min={0}
                               max={pi.qty_required}
                               value={visitItemQtyMap[pi.id] ?? 0}
@@ -3066,7 +3221,7 @@ export const FrontdeskView: React.FC = () => {
               </div>
             </div>
           </div>
-        </div>,
+        </ModalBackdrop>,
         document.body
       )}
 
@@ -3074,14 +3229,14 @@ export const FrontdeskView: React.FC = () => {
       {/* SCHEDULE JOB MODAL (z-[9999])                                             */}
       {/* ========================================================================= */}
       {scheduleTarget && createPortal(
-        <div
+        <ModalBackdrop
           className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 animate-fade-in overscroll-contain"
-          onClick={() => setScheduleTarget(null)}
+          onDismiss={() => { if (!schedSaving) setScheduleTarget(null); }}
         >
           <form
             onSubmit={handleConfirmScheduleJob}
             onClick={(e) => e.stopPropagation()}
-            className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-3xl w-full sm:w-[92vw] max-w-lg p-5 space-y-4 animate-modal-pop"
+            className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-3xl w-full sm:w-[92vw] max-w-lg max-h-[90dvh] overflow-y-auto p-5 space-y-4 animate-modal-pop"
           >
             <div className="flex items-center justify-between gap-2">
               <div className="min-w-0">
@@ -3091,6 +3246,7 @@ export const FrontdeskView: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setScheduleTarget(null)}
+                disabled={schedSaving}
                 className="p-2 rounded-xl bg-slate-100 dark:bg-white/[0.06] text-slate-500 cursor-pointer"
               >
                 <X className="w-4 h-4" />
@@ -3121,7 +3277,7 @@ export const FrontdeskView: React.FC = () => {
                 custPhone = prj?.phone || ord?.customer_phone || '-';
                 custDistrict = prj?.district || ord?.district || '-';
                 custAddress = prj?.location || ord?.delivery_location || '-';
-                jobDetail = `${it.model_name}${it.serial_number ? ` (S/N: ${it.serial_number})` : ''}${ord?.site_notes ? ` — ${ord.site_notes}` : ''}`;
+                jobDetail = [schedItems.length === 1 ? `${it.model_name}${it.serial_number ? ` (S/N: ${it.serial_number})` : ''}` : '', ord?.site_notes].filter(Boolean).join(' — ');
                 const d = prj?.due_date || ord?.delivery_date;
                 dueStr = d ? formatDateDMY(d) : '';
               }
@@ -3229,36 +3385,49 @@ export const FrontdeskView: React.FC = () => {
               </div>
             </div>
 
+            {schedItems.length > 0 && scheduleTarget.kind === 'item' && (
+              <fieldset disabled={schedSaving} className="space-y-1">
+                <legend className={modalLabelClass}>รายการที่จะส่งรอบนี้ ({schedItemIds.length}/{schedItems.length})</legend>
+                <div className="max-h-40 overflow-y-auto">
+                  {schedItems.map(item => (
+                    <label key={item.id} className="flex min-h-11 cursor-pointer items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={schedItemIds.includes(item.id)}
+                        onChange={e => {
+                          const checked = e.target.checked;
+                          setSchedItemIds(prev => checked ? [...prev, item.id] : prev.filter(id => id !== item.id));
+                        }}
+                      />
+                      <span>{item.model_name} · S/N: {item.serial_number || '-'}</span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+            )}
+
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
               <button
                 type="button"
                 onClick={() => setScheduleTarget(null)}
+                disabled={schedSaving}
                 className={modalSecondaryBtnClass}
               >
                 ยกเลิก
               </button>
               <button
                 type="submit"
+                disabled={schedSaving || (scheduleTarget.kind === 'item' && schedItemIds.length === 0)}
                 className={modalPrimaryBtnClass}
               >
                 <Check className="w-4 h-4 inline mr-1" />
-                บันทึกลงตารางวิ่งงาน
+                {schedSaving ? 'กำลังบันทึก…' : 'บันทึกลงตารางวิ่งงาน'}
               </button>
             </div>
           </form>
-        </div>,
+        </ModalBackdrop>,
         document.body
       )}
-
-      {/* Morning Briefing A4 Print Preview Modal */}
-      <MorningBriefingPrintModal
-        isOpen={morningBriefingOpen}
-        onClose={() => setMorningBriefingOpen(false)}
-        targetDate={rosterDate}
-        onDateChange={(d) => setRosterDate(d)}
-        rows={morningBriefingRows}
-        preparedBy={currentUser?.name || 'หน้าร้าน'}
-      />
 
       {/* Tomorrow / Daily Job Dispatch Roster Sheet (ONSITE SERVICE + INSTALLATION) */}
       <OnsiteDispatchRosterModal

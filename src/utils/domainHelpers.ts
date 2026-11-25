@@ -1,6 +1,11 @@
-import type { Item, Order, Project, StockPO, UserRole } from '../types';
+import type { Item, Order, Project, StockPO, UserAccount, UserRole } from '../types';
 
 export const LOW_MARGIN_THRESHOLD = 10;
+
+export const canChangeDraftOrder = (order: Order, items: readonly Item[]): boolean =>
+  order.order_status === 'pending_purchasing' && !order.bill_no &&
+  order.billing_status !== 'billed' && !order.po_created_at &&
+  !items.some(item => item.order_id === order.id);
 
 /**
  * ตรวจสอบว่าเป็นสายสัญญาณ สายไฟ สายเน็ต สาย Fiber ตู้ Rack หรือวัสดุสิ้นเปลืองที่ไม่ต้องส่งให้ช่างเตรียมเทส/ติดโลโก้
@@ -94,6 +99,15 @@ export const getRoleDisplayName = (role: string): string => {
   if (role === 'manager') return 'ผู้บริหาร (Manager)';
   return role.toUpperCase();
 };
+
+export const getWorkPositions = (user: UserAccount): UserRole[] =>
+  user.work_positions ?? [user.role];
+
+export const worksInPosition = (user: UserAccount, position: UserRole): boolean =>
+  getWorkPositions(user).includes(position);
+
+export const formatEmploymentDate = (date?: string | null): string =>
+  date ? new Intl.DateTimeFormat('th-TH', { dateStyle: 'medium', timeZone: 'UTC' }).format(new Date(date)) : 'ยังไม่ระบุ';
 
 export interface OrderFinancials {
   revenue: number;

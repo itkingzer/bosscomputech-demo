@@ -71,7 +71,7 @@ function canvasToBlob(canvas: HTMLCanvasElement, mimeType: string, quality: numb
   });
 }
 
-function blobToDataUrl(blob: Blob): Promise<string> {
+export function blobToDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onloadend = () => {
@@ -89,12 +89,12 @@ function blobToDataUrl(blob: Blob): Promise<string> {
 /**
  * Client-side resize (max width 1280px) and compress to WebP (fallback JPEG) at quality 0.75.
  */
-export async function compressEvidenceImage(file: File): Promise<{ blob: Blob; ext: 'webp' | 'jpg'; mimeType: string }> {
+export async function compressEvidenceImage(file: File, maxWidth = MAX_IMAGE_WIDTH, maxHeight = Infinity): Promise<{ blob: Blob; ext: 'webp' | 'jpg'; mimeType: string }> {
   const img = await loadImageFromFile(file);
   const srcWidth = img.naturalWidth || img.width;
   const srcHeight = img.naturalHeight || img.height;
 
-  const scale = srcWidth > MAX_IMAGE_WIDTH ? MAX_IMAGE_WIDTH / srcWidth : 1;
+  const scale = Math.min(1, maxWidth / srcWidth, maxHeight / srcHeight);
   const targetWidth = Math.max(1, Math.round(srcWidth * scale));
   const targetHeight = Math.max(1, Math.round(srcHeight * scale));
 

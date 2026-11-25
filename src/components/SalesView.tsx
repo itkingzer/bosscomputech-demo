@@ -1,24 +1,29 @@
+import { ModalBackdrop } from './ui/ModalBackdrop';
+import { ProductEditorModal } from './ProductEditorModal';
+import { ProductCatalogModal } from './ProductCatalogModal';
+import { PhoneInput, NumberInput, normalizePhone } from './ui/FormInputs';
 import React, { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from '../context/AppContext';
 import { ToastBanner } from './ui/ToastBanner';
+import { Modal, modalInputClass, modalLabelClass, modalSecondaryBtnClass } from './ui/Modal';
 import {
   FilePlus2, Send, ListOrdered, Plus,
   Sparkles, Layers, Trash2, Calendar, CreditCard,
   FileText, Truck, Search, ShoppingBag, X, Check,
   UserCheck, Pencil, TrendingUp, AlertTriangle, ShieldCheck,
-  Receipt, Package, Printer, Wifi, Server, Monitor, Wrench, FileCheck2, Lock
+  Receipt, Package, Printer, Wifi, Server, Monitor, Wrench, FileCheck2, Lock, Building2, UserRound, ChevronRight
 } from 'lucide-react';
 import {
   ROUTE_DEFINITIONS, getRouteByDistrict, RouteCode, BillType, PaymentTerm, DeliveryMode, OrderItem,
-  Product, ProductCategory, ProductUnit, PRODUCT_CATEGORY_LABELS, PRODUCT_UNIT_OPTIONS,
-  WARRANTY_PRESET_YEARS, formatThaiDateTime, Order,
+  Product, ProductUnit,
+  WARRANTY_PRESET_YEARS, formatThaiDateTime, Order, OrderCustomerType,
   Project, ProjectItemType,
   Contract, BillingCategoryType, BillingSubType, BillingBadgeKey,
   BILLING_BADGE_META, getOrderBillingBadgeKey, getProjectDeadlineRisk, formatDateDMY
 } from '../types';
 import { ListControls, useListControls } from './ListControls';
-import { isNonPrepCableOrConsumable } from '../utils/domainHelpers';
+import { canChangeDraftOrder, isNonPrepCableOrConsumable, worksInPosition } from '../utils/domainHelpers';
 import { ActivityTimeline } from './ActivityTimeline';
 import { OrderFormPrintModal } from './OrderFormPrintModal';
 
@@ -50,15 +55,6 @@ const DISTRICT_OPTIONS = [
 const LOW_MARGIN_THRESHOLD = 10; // GP ต่ำกว่า 10% = เตือน
 
 const fmt = (n: number) => n.toLocaleString('th-TH', { maximumFractionDigits: 0 });
-
-const emptyProductForm = () => ({
-  name: '',
-  category: 'pc_notebook' as ProductCategory,
-  item_type: 'hardware' as 'hardware' | 'service',
-  unit: 'เครื่อง' as ProductUnit,
-  cost_price: 0,
-  sell_price: 0
-});
 
 // คำนวณยอดเงินรวมของออเดอร์ (จาก items_list)
 const orderTotal = (ord: Order): number => {
@@ -93,7 +89,7 @@ const DELIVERY_MODE_META: Record<DeliveryMode, { label: string; cls: string }> =
 
 export const SalesView: React.FC = () => {
   const {
-    orders, createOrder, currentUser, users, products, addProduct, updateProduct, deleteProduct, items,
+    orders, createOrder, editOrder, deleteDraftOrder, currentUser, users, products, addProduct, updateProduct, deleteProduct, items,
     projects, createProject, addProjectAddonItems, contracts, addContract, updateContractStatus
   } = useApp();
 
@@ -126,6 +122,11 @@ export const SalesView: React.FC = () => {
 
   // Modal State: Billing Type Selector + Create Order Modal + Rental/MA Modal + Catalog Modal + Order Detail Modal + Project Modals
   const [isBillingTypeModalOpen, setIsBillingTypeModalOpen] = useState(false);
+  const [isCustomerTypeModalOpen, setIsCustomerTypeModalOpen] = useState(false);
+  const [customerType, setCustomerType] = useState<OrderCustomerType>('individual');
+  const [customerContactName, setCustomerContactName] = useState('');
+  const [isSavingOrder, setIsSavingOrder] = useState(false);
+  const [orderSaveError, setOrderSaveError] = useState('');
   const [orderBillingType, setOrderBillingType] = useState<BillingCategoryType>('sales');
   const [orderContractId, setOrderContractId] = useState<string>('');
   const [orderCustomerId, setOrderCustomerId] = useState<string>('');
@@ -175,8 +176,30 @@ export const SalesView: React.FC = () => {
   });
   const [ctrNotes, setCtrNotes] = useState('');
   const [ctrItems, setCtrItems] = useState<OrderItem[]>([]);
-  const [detailOrder, setDetailOrder] = useState<Order | null>(null);
+  const [selectedDetailOrder, setDetailOrder] = useState<Order | null>(null);
+  const detailOrder = orders.find(order => order.id === selectedDetailOrder?.id) ?? null;
   const [printTarget, setPrintTarget] = useState<{ order?: Order | null; project?: Project | null; initialBatchNo?: number | null } | null>(null);
+  const [editingOrder, setEditingOrder] = useState<{ order: Order; draft: boolean } | null>(null);
+  const orderFieldsLocked = !!editingOrder && !editingOrder.draft;
+  const [showDeleteOrder, setShowDeleteOrder] = useState(false);
+  const [isDeletingOrder, setIsDeletingOrder] = useState(false);
+  const [deleteOrderError, setDeleteOrderError] = useState('');
+  const canDeleteDetailOrder = !!detailOrder && canChangeDraftOrder(detailOrder, items);
+
+  const handleDeleteOrder = async () => {
+    if (!detailOrder || !canDeleteDetailOrder || isDeletingOrder) return;
+    setIsDeletingOrder(true);
+    setDeleteOrderError('');
+    const success = await deleteDraftOrder(detailOrder.id).catch(() => false);
+    setIsDeletingOrder(false);
+    if (!success) {
+      setDeleteOrderError('ลบบิลไม่สำเร็จ กรุณาตรวจสอบสถานะบิลแล้วลองอีกครั้ง');
+      return;
+    }
+    setShowDeleteOrder(false);
+    setDetailOrder(null);
+    setToast('ลบบิลแล้ว');
+  };
 
   // ---- Project & Site Installation (PRJ-...) State ----
   const [isCreateProjectOpen, setIsCreateProjectOpen] = useState(false);
@@ -231,14 +254,13 @@ export const SalesView: React.FC = () => {
     [projects, addonProjectId]
   );
   const salesUsersList = useMemo(
-    () => users.filter(u => (u.role === 'sales' || u.role === 'admin') && u.is_active !== false),
+    () => users.filter(u => (worksInPosition(u, 'sales') || u.role === 'admin') && u.is_active !== false),
     [users]
   );
   const onsiteUsersList = useMemo(
-    () => users.filter(u => u.role === 'onsite' && u.is_active !== false),
+    () => users.filter(u => worksInPosition(u, 'onsite') && u.is_active !== false),
     [users]
   );
-  const [searchQuery, setSearchQuery] = useState('');
   const [showCustomerSuggestions, setShowCustomerSuggestions] = useState(false);
   const [autoFilledCustomer, setAutoFilledCustomer] = useState<string | null>(null);
 
@@ -246,6 +268,7 @@ export const SalesView: React.FC = () => {
   const customerDirectory = useMemo(() => {
     const map = new Map<string, {
       name: string;
+      contactName: string;
       phone: string;
       district: string;
       deliveryLocation: string;
@@ -257,6 +280,7 @@ export const SalesView: React.FC = () => {
       (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     );
     sorted.forEach(o => {
+      if (o.customer_type && o.customer_type !== customerType) return;
       const name = (o.customer_name || '').trim();
       if (!name) return;
       const key = name.toLowerCase();
@@ -264,6 +288,7 @@ export const SalesView: React.FC = () => {
       if (!existing) {
         map.set(key, {
           name,
+          contactName: (o.customer_contact_name || '').trim(),
           phone: (o.customer_phone || '').trim(),
           district: o.district || '',
           deliveryLocation: (o.delivery_location || '').trim(),
@@ -273,24 +298,30 @@ export const SalesView: React.FC = () => {
         });
       } else {
         existing.orderCount += 1;
+        if (!existing.contactName && o.customer_contact_name) {
+          existing.contactName = o.customer_contact_name.trim();
+        }
         if (!existing.phone && o.customer_phone) existing.phone = o.customer_phone.trim();
         if (!existing.deliveryLocation && o.delivery_location) existing.deliveryLocation = o.delivery_location.trim();
       }
     });
     return Array.from(map.values());
-  }, [orders]);
+  }, [orders, customerType]);
 
   const customerSuggestions = useMemo(() => {
     const q = customerName.trim().toLowerCase();
     if (!q) return customerDirectory.slice(0, 5);
+    const phoneQuery = /^[0-9๐-๙+()\s-]+$/.test(q) ? normalizePhone(q) : '';
     return customerDirectory
-      .filter(c => c.name.toLowerCase().includes(q) || c.phone.toLowerCase().includes(q))
+      .filter(c => c.name.toLowerCase().includes(q) || (phoneQuery && normalizePhone(c.phone).includes(phoneQuery)) ||
+        (customerType === 'organization' && c.contactName.toLowerCase().includes(q)))
       .slice(0, 6);
-  }, [customerDirectory, customerName]);
+  }, [customerDirectory, customerName, customerType]);
 
   const applyReturningCustomer = (cust: typeof customerDirectory[number]) => {
     setCustomerName(cust.name);
-    if (cust.phone) setCustomerPhone(cust.phone);
+    setCustomerContactName(cust.contactName);
+    if (cust.phone) setCustomerPhone(normalizePhone(cust.phone));
     if (cust.district && DISTRICT_OPTIONS.some(d => d.district === cust.district)) {
       setDistrict(cust.district);
     }
@@ -302,10 +333,14 @@ export const SalesView: React.FC = () => {
 
   const handleCustomerNameChange = (val: string) => {
     setCustomerName(val);
+    if (val.trim().toLowerCase() !== customerName.trim().toLowerCase()) {
+      setCustomerContactName('');
+    }
     setShowCustomerSuggestions(true);
     const exact = customerDirectory.find(c => c.name.toLowerCase() === val.trim().toLowerCase());
     if (exact) {
-      if (!customerPhone.trim() && exact.phone) setCustomerPhone(exact.phone);
+      setCustomerContactName(exact.contactName);
+      if (!customerPhone.trim() && exact.phone) setCustomerPhone(normalizePhone(exact.phone));
       if (exact.district && DISTRICT_OPTIONS.some(d => d.district === exact.district)) {
         setDistrict(exact.district);
       }
@@ -316,16 +351,12 @@ export const SalesView: React.FC = () => {
       setAutoFilledCustomer(null);
     }
   };
-  const [categoryFilter, setCategoryFilter] = useState<'all' | ProductCategory>('all');
-  const [sortBy, setSortBy] = useState<'stock_desc' | 'stock_asc' | 'price_desc' | 'price_asc' | 'name'>('stock_desc');
 
   // Selected items inside the Modal: mapping productId -> quantity
   const [modalSelectedMap, setModalSelectedMap] = useState<Record<string, number>>({});
 
   // Inline Add / Edit Product Form within Modal
-  const [isAddingNewToCatalog, setIsAddingNewToCatalog] = useState(false);
-  const [editingProductId, setEditingProductId] = useState<string | null>(null);
-  const [productForm, setProductForm] = useState(emptyProductForm());
+  const [productEditor, setProductEditor] = useState<{ product?: Product } | null>(null);
 
   // Order list search
   const [orderSearch, setOrderSearch] = useState('');
@@ -333,11 +364,13 @@ export const SalesView: React.FC = () => {
   const [toast, setToast] = useState('');
 
   // คำนวณสายรถอัตโนมัติตามอำเภอที่เลือก
-  const currentRouteCode: RouteCode = getRouteByDistrict(district);
+  const currentRouteCode: RouteCode = editingOrder && (editingOrder.order.district ?? '') === district
+    ? editingOrder.order.route_code ?? getRouteByDistrict(district)
+    : getRouteByDistrict(district);
   const routeMeta = ROUTE_DEFINITIONS[currentRouteCode];
 
   // Lock background scroll while any modal is open
-  const anyModalOpen = isCreateModalOpen || isCatalogModalOpen || !!detailOrder || isCreateProjectOpen || !!detailProject || !!addonProject;
+  const anyModalOpen = !!productEditor || isCreateModalOpen || isCatalogModalOpen || !!detailOrder || isCreateProjectOpen || !!detailProject || !!addonProject;
   useEffect(() => {
     if (!anyModalOpen) return;
 
@@ -645,7 +678,8 @@ export const SalesView: React.FC = () => {
   };
 
   // ---- Create Order Modal (Sales / Addon) ----
-  const handleOpenCreateModal = (mode: 'sales' | 'addon' = 'sales') => {
+  const handleOpenCustomerTypeModal = (mode: 'sales' | 'addon') => {
+    setEditingOrder(null);
     setIsBillingTypeModalOpen(false);
     setOrderBillingType(mode);
     setOrderContractId('');
@@ -653,6 +687,8 @@ export const SalesView: React.FC = () => {
     setSalesRef(`${mode === 'addon' ? 'ADD' : 'SO'}-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`);
     setCustomerName('');
     setCustomerPhone('');
+    setCustomerContactName('');
+    setOrderSaveError('');
     setDistrict('เมืองสุราษฎร์ธานี');
     setProvinceCustom('');
     setDeliveryLoc('');
@@ -667,16 +703,48 @@ export const SalesView: React.FC = () => {
     setOrderItems([]);
     setAutoFilledCustomer(null);
     setShowCustomerSuggestions(false);
+    setIsCustomerTypeModalOpen(true);
+  };
+
+  const handleCloseCreateModal = () => {
+    if (isSavingOrder) return;
+    setIsCreateModalOpen(false);
+    setEditingOrder(null);
+  };
+
+  const handleOpenEditOrder = (order: Order) => {
+    setEditingOrder({ order, draft: canChangeDraftOrder(order, items) });
+    setOrderBillingType(order.billing_type ?? 'sales');
+    setOrderContractId(order.contract_id ?? '');
+    setOrderCustomerId(order.customer_id ?? '');
+    setSalesRef(order.sales_ref ?? order.id);
+    setCustomerType(order.customer_type ?? 'individual');
+    setCustomerName(order.customer_name);
+    setCustomerContactName(order.customer_contact_name ?? '');
+    setCustomerPhone(normalizePhone(order.customer_phone ?? ''));
+    setDistrict(order.district ?? '');
+    setProvinceCustom(order.province_custom ?? '');
+    setDeliveryLoc(order.delivery_location ?? '');
+    setDeliveryDate(order.delivery_date ?? '');
+    setOrderDueDate(order.due_date ?? '');
+    setBillType(order.bill_type ?? 'tax_invoice');
+    setPaymentTerm(order.payment_term ?? 'cash');
+    setDeliveryMode(order.delivery_mode ?? 'install');
+    setSiteNotes(order.site_notes ?? '');
+    setExtraJobCost(order.extra_cost ?? 0);
+    setDepositAmount(order.deposit_amount ?? 0);
+    setOrderItems(order.items_list ?? []);
+    setOrderSaveError('');
+    setAutoFilledCustomer(null);
+    setShowCustomerSuggestions(false);
     setIsCreateModalOpen(true);
   };
 
-  const handleCloseCreateModal = () => setIsCreateModalOpen(false);
-
   // เปิดบิลใหม่จากโปรเจกต์ที่ส่งมอบปิดงานแล้ว — ดึงเฉพาะข้อมูลลูกค้า & สถานที่ (ไม่ดึงรายการสินค้าเก่า)
   const handleCreateFollowUpBillFromClosedProject = (prj: Project) => {
-    handleOpenCreateModal('addon');
+    handleOpenCustomerTypeModal('addon');
     setCustomerName(prj.customer_name || '');
-    setCustomerPhone(prj.phone || '');
+    setCustomerPhone(normalizePhone(prj.phone || ''));
     setDistrict(prj.district || 'เมืองสุราษฎร์ธานี');
     setDeliveryLoc(prj.location || '');
     setSiteNotes(`งานเพิ่มเติม/แก้ไขต่อจากโปรเจกต์ที่ส่งมอบแล้ว ${prj.id} (${prj.site_name})`);
@@ -688,12 +756,6 @@ export const SalesView: React.FC = () => {
   const handleOpenCatalogModal = (target: 'order' | 'contract_order' | 'contract_template' | 'project_equipment' | 'project_consumable' | 'addon' = 'order') => {
     setCatalogTarget(target);
     setModalSelectedMap({});
-    setSearchQuery('');
-    setCategoryFilter(target === 'project_consumable' ? 'service' : 'all');
-    setSortBy('stock_desc');
-    setIsAddingNewToCatalog(false);
-    setEditingProductId(null);
-    setProductForm(emptyProductForm());
     setIsCatalogModalOpen(true);
   };
 
@@ -713,57 +775,6 @@ export const SalesView: React.FC = () => {
   const handleUpdateModalItemQty = (itemId: string, qty: number) => {
     const validQty = Math.max(1, qty);
     setModalSelectedMap(prev => ({ ...prev, [itemId]: validQty }));
-  };
-
-  // Save (create or update) product in catalog
-  const handleSaveProduct = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!productForm.name.trim()) {
-      alert('กรุณาระบุชื่อสินค้าหรือบริการ');
-      return;
-    }
-
-    const payload = {
-      name: productForm.name.trim(),
-      category: productForm.category,
-      item_type: productForm.item_type,
-      unit: productForm.unit,
-      cost_price: Math.max(0, productForm.cost_price),
-      sell_price: Math.max(0, productForm.sell_price)
-    };
-
-    if (editingProductId) {
-      updateProduct(editingProductId, payload);
-      setToast(`อัปเดต "${payload.name}" ในแคตตาล็อกแล้ว`);
-    } else {
-      addProduct(payload);
-      setToast(`เพิ่ม "${payload.name}" เข้าแคตตาล็อกแล้ว`);
-    }
-
-    setProductForm(emptyProductForm());
-    setEditingProductId(null);
-    setIsAddingNewToCatalog(false);
-    setTimeout(() => setToast(''), 3000);
-  };
-
-  const handleStartEditProduct = (item: Product, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setEditingProductId(item.id);
-    setProductForm({
-      name: item.name,
-      category: item.category,
-      item_type: item.item_type,
-      unit: item.unit,
-      cost_price: item.cost_price,
-      sell_price: item.sell_price
-    });
-    setIsAddingNewToCatalog(true);
-  };
-
-  const handleCancelProductForm = () => {
-    setIsAddingNewToCatalog(false);
-    setEditingProductId(null);
-    setProductForm(emptyProductForm());
   };
 
   // Delete item from Catalog
@@ -897,46 +908,72 @@ export const SalesView: React.FC = () => {
     setOrderItems(prev => prev.map((item, i) => i === index ? { ...item, warranty_years: validYears } : item));
   };
 
-  const handleSubmitOrder = (e: React.FormEvent) => {
+  const handleSubmitOrder = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!customerName.trim() || orderItems.length === 0) {
-      alert('กรุณากรอกชื่อลูกค้าและเพิ่มรายการสินค้า');
+    if (isSavingOrder) return;
+    if (!customerName.trim() || (!orderFieldsLocked && orderItems.length === 0)) {
+      setOrderSaveError('กรุณากรอกชื่อลูกค้าและเพิ่มรายการสินค้า');
+      return;
+    }
+    if (customerType === 'organization' && !customerContactName.trim()) {
+      setOrderSaveError('กรุณากรอกชื่อผู้ติดต่อ');
       return;
     }
 
     const totalQty = orderItems.reduce((acc, curr) => acc + curr.quantity, 0);
 
-    createOrder({
-      sales_ref: salesRef,
-      salesperson: salespersonName,
-      customer_id: orderCustomerId || null,
+    setIsSavingOrder(true);
+    setOrderSaveError('');
+    const customerDetails = {
       customer_name: customerName.trim(),
       customer_phone: customerPhone.trim(),
-      delivery_location: deliveryLoc.trim() || `อ.${district}`,
+      delivery_location: deliveryLoc.trim() || (district ? `อ.${district}` : ''),
+      site_notes: siteNotes.trim(),
+      ...(customerType === 'organization' ? { customer_contact_name: customerContactName.trim() } : {}),
+    };
+    const draftDetails = {
+      customer_id: orderCustomerId || null,
+      contract_id: orderContractId || null,
       district: district,
       route_code: currentRouteCode,
-      province_custom: currentRouteCode === 'route_6' ? provinceCustom.trim() : undefined,
+      province_custom: currentRouteCode === 'route_6' ? provinceCustom.trim() : '',
       delivery_date: deliveryDate,
-      issue_date: deliveryDate || new Date().toISOString().split('T')[0],
       due_date: orderDueDate || null,
       bill_type: billType,
       payment_term: paymentTerm,
       delivery_mode: deliveryMode,
-      site_notes: siteNotes.trim(),
       items_list: orderItems,
       extra_cost: Math.max(0, extraJobCost),
       deposit_amount: Math.max(0, depositAmount),
-      planned_model: orderItems[0]?.model_name || '',
-      planned_quantity: totalQty,
-      bill_no: null,
-      billing_type: orderBillingType,
-      sub_type: orderBillingType === 'addon' ? 'addon_service' : 'standard',
-      contract_id: orderContractId || null,
-      billing_status: 'pending'
-    });
+    };
+    const request = editingOrder
+      ? editOrder(editingOrder.order, customerDetails, editingOrder.draft ? draftDetails : undefined)
+      : createOrder({
+        ...customerDetails,
+        ...draftDetails,
+        sales_ref: salesRef,
+        salesperson: salespersonName,
+        customer_type: customerType,
+        issue_date: deliveryDate || new Date().toISOString().split('T')[0],
+        planned_model: orderItems[0]?.model_name || '',
+        planned_quantity: totalQty,
+        bill_no: null,
+        billing_type: orderBillingType,
+        sub_type: orderBillingType === 'addon' ? 'addon_service' : 'standard',
+        billing_status: 'pending'
+      });
+    const saved = await request.catch(() => false);
+    setIsSavingOrder(false);
+    if (!saved) {
+      setOrderSaveError(editingOrder
+        ? 'บันทึกการแก้ไขไม่สำเร็จ กรุณาเปิดบิลอีกครั้งเพื่อตรวจสอบข้อมูลล่าสุด'
+        : 'บันทึกบิลไม่สำเร็จ กรุณาลองอีกครั้ง');
+      return;
+    }
 
-    setToast(`สร้างใบสั่งขายรหัส ${salesRef} รวม ${totalQty} ชิ้น ส่งต่อจัดซื้อ & สต๊อกแล้ว`);
+    setToast(editingOrder ? 'บันทึกการแก้ไขบิลแล้ว' : `สร้างใบสั่งขายรหัส ${salesRef} รวม ${totalQty} ชิ้น ส่งต่อจัดซื้อ & สต๊อกแล้ว`);
     setIsCreateModalOpen(false);
+    setEditingOrder(null);
     setCustomerName('');
     setCustomerPhone('');
     setDeliveryLoc('');
@@ -967,13 +1004,6 @@ export const SalesView: React.FC = () => {
     }
   };
 
-  // Filtered Catalog Items for Modal (before sorting)
-  const filteredCatalogBase = products.filter(item => {
-    const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesCategory = categoryFilter === 'all' || item.category === categoryFilter;
-    return matchesSearch && matchesCategory;
-  });
-
   // Live stock counts per product name (normalized name.trim().toLowerCase())
   const stockByName = useMemo(() => {
     const map: Record<string, { inStock: number; incoming: number }> = {};
@@ -995,31 +1025,6 @@ export const SalesView: React.FC = () => {
     });
     return map;
   }, [items, orders]);
-
-  const getStockInfo = (productName: string) =>
-    stockByName[(productName || '').trim().toLowerCase()] || { inStock: 0, incoming: 0 };
-
-  // Sorted Catalog Items for Modal
-  const filteredCatalog = useMemo(() => {
-    const list = [...filteredCatalogBase];
-    const stockOf = (name: string) =>
-      stockByName[(name || '').trim().toLowerCase()]?.inStock || 0;
-
-    switch (sortBy) {
-      case 'stock_desc':
-        return list.sort((a, b) => stockOf(b.name) - stockOf(a.name));
-      case 'stock_asc':
-        return list.sort((a, b) => stockOf(a.name) - stockOf(b.name));
-      case 'price_desc':
-        return list.sort((a, b) => b.sell_price - a.sell_price);
-      case 'price_asc':
-        return list.sort((a, b) => a.sell_price - b.sell_price);
-      case 'name':
-        return list.sort((a, b) => a.name.localeCompare(b.name, 'th'));
-      default:
-        return list;
-    }
-  }, [filteredCatalogBase, stockByName, sortBy]);
 
   // Filter orders by search, ประเภทบิล (billing category), and สถานะการชำระเงิน (billing_status) BEFORE pagination
   const filteredOrders = useMemo(() => {
@@ -1053,13 +1058,11 @@ export const SalesView: React.FC = () => {
 
   const searchedOrders = ordersList.pageItems;
 
-  const selectedCount = Object.keys(modalSelectedMap).length;
   const modalTotalAmount = Object.keys(modalSelectedMap).reduce((sum, id) => {
     const item = products.find(c => c.id === id);
     const qty = modalSelectedMap[id] || 1;
     return sum + (item ? item.sell_price * qty : 0);
   }, 0);
-  void modalTotalAmount;
 
   // Live Order Financials (INTERNAL ONLY)
   const financials = useMemo(() => {
@@ -1228,10 +1231,18 @@ export const SalesView: React.FC = () => {
             <button
               type="button"
               onClick={() => handleOpenCatalogModal('order')}
-              className="px-4 py-2.5 min-h-[44px] rounded-xl bg-white/[0.04] hover:bg-white/[0.08] text-slate-200 border border-white/[0.1] font-bold text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-2 active:scale-[0.97]"
+              className="px-4 py-2.5 min-h-[44px] rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-300 dark:bg-white/[0.04] dark:hover:bg-white/[0.08] dark:text-slate-200 dark:border-white/[0.1] font-bold text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-2 active:scale-[0.97]"
             >
               <ShoppingBag className="w-4 h-4 text-[#FF6B00]" />
-              <span>เพิ่ม/จัดการสินค้าแคตตาล็อก</span>
+              <span>จัดการแคตตาล็อก</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setProductEditor({})}
+              className="inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-xl border border-[#FF6B00]/40 bg-[#FF6B00]/15 px-4 py-2.5 text-xs font-bold text-orange-900 transition hover:bg-[#FF6B00]/25 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-600 dark:text-orange-200 dark:focus-visible:outline-orange-400"
+            >
+              <Plus className="size-4" aria-hidden="true" />
+              เพิ่มสินค้าใหม่
             </button>
           </div>
         </div>
@@ -1386,7 +1397,7 @@ export const SalesView: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => handleCreateFollowUpBillFromClosedProject(prj)}
-                        className="flex-1 py-2 px-3 rounded-xl bg-emerald-100 hover:bg-emerald-200 dark:bg-emerald-500/20 dark:hover:bg-emerald-500/30 text-emerald-900 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-500/40 font-extrabold text-xs transition cursor-pointer flex items-center justify-center gap-1.5 active:scale-95"
+                        className="flex-1 py-2 px-3 rounded-xl border bg-emerald-700 hover:bg-emerald-800 text-white border-emerald-700 font-extrabold text-xs transition cursor-pointer flex items-center justify-center gap-1.5 active:scale-95"
                       >
                         <FilePlus2 className="w-3.5 h-3.5" />
                         <span>เปิดบิลใหม่จากลูกค้า/ไซต์นี้</span>
@@ -1518,7 +1529,10 @@ export const SalesView: React.FC = () => {
                 <button
                   key={ord.id}
                   type="button"
-                  onClick={() => setDetailOrder(ord)}
+                  onClick={() => {
+                    setShowDeleteOrder(false);
+                    setDetailOrder(ord);
+                  }}
                   className="text-left p-4 rounded-2xl bg-white/[0.02] hover:bg-white/[0.05] border border-white/[0.08] hover:border-[#FF6B00]/40 transition-all duration-150 cursor-pointer active:scale-[0.97] flex flex-col gap-2.5 min-h-[148px]"
                 >
                   <div className="flex items-center justify-between gap-2">
@@ -1590,12 +1604,12 @@ export const SalesView: React.FC = () => {
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <h3 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white leading-tight">
-                      {orderBillingType === 'addon'
+                      {editingOrder ? 'แก้ไขบิล' : orderBillingType === 'addon'
                         ? 'เปิดบิลค่าใช้จ่ายเพิ่มเติม / นอกสัญญา (Add-on)'
                         : 'เปิดบิลขายใหม่ (New Sales Order)'}
                     </h3>
-                    <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold border ${BILLING_BADGE_META[orderBillingType === 'addon' ? 'addon' : 'sales'].cls}`}>
-                      {BILLING_BADGE_META[orderBillingType === 'addon' ? 'addon' : 'sales'].label}
+                    <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold border ${BILLING_BADGE_META[editingOrder ? getOrderBillingBadgeKey(editingOrder.order) : orderBillingType === 'addon' ? 'addon' : 'sales'].cls}`}>
+                      {BILLING_BADGE_META[editingOrder ? getOrderBillingBadgeKey(editingOrder.order) : orderBillingType === 'addon' ? 'addon' : 'sales'].label}
                     </span>
                   </div>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400 font-mono">เลขที่เอกสาร: <strong className="text-[#E65A00] dark:text-[#FF6B00]">{salesRef}</strong></p>
@@ -1604,7 +1618,7 @@ export const SalesView: React.FC = () => {
               <button
                 type="button"
                 onClick={handleCloseCreateModal}
-                aria-label="ปิดหน้าต่างเปิดบิลขาย"
+                aria-label={editingOrder ? 'ปิดหน้าต่างแก้ไขบิล' : 'ปิดหน้าต่างเปิดบิลขาย'}
                 className="p-2.5 rounded-xl text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-white/[0.04] hover:bg-slate-200 dark:hover:bg-white/[0.08] transition min-w-[44px] min-h-[44px] flex items-center justify-center flex-shrink-0"
               >
                 <X className="w-5 h-5" />
@@ -1616,13 +1630,18 @@ export const SalesView: React.FC = () => {
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-100 text-emerald-900 border border-emerald-300 dark:bg-emerald-500/10 dark:border-emerald-500/30 text-[11px] font-semibold dark:text-emerald-300">
                   <UserCheck className="w-3.5 h-3.5" />
-                  <span>ผู้เปิดบิล: <strong className="text-emerald-950 dark:text-emerald-200">{salespersonName}</strong></span>
+                  <span>ผู้เปิดบิล: <strong className="text-emerald-950 dark:text-emerald-200">{editingOrder ? editingOrder.order.salesperson || editingOrder.order.created_by || '—' : salespersonName}</strong></span>
                 </span>
               </div>
+              {orderFieldsLocked && (
+                <p className="rounded-xl bg-amber-50 p-3 text-xs text-amber-900 dark:bg-amber-500/10 dark:text-amber-200">
+                  บิลผ่านขั้นตอนจัดซื้อหรือวางบิลแล้ว แก้ไขได้เฉพาะข้อมูลลูกค้า สถานที่ส่งมอบ และหมายเหตุ
+                </p>
+              )}
 
               {/* Optional Contract Reference for Add-on Bills */}
               {orderBillingType === 'addon' && (
-                <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 grid grid-cols-1 md:grid-cols-2 gap-3">
+                <fieldset disabled={orderFieldsLocked} className="min-w-0 p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 grid grid-cols-1 md:grid-cols-2 gap-3 disabled:opacity-70">
                   <div>
                     <label className="block text-xs font-bold text-amber-900 dark:text-amber-200 mb-1">
                       อ้างอิงสัญญาเดิมที่ใช้งานอยู่ (ไม่บังคับ)
@@ -1636,7 +1655,8 @@ export const SalesView: React.FC = () => {
                         if (ctr) {
                           setOrderCustomerId(ctr.customer_id);
                           setCustomerName(ctr.customer_name);
-                          if (ctr.customer_phone) setCustomerPhone(ctr.customer_phone);
+                          setCustomerContactName('');
+                          if (ctr.customer_phone) setCustomerPhone(normalizePhone(ctr.customer_phone));
                           if (ctr.district && DISTRICT_OPTIONS.some(d => d.district === ctr.district)) {
                             setDistrict(ctr.district);
                           }
@@ -1667,22 +1687,34 @@ export const SalesView: React.FC = () => {
                       className="w-full rounded-xl px-3 py-2 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-amber-300 dark:border-amber-500/40 font-mono focus:outline-none"
                     />
                   </div>
-                </div>
+                </fieldset>
               )}
 
               {/* Section 1: Customer Details */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="relative">
-                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
-                    ชื่อลูกค้า / บริษัท * <span className="text-[10px] text-slate-400 font-normal">(พิมพ์เพื่อค้นหาลูกค้าเดิม)</span>
+                <div
+                  className="relative"
+                  onBlur={(e) => {
+                    if (!e.currentTarget.contains(e.relatedTarget)) setShowCustomerSuggestions(false);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape' && showCustomerSuggestions) {
+                      e.stopPropagation();
+                      e.currentTarget.querySelector('input')?.focus();
+                      setShowCustomerSuggestions(false);
+                    }
+                  }}
+                >
+                  <label htmlFor="sales-customer-name" className={modalLabelClass}>
+                    {customerType === 'organization' ? 'ชื่อบริษัท / องค์กร' : 'ชื่อ-นามสกุลลูกค้า'} *
                   </label>
                   <input
+                    id="sales-customer-name"
                     type="text"
                     required
-                    placeholder="เช่น บจก. ซีทรานเฟอร์รี่ ดอนสัก"
+                    placeholder={customerType === 'organization' ? 'พิมพ์ชื่อเพื่อค้นหาองค์กรเดิม' : 'พิมพ์ชื่อเพื่อค้นหาลูกค้าเดิม'}
                     value={customerName}
                     onFocus={() => setShowCustomerSuggestions(true)}
-                    onBlur={() => window.setTimeout(() => setShowCustomerSuggestions(false), 160)}
                     onChange={(e) => handleCustomerNameChange(e.target.value)}
                     className="w-full rounded-xl px-3 py-2 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 placeholder-slate-400 focus:outline-none focus:border-blue-500"
                     autoComplete="off"
@@ -1692,17 +1724,18 @@ export const SalesView: React.FC = () => {
                   {showCustomerSuggestions && customerSuggestions.length > 0 && (
                     <div className="absolute left-0 right-0 top-full mt-1 z-30 rounded-2xl border border-slate-200 dark:border-white/[0.12] bg-white dark:bg-[#1A1D26] shadow-2xl overflow-hidden max-h-56 overflow-y-auto">
                       <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-white/[0.03] border-b border-slate-200 dark:border-white/[0.08]">
-                        แนะนำลูกค้าเดิม / บริษัทเดิม ({customerSuggestions.length})
+                        {customerType === 'organization' ? 'บริษัท / องค์กรที่เคยเปิดบิล' : 'ลูกค้าที่เคยเปิดบิล'}
                       </div>
                       {customerSuggestions.map((cust) => (
                         <button
                           key={cust.name}
                           type="button"
-                          onMouseDown={(e) => {
-                            e.preventDefault();
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={(e) => {
+                            e.currentTarget.closest('.relative')?.querySelector('input')?.focus();
                             applyReturningCustomer(cust);
                           }}
-                          className="w-full text-left px-3 py-2 hover:bg-blue-50 dark:hover:bg-white/[0.06] border-b last:border-b-0 border-slate-100 dark:border-white/[0.05] transition cursor-pointer"
+                          className="w-full !min-h-11 text-left px-3 py-2 hover:bg-blue-50 dark:hover:bg-white/[0.06] focus-visible:bg-blue-50 dark:focus-visible:bg-white/[0.08] border-b last:border-b-0 border-slate-100 dark:border-white/[0.05] transition cursor-pointer"
                         >
                           <div className="flex items-center justify-between gap-2">
                             <span className="text-xs font-bold text-slate-900 dark:text-white truncate">
@@ -1713,6 +1746,7 @@ export const SalesView: React.FC = () => {
                             </span>
                           </div>
                           <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 flex flex-wrap gap-x-3">
+                            {customerType === 'organization' && cust.contactName && <span>{cust.contactName}</span>}
                             <span className="font-mono">{cust.phone || 'ไม่มีเบอร์'}</span>
                             {cust.district && <span>อ.{cust.district}</span>}
                           </div>
@@ -1723,11 +1757,12 @@ export const SalesView: React.FC = () => {
 
                   {autoFilledCustomer && (
                     <div className="mt-1.5 flex items-center justify-between gap-2 px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/30 text-[11px] text-emerald-800 dark:text-emerald-200">
-                      <span className="font-semibold truncate">ดึงเบอร์ & ที่อยู่ลูกค้าเดิมอัตโนมัติแล้ว</span>
+                      <span className="font-semibold truncate">ใช้ข้อมูลจากบิลเดิม</span>
                       <button
                         type="button"
                         onClick={() => {
                           setCustomerName('');
+                          setCustomerContactName('');
                           setCustomerPhone('');
                           setDeliveryLoc('');
                           setAutoFilledCustomer(null);
@@ -1739,12 +1774,25 @@ export const SalesView: React.FC = () => {
                     </div>
                   )}
                 </div>
+                {customerType === 'organization' && (
+                  <div>
+                    <label htmlFor="sales-customer-contact" className={modalLabelClass}>ชื่อผู้ติดต่อ *</label>
+                    <input
+                      id="sales-customer-contact"
+                      type="text"
+                      required
+                      placeholder="เช่น สมชาย ใจดี"
+                      value={customerContactName}
+                      onChange={(e) => setCustomerContactName(e.target.value)}
+                      className={modalInputClass}
+                    />
+                  </div>
+                )}
                 <div>
-                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">เบอร์โทรติดต่อลูกค้า *</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="08x-xxx-xxxx"
+                  <label htmlFor="sales-customer-phone" className={modalLabelClass}>เบอร์โทรติดต่อลูกค้า *</label>
+                  <PhoneInput
+                    id="sales-customer-phone"
+                    required={!editingOrder || !!editingOrder.order.customer_phone}
                     value={customerPhone}
                     onChange={(e) => setCustomerPhone(e.target.value)}
                     className="w-full rounded-xl px-3 py-2 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 placeholder-slate-400 focus:outline-none focus:border-blue-500"
@@ -1754,9 +1802,13 @@ export const SalesView: React.FC = () => {
                   <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">อำเภอ / พื้นที่ (จัดสายรถอัตโนมัติ) *</label>
                   <select
                     value={district}
+                    disabled={orderFieldsLocked}
                     onChange={(e) => setDistrict(e.target.value)}
                     className="w-full rounded-xl px-3 py-2 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 focus:outline-none focus:border-blue-500"
                   >
+                    {editingOrder && !DISTRICT_OPTIONS.some(opt => opt.district === district) && (
+                      <option value={district}>{district || 'ยังไม่ระบุพื้นที่'}</option>
+                    )}
                     {DISTRICT_OPTIONS.map(opt => (
                       <option key={opt.district} value={opt.district} className="bg-white dark:bg-[#12141A]">
                         {opt.district} - [{opt.zone}]
@@ -1781,7 +1833,8 @@ export const SalesView: React.FC = () => {
                   <div>
                     <input
                       type="text"
-                      required
+                      required={!editingOrder || district !== (editingOrder.order.district ?? '')}
+                      disabled={orderFieldsLocked}
                       placeholder="ระบุจังหวัด / รายละเอียดพื้นที่พิเศษ เช่น ชุมพร, ระนอง"
                       value={provinceCustom}
                       onChange={(e) => setProvinceCustom(e.target.value)}
@@ -1792,7 +1845,7 @@ export const SalesView: React.FC = () => {
               </div>
 
               {/* Section 2: Delivery Mode (4 modes) */}
-              <div>
+              <fieldset disabled={orderFieldsLocked} className="min-w-0 disabled:opacity-70">
                 <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5 flex items-center gap-1">
                   <Truck className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
                   <span>ประเภทการส่งมอบ (Delivery Mode) *</span>
@@ -1817,10 +1870,10 @@ export const SalesView: React.FC = () => {
                     </button>
                   ))}
                 </div>
-              </div>
+              </fieldset>
 
               {/* Section 3: Delivery & Payment Details */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 pt-3 border-t border-slate-200 dark:border-white/[0.06]">
+              <fieldset disabled={orderFieldsLocked} className="min-w-0 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 pt-3 border-t border-slate-200 dark:border-white/[0.06] disabled:opacity-70">
                 <div>
                   <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1 flex items-center gap-1">
                     <Calendar className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
@@ -1828,7 +1881,7 @@ export const SalesView: React.FC = () => {
                   </label>
                   <input
                     type="date"
-                    required
+                    required={!editingOrder || !!editingOrder.order.delivery_date}
                     value={deliveryDate}
                     onChange={(e) => setDeliveryDate(e.target.value)}
                     className="w-full rounded-xl px-3 py-2 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 font-mono focus:outline-none focus:border-blue-500"
@@ -1866,7 +1919,7 @@ export const SalesView: React.FC = () => {
                     <option value="government" className="bg-white dark:bg-[#12141A]">งานราชการ / งานประมูล (Government / Bidding)</option>
                   </select>
                 </div>
-              </div>
+              </fieldset>
 
               {/* Section 4: Delivery Location & Site Notes */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1894,7 +1947,7 @@ export const SalesView: React.FC = () => {
               </div>
 
               {/* Section 5: Items in this Order */}
-              <div className="pt-3 border-t border-slate-200 dark:border-white/[0.06]">
+              <fieldset disabled={orderFieldsLocked} className="min-w-0 pt-3 border-t border-slate-200 dark:border-white/[0.06] disabled:opacity-70">
                 <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
                   <label className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
                     <Package className="w-3.5 h-3.5 text-[#FF6B00]" />
@@ -1943,8 +1996,7 @@ export const SalesView: React.FC = () => {
                           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                             <div>
                               <label className="block text-[10px] text-slate-600 dark:text-slate-400 mb-0.5">จำนวน</label>
-                              <input
-                                type="number"
+                              <NumberInput
                                 min={1}
                                 value={it.quantity}
                                 onChange={(e) => handleUpdateItemQuantity(idx, parseInt(e.target.value) || 1)}
@@ -1953,8 +2005,7 @@ export const SalesView: React.FC = () => {
                             </div>
                             <div>
                               <label className="block text-[10px] text-slate-600 dark:text-slate-400 mb-0.5">ต้นทุน/หน่วย</label>
-                              <input
-                                type="number"
+                              <NumberInput
                                 min={0}
                                 step="0.01"
                                 value={it.unit_cost ?? 0}
@@ -1964,8 +2015,7 @@ export const SalesView: React.FC = () => {
                             </div>
                             <div>
                               <label className="block text-[10px] text-slate-600 dark:text-slate-400 mb-0.5">ราคาขาย/หน่วย</label>
-                              <input
-                                type="number"
+                              <NumberInput
                                 min={0}
                                 step="0.01"
                                 value={it.unit_price ?? 0}
@@ -2003,8 +2053,7 @@ export const SalesView: React.FC = () => {
                                 {y} ปี
                               </button>
                             ))}
-                            <input
-                              type="number"
+                            <NumberInput
                               min={0}
                               value={it.warranty_years ?? 0}
                               onChange={(e) => handleUpdateItemWarranty(idx, parseInt(e.target.value) || 0)}
@@ -2025,8 +2074,7 @@ export const SalesView: React.FC = () => {
                 <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">ค่าใช้จ่ายเพิ่มเติม / ค่าดำเนินการ (Extra Cost)</label>
-                    <input
-                      type="number"
+                    <NumberInput
                       min={0}
                       step="0.01"
                       value={extraJobCost}
@@ -2036,8 +2084,7 @@ export const SalesView: React.FC = () => {
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">เงินมัดจำที่รับแล้ว (Deposit · บาท)</label>
-                    <input
-                      type="number"
+                    <NumberInput
                       min={0}
                       step="0.01"
                       value={depositAmount}
@@ -2047,7 +2094,7 @@ export const SalesView: React.FC = () => {
                     />
                   </div>
                 </div>
-              </div>
+              </fieldset>
 
               {/* Section 6: Live GP & Deposit Summary */}
               <div className="pt-3 border-t border-slate-200 dark:border-white/[0.06]">
@@ -2091,6 +2138,9 @@ export const SalesView: React.FC = () => {
               </div>
 
               {/* Footer Actions */}
+              {orderSaveError && (
+                <p role="alert" className="text-xs font-semibold text-red-700 dark:text-red-300">{orderSaveError}</p>
+              )}
               <div className="pt-3 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-end gap-2.5">
                 <button
                   type="button"
@@ -2101,11 +2151,11 @@ export const SalesView: React.FC = () => {
                 </button>
                 <button
                   type="submit"
-                  disabled={orderItems.length === 0}
+                  disabled={(!orderFieldsLocked && orderItems.length === 0) || isSavingOrder}
                   className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-[#FF6B00] hover:bg-[#FF8A33] disabled:opacity-40 disabled:cursor-not-allowed text-black dark:text-white text-xs font-bold shadow-lg shadow-[#FF6B00]/30 transition active:scale-[0.97] cursor-pointer"
                 >
                   <Send className="w-4 h-4" />
-                  <span>ส่งใบสั่งขาย (Create Order)</span>
+                  <span>{isSavingOrder ? 'กำลังบันทึก…' : editingOrder ? 'บันทึกการแก้ไข' : 'ส่งใบสั่งขาย (Create Order)'}</span>
                 </button>
               </div>
             </form>
@@ -2117,290 +2167,107 @@ export const SalesView: React.FC = () => {
       {/* ========================================================================= */}
       {/* PRODUCT CATALOG MODAL (nested, z-[10001])                                  */}
       {/* ========================================================================= */}
-      {isCatalogModalOpen && createPortal(
-        <div className="fixed inset-0 z-[10001] flex items-center justify-center p-4 sm:p-6 bg-black/60 backdrop-blur-sm animate-fade-in overscroll-contain">
-          <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-3xl w-full sm:w-[94vw] max-w-6xl max-h-[94dvh] sm:max-h-[82dvh] sm:max-h-[86dvh] flex flex-col overflow-hidden animate-modal-pop">
-
-            {/* Header */}
-            <div className="p-4 sm:p-5 bg-slate-50/90 dark:bg-slate-900/95 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 flex-shrink-0">
-              <div className="flex items-center gap-2.5 min-w-0">
-                <div className="p-2.5 rounded-2xl bg-[#FF6B00]/15 text-[#E65A00] dark:text-[#FF6B00] border border-[#FF6B00]/30">
-                  <Layers className="w-5 h-5" />
-                </div>
-                <div className="min-w-0">
-                  <h3 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white leading-tight">แคตตาล็อกสินค้า & บริการ</h3>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400">เลือกสินค้าเข้าบิล หรือเพิ่ม/แก้ไขสินค้าในแคตตาล็อก</p>
-                </div>
-              </div>
+      {isCatalogModalOpen && (
+        <ProductCatalogModal
+          products={products}
+          description="เลือกสินค้าเข้าบิล หรือเพิ่ม/แก้ไขสินค้าในแคตตาล็อก"
+          confirmLabel={catalogTarget === 'order' ? 'เพิ่มเข้าบิล' : catalogTarget === 'addon' ? 'เพิ่มเข้า Add-on' : 'เพิ่มเข้าโปรเจกต์'}
+          priceLabel="ราคา"
+          getPrice={item => item.sell_price}
+          getStock={name => stockByName[name.trim().toLowerCase()]?.inStock ?? 0}
+          quantities={modalSelectedMap}
+          total={modalTotalAmount}
+          onToggle={handleToggleSelectModalItem}
+          onQuantityChange={(id, qty) => handleUpdateModalItemQty(id, Math.trunc(qty))}
+          onConfirm={handleConfirmModalSelection}
+          onClose={() => setIsCatalogModalOpen(false)}
+          onAdd={() => setProductEditor({})}
+          onEdit={product => setProductEditor({ product })}
+          renderActions={item => (
+            <div className="flex items-center gap-1">
               <button
                 type="button"
-                onClick={() => setIsCatalogModalOpen(false)}
-                aria-label="ปิดแคตตาล็อก"
-                className="p-2.5 rounded-xl text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-white/[0.04] hover:bg-slate-200 dark:hover:bg-white/[0.08] transition min-w-[44px] min-h-[44px] flex items-center justify-center flex-shrink-0"
+                onClick={(e) => handleDeleteCatalogItem(item.id, item.name, e)}
+                aria-label="ลบสินค้า"
+                className="p-1 rounded-md text-rose-600 dark:text-rose-400 hover:text-rose-700 dark:hover:text-rose-300 bg-rose-100 dark:bg-rose-500/10 hover:bg-rose-200 dark:hover:bg-rose-500/20 transition cursor-pointer"
               >
-                <X className="w-5 h-5" />
+                <Trash2 className="w-3 h-3" />
               </button>
             </div>
+          )}
+        />
+      )}
 
-            {/* Toolbar: search / category / sort / add */}
-            <div className="p-3 sm:p-4 border-b border-slate-200 dark:border-white/[0.06] space-y-2.5 flex-shrink-0">
-              <div className="flex flex-col sm:flex-row gap-2">
-                <div className="relative flex-1">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 dark:text-slate-500" />
-                  <input
-                    type="text"
-                    placeholder="ค้นหาชื่อสินค้า..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full rounded-xl pl-9 pr-3 py-2 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 placeholder-slate-400 focus:outline-none focus:border-blue-500"
-                  />
-                </div>
-                <select
-                  value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
-                  className="rounded-xl px-3 py-2 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 focus:outline-none focus:border-blue-500"
-                >
-                  <option value="stock_desc" className="bg-white dark:bg-[#12141A]">สต๊อกมาก → น้อย</option>
-                  <option value="stock_asc" className="bg-white dark:bg-[#12141A]">สต๊อกน้อย → มาก</option>
-                  <option value="price_desc" className="bg-white dark:bg-[#12141A]">ราคาแพง → ถูก</option>
-                  <option value="price_asc" className="bg-white dark:bg-[#12141A]">ราคาถูก → แพง</option>
-                  <option value="name" className="bg-white dark:bg-[#12141A]">ชื่อ ก-ฮ</option>
-                </select>
-                <button
-                  type="button"
-                  onClick={() => { setIsAddingNewToCatalog(true); setEditingProductId(null); setProductForm(emptyProductForm()); }}
-                  className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-100 hover:bg-emerald-200 border border-emerald-300 text-emerald-900 dark:bg-emerald-500/15 dark:hover:bg-emerald-500/25 dark:border-emerald-500/40 dark:text-emerald-300 text-[11px] font-bold transition active:scale-[0.97] cursor-pointer"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>เพิ่มสินค้าใหม่</span>
-                </button>
-              </div>
-
-              <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
-                {(['all', 'pc_notebook', 'printer', 'cctv_network', 'service', 'general'] as ('all' | ProductCategory)[]).map((cat) => (
-                  <button
-                    key={cat}
-                    type="button"
-                    onClick={() => setCategoryFilter(cat)}
-                    className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border whitespace-nowrap transition active:scale-[0.97] cursor-pointer ${categoryFilter === cat
-                      ? 'bg-[#FF6B00]/15 dark:bg-[#FF6B00]/20 border-[#FF6B00]/60 dark:border-[#FF6B00]/50 text-[#C2410C] dark:text-[#FF6B00]'
-                      : 'bg-slate-100 dark:bg-white/[0.02] border-slate-200 dark:border-white/[0.08] text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                      }`}
-                  >
-                    {cat === 'all' ? 'ทั้งหมด' : PRODUCT_CATEGORY_LABELS[cat]}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Add / Edit product form */}
-            {isAddingNewToCatalog && (
-              <form onSubmit={handleSaveProduct} className="p-3 sm:p-4 border-b border-slate-200 dark:border-white/[0.06] bg-slate-50 dark:bg-white/[0.02] space-y-2.5 flex-shrink-0">
-                <p className="text-xs font-bold text-slate-900 dark:text-white">{editingProductId ? 'แก้ไขสินค้าในแคตตาล็อก' : 'เพิ่มสินค้าใหม่เข้าแคตตาล็อก'}</p>
-                <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
-                  <input
-                    type="text"
-                    required
-                    placeholder="ชื่อสินค้า / บริการ *"
-                    value={productForm.name}
-                    onChange={(e) => setProductForm(p => ({ ...p, name: e.target.value }))}
-                    className="col-span-2 lg:col-span-1 rounded-lg px-2.5 py-1.5 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 placeholder-slate-400 focus:outline-none focus:border-blue-500"
-                  />
-                  <select
-                    value={productForm.category}
-                    onChange={(e) => setProductForm(p => ({ ...p, category: e.target.value as ProductCategory }))}
-                    className="rounded-lg px-2.5 py-1.5 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 focus:outline-none focus:border-blue-500"
-                  >
-                    {(Object.keys(PRODUCT_CATEGORY_LABELS) as ProductCategory[]).map((c) => (
-                      <option key={c} value={c} className="bg-white dark:bg-[#12141A]">{PRODUCT_CATEGORY_LABELS[c]}</option>
-                    ))}
-                  </select>
-                  <select
-                    value={productForm.item_type}
-                    onChange={(e) => setProductForm(p => ({ ...p, item_type: e.target.value as 'hardware' | 'service' }))}
-                    className="rounded-lg px-2.5 py-1.5 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 focus:outline-none focus:border-blue-500"
-                  >
-                    <option value="hardware" className="bg-white dark:bg-[#12141A]">อุปกรณ์ (Hardware)</option>
-                    <option value="service" className="bg-white dark:bg-[#12141A]">ค่าบริการ (Service)</option>
-                  </select>
-                  <select
-                    value={productForm.unit}
-                    onChange={(e) => setProductForm(p => ({ ...p, unit: e.target.value as ProductUnit }))}
-                    className="rounded-lg px-2.5 py-1.5 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 focus:outline-none focus:border-blue-500"
-                  >
-                    {PRODUCT_UNIT_OPTIONS.map(u => (
-                      <option key={u} value={u} className="bg-white dark:bg-[#12141A]">หน่วย: {u}</option>
-                    ))}
-                  </select>
-                  <input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    placeholder="ราคาทุน"
-                    value={productForm.cost_price}
-                    onChange={(e) => setProductForm(p => ({ ...p, cost_price: parseFloat(e.target.value) || 0 }))}
-                    className="rounded-lg px-2.5 py-1.5 text-xs bg-white dark:bg-slate-800 text-amber-700 dark:text-amber-300 border border-slate-300 dark:border-slate-700 font-mono focus:outline-none focus:border-blue-500"
-                  />
-                  <input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    placeholder="ราคาขาย"
-                    value={productForm.sell_price}
-                    onChange={(e) => setProductForm(p => ({ ...p, sell_price: parseFloat(e.target.value) || 0 }))}
-                    className="rounded-lg px-2.5 py-1.5 text-xs bg-white dark:bg-slate-800 text-emerald-700 dark:text-emerald-300 border border-slate-300 dark:border-slate-700 font-mono focus:outline-none focus:border-blue-500"
-                  />
-                </div>
-                <div className="flex items-center justify-end gap-2">
-                  <button
-                    type="button"
-                    onClick={handleCancelProductForm}
-                    className="px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-white/[0.04] hover:bg-slate-200 dark:hover:bg-white/[0.08] border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-[11px] font-bold transition cursor-pointer"
-                  >
-                    ยกเลิก
-                  </button>
-                  <button
-                    type="submit"
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold transition active:scale-[0.97] cursor-pointer"
-                  >
-                    <Check className="w-3.5 h-3.5" />
-                    <span>{editingProductId ? 'บันทึกการแก้ไข' : 'เพิ่มสินค้า'}</span>
-                  </button>
-                </div>
-              </form>
-            )}
-
-            {/* Product list */}
-            <div className="flex-1 overflow-y-auto overscroll-contain p-3 sm:p-4">
-              {filteredCatalog.length === 0 ? (
-                <div className="p-8 text-center">
-                  <ShoppingBag className="w-10 h-10 text-slate-400 dark:text-slate-600 mx-auto mb-2" />
-                  <p className="text-xs text-slate-500 dark:text-slate-400">ไม่พบสินค้าที่ตรงกับเงื่อนไข</p>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
-                  {filteredCatalog.map((item) => {
-                    const isSelected = modalSelectedMap[item.id] !== undefined;
-                    const stockInfo = getStockInfo(item.name);
-                    return (
-                      <div
-                        key={item.id}
-                        onClick={() => handleToggleSelectModalItem(item)}
-                        className={`p-3 rounded-2xl border transition-all duration-150 cursor-pointer active:scale-[0.98] ${isSelected
-                          ? 'bg-[#FF6B00]/10 border-[#FF6B00]/50'
-                          : 'bg-slate-50 dark:bg-slate-800/70 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-white/[0.05]'
-                          }`}
-                      >
-                        <div className="flex items-start justify-between gap-2 mb-1.5">
-                          <div className="min-w-0 flex-1">
-                            <p className="text-xs font-bold text-slate-900 dark:text-white leading-snug truncate">{item.name}</p>
-                            <p className="text-[10px] text-slate-500 dark:text-slate-400">{item.item_type === 'service' ? 'ค่าบริการ' : 'อุปกรณ์'} • {item.unit}</p>
-                          </div>
-                          <div className={`w-5 h-5 rounded-md border flex items-center justify-center flex-shrink-0 ${isSelected ? 'bg-[#FF6B00] border-[#FF6B00]' : 'border-slate-300 dark:border-white/20'
-                            }`}>
-                            {isSelected && <Check className="w-3.5 h-3.5 text-white" />}
-                          </div>
-                        </div>
-                        <div className="flex items-center justify-between gap-2 text-[10px]">
-                          <span className="text-emerald-700 dark:text-emerald-300 font-mono font-bold tabular-nums">฿{item.sell_price.toLocaleString('th-TH')}</span>
-                          <span className={`font-mono tabular-nums ${stockInfo.inStock > 0 ? 'text-blue-700 dark:text-blue-300' : 'text-slate-500'}`}>
-                            สต๊อก: {stockInfo.inStock}
-                          </span>
-                        </div>
-                        {isSelected && (
-                          <div className="mt-2 flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                            <span className="text-[10px] text-slate-600 dark:text-slate-400">จำนวน:</span>
-                            <input
-                              type="number"
-                              min={1}
-                              value={modalSelectedMap[item.id]}
-                              onChange={(e) => handleUpdateModalItemQty(item.id, parseInt(e.target.value) || 1)}
-                              className="w-16 rounded-lg px-2 py-1 text-[11px] bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 font-mono tabular-nums focus:outline-none focus:border-blue-500"
-                            />
-                            <div className="ml-auto flex items-center gap-1">
-                              <button
-                                type="button"
-                                onClick={(e) => handleStartEditProduct(item, e)}
-                                aria-label="แก้ไขสินค้า"
-                                className="p-1 rounded-md text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white bg-slate-200 dark:bg-white/[0.04] hover:bg-slate-300 dark:hover:bg-white/[0.08] transition cursor-pointer"
-                              >
-                                <Pencil className="w-3 h-3" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={(e) => handleDeleteCatalogItem(item.id, item.name, e)}
-                                aria-label="ลบสินค้า"
-                                className="p-1 rounded-md text-rose-600 dark:text-rose-400 hover:text-rose-700 dark:hover:text-rose-300 bg-rose-100 dark:bg-rose-500/10 hover:bg-rose-200 dark:hover:bg-rose-500/20 transition cursor-pointer"
-                              >
-                                <Trash2 className="w-3 h-3" />
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            {/* Footer */}
-            <div className="p-3 sm:p-4 bg-slate-50/90 dark:bg-slate-900/95 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 flex-shrink-0">
-              <div className="text-[11px] text-slate-600 dark:text-slate-400">
-                เลือกแล้ว <strong className="text-[#E65A00] dark:text-[#FF6B00] font-mono">{selectedCount}</strong> รายการ
-                {selectedCount > 0 && <span className="ml-1 font-mono text-emerald-700 dark:text-emerald-300">• ฿{modalTotalAmount.toLocaleString('th-TH', { maximumFractionDigits: 0 })}</span>}
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setIsCatalogModalOpen(false)}
-                  className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-white/[0.04] hover:bg-slate-200 dark:hover:bg-white/[0.08] border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-xs font-bold transition active:scale-[0.97] cursor-pointer"
-                >
-                  ยกเลิก
-                </button>
-                <button
-                  type="button"
-                  onClick={handleConfirmModalSelection}
-                  disabled={selectedCount === 0}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#FF6B00] hover:bg-[#FF8A33] disabled:opacity-40 disabled:cursor-not-allowed text-black dark:text-white text-xs font-bold shadow-lg shadow-[#FF6B00]/30 transition active:scale-[0.97] cursor-pointer"
-                >
-                  <Check className="w-4 h-4" />
-                  <span>
-                    {catalogTarget === 'order'
-                      ? `เพิ่มเข้าบิล (${selectedCount})`
-                      : catalogTarget === 'addon'
-                        ? `เพิ่มเข้า Add-on (${selectedCount})`
-                        : `เพิ่มเข้าโปรเจกต์ (${selectedCount})`}
-                  </span>
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>,
-        document.body
+      {productEditor && (
+        <ProductEditorModal
+          product={productEditor.product}
+          onClose={() => setProductEditor(null)}
+          onSave={draft => {
+            if (productEditor.product) {
+              updateProduct(productEditor.product.id, draft);
+              setToast(`อัปเดต "${draft.name}" ในแคตตาล็อกแล้ว`);
+            } else {
+              addProduct(draft);
+              setToast(`เพิ่ม "${draft.name}" เข้าแคตตาล็อกแล้ว`);
+            }
+            setProductEditor(null);
+            setTimeout(() => setToast(''), 3000);
+          }}
+        />
       )}
 
       {/* ========================================================================= */}
       {/* SALES ORDER DETAIL & TIMELINE MODAL (z-[9999])                             */}
       {/* ========================================================================= */}
-      {detailOrder && createPortal(
+      {detailOrder && !isCreateModalOpen && createPortal(
         <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 sm:p-6 bg-black/60 backdrop-blur-sm animate-fade-in overscroll-contain">
           <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-3xl w-full sm:w-[92vw] max-w-3xl max-h-[94dvh] sm:max-h-[82dvh] sm:max-h-[86dvh] flex flex-col overflow-hidden animate-modal-pop">
 
             {/* Header */}
             <div className="p-4 sm:p-5 bg-slate-50/90 dark:bg-slate-900/95 border-b border-slate-200 dark:border-slate-800 flex items-start justify-between gap-2 flex-shrink-0">
-              <div className="flex items-center gap-2.5 min-w-0">
-                <div className="p-2.5 rounded-2xl bg-[#FF6B00]/15 text-[#E65A00] dark:text-[#FF6B00] border border-[#FF6B00]/30">
-                  <Receipt className="w-5 h-5" />
+              <div className="min-w-0 space-y-2">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="p-2.5 rounded-2xl bg-[#FF6B00]/15 text-[#E65A00] dark:text-[#FF6B00] border border-[#FF6B00]/30">
+                    <Receipt className="w-5 h-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white leading-tight truncate">{detailOrder.customer_name}</h3>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 font-mono">{detailOrder.sales_ref || detailOrder.id}</p>
+                  </div>
                 </div>
-                <div className="min-w-0">
-                  <h3 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white leading-tight truncate">{detailOrder.customer_name}</h3>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 font-mono">{detailOrder.sales_ref || detailOrder.id}</p>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowDeleteOrder(false);
+                      handleOpenEditOrder(detailOrder);
+                    }}
+                    disabled={isDeletingOrder}
+                    className="inline-flex h-8 !min-h-8 items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 text-xs font-semibold text-slate-800 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 cursor-pointer disabled:opacity-50"
+                  >
+                    <Pencil className="size-3.5" aria-hidden="true" /> แก้ไขบิล
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowDeleteOrder(!showDeleteOrder);
+                      setDeleteOrderError('');
+                    }}
+                    aria-expanded={showDeleteOrder}
+                    disabled={isDeletingOrder}
+                    className="inline-flex h-8 !min-h-8 items-center gap-1.5 rounded-lg border border-rose-300 bg-rose-50 px-2.5 text-xs font-semibold text-rose-700 hover:bg-rose-100 dark:border-rose-500/40 dark:bg-rose-500/10 dark:text-rose-300 dark:hover:bg-rose-500/20 cursor-pointer disabled:opacity-50"
+                  >
+                    <Trash2 className="size-3.5" aria-hidden="true" /> ลบบิล
+                  </button>
                 </div>
               </div>
               <button
                 type="button"
-                onClick={() => setDetailOrder(null)}
+                onClick={() => {
+                  setDetailOrder(null);
+                  setShowDeleteOrder(false);
+                }}
+                disabled={isDeletingOrder}
                 aria-label="ปิดรายละเอียดออเดอร์"
                 className="p-2.5 rounded-xl text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-white/[0.04] hover:bg-slate-200 dark:hover:bg-white/[0.08] transition min-w-[44px] min-h-[44px] flex items-center justify-center flex-shrink-0"
               >
@@ -2409,6 +2276,22 @@ export const SalesView: React.FC = () => {
             </div>
 
             <div className="flex-1 overflow-y-auto overscroll-contain p-4 sm:p-5 space-y-4">
+              {showDeleteOrder && (
+                <section aria-label="ยืนยันการลบบิล" className="space-y-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-900 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-100">
+                  <p>{canDeleteDetailOrder
+                    ? 'ยืนยันลบบิลนี้? การลบย้อนกลับไม่ได้'
+                    : 'ลบได้เฉพาะบิลที่ยังอยู่ในคิวรอจัดซื้อและยังไม่มีรายการผูกกับบิล'}</p>
+                  {deleteOrderError && <p role="alert" className="font-semibold">{deleteOrderError}</p>}
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" onClick={() => setShowDeleteOrder(false)} disabled={isDeletingOrder} className={`${modalSecondaryBtnClass} sm:w-auto`}>ยกเลิก</button>
+                    {canDeleteDetailOrder && (
+                      <button type="button" onClick={() => void handleDeleteOrder()} disabled={isDeletingOrder} className="min-h-11 rounded-xl bg-rose-700 px-4 font-bold text-white hover:bg-rose-800 cursor-pointer disabled:opacity-50">
+                        {isDeletingOrder ? 'กำลังลบ…' : 'ยืนยันลบบิล'}
+                      </button>
+                    )}
+                  </div>
+                </section>
+              )}
               {/* Status + meta badges */}
               <div className="flex items-center gap-2 flex-wrap">
                 <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold border ${BILLING_BADGE_META[getOrderBillingBadgeKey(detailOrder)].cls}`}>
@@ -2442,6 +2325,9 @@ export const SalesView: React.FC = () => {
                 <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700">
                   <p className="text-[10px] text-slate-500 dark:text-slate-400 mb-0.5">เบอร์โทรลูกค้า</p>
                   <p className="text-xs font-semibold text-slate-900 dark:text-white font-mono">{detailOrder.customer_phone || '-'}</p>
+                  {detailOrder.customer_contact_name && (
+                    <p className="mt-1 text-xs text-slate-700 dark:text-slate-300">ผู้ติดต่อ {detailOrder.customer_contact_name}</p>
+                  )}
                 </div>
                 <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700">
                   <p className="text-[10px] text-slate-500 dark:text-slate-400 mb-0.5">วันที่ส่งมอบ</p>
@@ -2530,7 +2416,11 @@ export const SalesView: React.FC = () => {
               </button>
               <button
                 type="button"
-                onClick={() => setDetailOrder(null)}
+                onClick={() => {
+                  setDetailOrder(null);
+                  setShowDeleteOrder(false);
+                }}
+                disabled={isDeletingOrder}
                 className="px-4 py-2 rounded-xl bg-slate-100 dark:bg-white/[0.04] hover:bg-slate-200 dark:hover:bg-white/[0.08] border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-xs font-bold transition active:scale-[0.97] cursor-pointer"
               >
                 ปิด
@@ -2595,13 +2485,12 @@ export const SalesView: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">เบอร์โทรผู้ประสานงานหน้างาน *</label>
-                  <input
-                    type="text"
+                  <label htmlFor="sales-project-phone" className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">เบอร์โทรผู้ประสานงานหน้างาน *</label>
+                  <PhoneInput
+                    id="sales-project-phone"
                     required
                     value={prjPhone}
                     onChange={(e) => setPrjPhone(e.target.value)}
-                    placeholder="08x-xxx-xxxx"
                     className="w-full rounded-xl px-3 py-2 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 focus:outline-none focus:border-purple-500"
                   />
                 </div>
@@ -2701,8 +2590,7 @@ export const SalesView: React.FC = () => {
                             <div className="grid grid-cols-3 gap-1.5">
                               <div>
                                 <label className="block text-[9px] text-slate-500 mb-0.5">จำนวน</label>
-                                <input
-                                  type="number"
+                                <NumberInput
                                   min={1}
                                   value={it.qty_required}
                                   onChange={(e) => {
@@ -2714,8 +2602,7 @@ export const SalesView: React.FC = () => {
                               </div>
                               <div>
                                 <label className="block text-[9px] text-slate-500 mb-0.5">ทุน/หน่วย</label>
-                                <input
-                                  type="number"
+                                <NumberInput
                                   min={0}
                                   value={it.unit_cost}
                                   onChange={(e) => {
@@ -2727,8 +2614,7 @@ export const SalesView: React.FC = () => {
                               </div>
                               <div>
                                 <label className="block text-[9px] text-slate-500 mb-0.5">ขาย/หน่วย</label>
-                                <input
-                                  type="number"
+                                <NumberInput
                                   min={0}
                                   value={it.unit_price}
                                   onChange={(e) => {
@@ -2789,8 +2675,7 @@ export const SalesView: React.FC = () => {
                             <div className="grid grid-cols-3 gap-1.5">
                               <div>
                                 <label className="block text-[9px] text-slate-500 mb-0.5">จำนวน</label>
-                                <input
-                                  type="number"
+                                <NumberInput
                                   min={1}
                                   value={it.qty_required}
                                   onChange={(e) => {
@@ -2802,8 +2687,7 @@ export const SalesView: React.FC = () => {
                               </div>
                               <div>
                                 <label className="block text-[9px] text-slate-500 mb-0.5">ทุน/หน่วย</label>
-                                <input
-                                  type="number"
+                                <NumberInput
                                   min={0}
                                   value={it.unit_cost}
                                   onChange={(e) => {
@@ -2815,8 +2699,7 @@ export const SalesView: React.FC = () => {
                               </div>
                               <div>
                                 <label className="block text-[9px] text-slate-500 mb-0.5">ขาย/หน่วย</label>
-                                <input
-                                  type="number"
+                                <NumberInput
                                   min={0}
                                   value={it.unit_price}
                                   onChange={(e) => {
@@ -2923,7 +2806,7 @@ export const SalesView: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => handleCreateFollowUpBillFromClosedProject(detailProject)}
-                        className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-md shrink-0 active:scale-95"
+                        className="px-4 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-extrabold text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-md shrink-0 active:scale-95"
                       >
                         <FilePlus2 className="w-4 h-4" />
                         <span>+ เปิดบิลใหม่จากลูกค้า/ไซต์นี้</span>
@@ -3237,8 +3120,7 @@ export const SalesView: React.FC = () => {
                       <div className="grid grid-cols-3 gap-2">
                         <div>
                           <label className="block text-[9px] text-slate-500 mb-0.5">จำนวน</label>
-                          <input
-                            type="number"
+                          <NumberInput
                             min={1}
                             value={it.qty_required}
                             onChange={(e) => {
@@ -3250,8 +3132,7 @@ export const SalesView: React.FC = () => {
                         </div>
                         <div>
                           <label className="block text-[9px] text-slate-500 mb-0.5">ทุน/หน่วย</label>
-                          <input
-                            type="number"
+                          <NumberInput
                             min={0}
                             value={it.unit_cost}
                             onChange={(e) => {
@@ -3263,8 +3144,7 @@ export const SalesView: React.FC = () => {
                         </div>
                         <div>
                           <label className="block text-[9px] text-slate-500 mb-0.5">ขาย/หน่วย</label>
-                          <input
-                            type="number"
+                          <NumberInput
                             min={0}
                             value={it.unit_price}
                             onChange={(e) => {
@@ -3327,9 +3207,9 @@ export const SalesView: React.FC = () => {
       {/* BILLING TYPE SELECTION PORTAL MODAL (z-[9999])                            */}
       {/* ========================================================================= */}
       {isBillingTypeModalOpen && createPortal(
-        <div
+        <ModalBackdrop
           className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 animate-fade-in overscroll-contain"
-          onClick={() => setIsBillingTypeModalOpen(false)}
+          onDismiss={() => setIsBillingTypeModalOpen(false)}
         >
           <div
             onClick={(e) => e.stopPropagation()}
@@ -3359,7 +3239,7 @@ export const SalesView: React.FC = () => {
               {/* 1. Sales */}
               <button
                 type="button"
-                onClick={() => handleOpenCreateModal('sales')}
+                onClick={() => handleOpenCustomerTypeModal('sales')}
                 className="text-left p-4 rounded-2xl bg-sky-50/80 hover:bg-sky-100/80 dark:bg-sky-500/10 dark:hover:bg-sky-500/20 border border-sky-200 dark:border-sky-500/30 transition cursor-pointer group active:scale-[0.98]"
               >
                 <div className="flex items-center justify-between mb-2">
@@ -3413,7 +3293,7 @@ export const SalesView: React.FC = () => {
               {/* 4. Add-on */}
               <button
                 type="button"
-                onClick={() => handleOpenCreateModal('addon')}
+                onClick={() => handleOpenCustomerTypeModal('addon')}
                 className="text-left p-4 rounded-2xl bg-amber-50/80 hover:bg-amber-100/80 dark:bg-amber-500/10 dark:hover:bg-amber-500/20 border border-amber-200 dark:border-amber-500/30 transition cursor-pointer group active:scale-[0.98]"
               >
                 <div className="flex items-center justify-between mb-2">
@@ -3429,17 +3309,53 @@ export const SalesView: React.FC = () => {
               </button>
             </div>
           </div>
-        </div>,
+        </ModalBackdrop>,
         document.body
       )}
 
       {/* ========================================================================= */}
+      {/* CUSTOMER TYPE SELECTION */}
+      <Modal
+        open={isCustomerTypeModalOpen}
+        onClose={() => setIsCustomerTypeModalOpen(false)}
+        title="เปิดบิลให้ใคร?"
+        icon={<UserRound aria-hidden="true" className="size-5" />}
+      >
+        <div className="grid gap-2.5">
+          {([
+            { type: 'individual', label: 'บุคคลธรรมดา', description: 'ชื่อ-นามสกุล และเบอร์โทร', Icon: UserRound },
+            { type: 'organization', label: 'บริษัท / องค์กร', description: 'ชื่อองค์กร ชื่อผู้ติดต่อ และเบอร์โทร', Icon: Building2 },
+          ] as const).map(({ type, label, description, Icon }) => (
+            <button
+              key={type}
+              type="button"
+              autoFocus={type === 'individual'}
+              onClick={() => {
+                setCustomerType(type);
+                setIsCustomerTypeModalOpen(false);
+                setIsCreateModalOpen(true);
+              }}
+              className="flex min-h-16 w-full cursor-pointer items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-left transition-colors hover:border-orange-400 hover:bg-orange-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500 dark:border-slate-700 dark:bg-slate-800/70 dark:hover:border-orange-400 dark:hover:bg-orange-500/10"
+            >
+              <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-orange-100 text-orange-700 dark:bg-orange-500/15 dark:text-orange-300">
+                <Icon aria-hidden="true" className="size-5" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-bold">{label}</span>
+                <span className="block text-xs text-slate-600 dark:text-slate-300">{description}</span>
+              </span>
+              <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-slate-500 dark:text-slate-400" />
+            </button>
+          ))}
+        </div>
+      </Modal>
+
       {/* RENTAL & MA RECURRING CONTRACT BILLING MODAL (z-[9999])                   */}
       {/* ========================================================================= */}
       {isContractBillingOpen && createPortal(
-        <div
+        <ModalBackdrop
           className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 animate-fade-in overscroll-contain"
-          onClick={() => setIsContractBillingOpen(false)}
+          onDismiss={() => setIsContractBillingOpen(false)}
         >
           <div
             onClick={(e) => e.stopPropagation()}
@@ -3750,8 +3666,7 @@ export const SalesView: React.FC = () => {
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                           <div>
                             <label className="block text-[10px] text-slate-500 dark:text-slate-400 mb-0.5">จำนวน</label>
-                            <input
-                              type="number"
+                            <NumberInput
                               min={0.1}
                               step="0.1"
                               value={it.quantity}
@@ -3764,8 +3679,7 @@ export const SalesView: React.FC = () => {
                           </div>
                           <div>
                             <label className="block text-[10px] text-slate-500 dark:text-slate-400 mb-0.5">ต้นทุน/หน่วย</label>
-                            <input
-                              type="number"
+                            <NumberInput
                               min={0}
                               step="0.01"
                               value={it.unit_cost ?? 0}
@@ -3778,8 +3692,7 @@ export const SalesView: React.FC = () => {
                           </div>
                           <div>
                             <label className="block text-[10px] text-slate-500 dark:text-slate-400 mb-0.5">ราคาขาย/หน่วย</label>
-                            <input
-                              type="number"
+                            <NumberInput
                               min={0}
                               step="0.01"
                               value={it.unit_price ?? 0}
@@ -3832,7 +3745,7 @@ export const SalesView: React.FC = () => {
               </div>
             </form>
           </div>
-        </div>,
+        </ModalBackdrop>,
         document.body
       )}
 
@@ -3840,9 +3753,9 @@ export const SalesView: React.FC = () => {
       {/* CONTRACT MANAGER & ADD CONTRACT PORTAL MODAL (z-[10000])                  */}
       {/* ========================================================================= */}
       {isContractManagerOpen && createPortal(
-        <div
+        <ModalBackdrop
           className="fixed inset-0 z-[10000] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 animate-fade-in overscroll-contain"
-          onClick={() => setIsContractManagerOpen(false)}
+          onDismiss={() => setIsContractManagerOpen(false)}
         >
           <div
             onClick={(e) => e.stopPropagation()}
@@ -3962,12 +3875,11 @@ export const SalesView: React.FC = () => {
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">เบอร์โทร</label>
-                    <input
-                      type="text"
+                    <label htmlFor="sales-contract-phone" className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">เบอร์โทร</label>
+                    <PhoneInput
+                      id="sales-contract-phone"
                       value={ctrCustomerPhone}
                       onChange={(e) => setCtrCustomerPhone(e.target.value)}
-                      placeholder="077-xxx-xxx"
                       className="w-full rounded-xl px-3 py-2 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700"
                     />
                   </div>
@@ -4096,8 +4008,7 @@ export const SalesView: React.FC = () => {
                         <div className="grid grid-cols-3 gap-2">
                           <div>
                             <label className="block text-[10px] text-slate-500 mb-0.5">จำนวน</label>
-                            <input
-                              type="number"
+                            <NumberInput
                               min={1}
                               value={it.quantity}
                               onChange={(e) => {
@@ -4109,8 +4020,7 @@ export const SalesView: React.FC = () => {
                           </div>
                           <div>
                             <label className="block text-[10px] text-slate-500 mb-0.5">ต้นทุน/งวด</label>
-                            <input
-                              type="number"
+                            <NumberInput
                               min={0}
                               value={it.unit_cost ?? 0}
                               onChange={(e) => {
@@ -4122,8 +4032,7 @@ export const SalesView: React.FC = () => {
                           </div>
                           <div>
                             <label className="block text-[10px] text-slate-500 mb-0.5">ค่าบริการ/งวด</label>
-                            <input
-                              type="number"
+                            <NumberInput
                               min={0}
                               value={it.unit_price ?? 0}
                               onChange={(e) => {
@@ -4215,7 +4124,7 @@ export const SalesView: React.FC = () => {
                             <button
                               type="button"
                               onClick={() => updateContractStatus(ctr.id, 'active')}
-                              className="px-3 py-1.5 rounded-xl bg-emerald-100 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-xs font-bold cursor-pointer"
+                              className="px-3 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white border-emerald-700 text-xs font-bold cursor-pointer"
                             >
                               เปิดใช้งานอีกครั้ง
                             </button>
@@ -4228,7 +4137,7 @@ export const SalesView: React.FC = () => {
               </div>
             )}
           </div>
-        </div>,
+        </ModalBackdrop>,
         document.body
       )}
 

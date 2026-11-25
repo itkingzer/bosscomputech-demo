@@ -1,3 +1,5 @@
+import { ModalBackdrop } from './ui/ModalBackdrop';
+import { NumberInput } from './ui/FormInputs';
 import React, { useMemo, useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Printer, X, CheckSquare, Square } from 'lucide-react';
@@ -41,6 +43,7 @@ export const OrderFormPrintModal: React.FC<OrderFormPrintModalProps> = ({
   const [taxId, setTaxId] = useState<string>('');
   const [specialCase, setSpecialCase] = useState<string>('');
   const [outsourceName, setOutsourceName] = useState<string>('');
+  const [organizationName, setOrganizationName] = useState('');
   const [contactName, setContactName] = useState<string>('');
   const [callToSchedule, setCallToSchedule] = useState<boolean>(true);
   const [creditDays, setCreditDays] = useState<string>('30');
@@ -49,9 +52,11 @@ export const OrderFormPrintModal: React.FC<OrderFormPrintModalProps> = ({
   const [warrantyCheck, setWarrantyCheck] = useState<'in_warranty' | 'out_warranty'>('in_warranty');
   const [depositAmount, setDepositAmount] = useState<number>(0);
   const [notesText, setNotesText] = useState<string>('');
+  const isOrganizationBill = !project && order?.customer_type === 'organization';
 
   useEffect(() => {
     if (!isOpen) return;
+    setOrganizationName(isOrganizationBill ? order?.customer_name || '' : '');
     if (project) {
       setSelectedBatchNo(initialBatchNo ?? null);
       setIncludeVat(true);
@@ -89,7 +94,7 @@ export const OrderFormPrintModal: React.FC<OrderFormPrintModalProps> = ({
             ? 'drop_off'
             : 'install'
       );
-      setContactName(order.customer_name || '');
+      setContactName(order.customer_contact_name || (isOrganizationBill ? '' : order.customer_name) || '');
       const hasWarranty = (order.items_list || []).some(
         it => (it.warranty_years || 0) > 0 || (it.warranty_months || 0) > 0
       );
@@ -103,7 +108,7 @@ export const OrderFormPrintModal: React.FC<OrderFormPrintModalProps> = ({
         .join(' | ');
       setNotesText(baseNotes);
     }
-  }, [isOpen, order, project]);
+  }, [isOpen, order, project, isOrganizationBill]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -235,7 +240,9 @@ export const OrderFormPrintModal: React.FC<OrderFormPrintModalProps> = ({
   const dueDate = project
     ? formatDateDMY(project.due_date)
     : formatDateDMY(order?.due_date || order?.delivery_date);
-  const customerName = project ? project.customer_name : order?.customer_name || '-';
+  const customerName = isOrganizationBill
+    ? organizationName.trim() || '-'
+    : project ? project.customer_name : order?.customer_name || '-';
   const customerPhone = project ? project.phone : order?.customer_phone || '-';
   const customerLocation = project
     ? `${project.site_name} — ${project.location}`
@@ -265,9 +272,9 @@ export const OrderFormPrintModal: React.FC<OrderFormPrintModalProps> = ({
   );
 
   return createPortal(
-    <div
+    <ModalBackdrop
       className="order-form-print-portal fixed inset-0 z-[10000] bg-black/70 backdrop-blur-sm flex flex-col items-center justify-start overflow-y-auto overscroll-contain p-2 sm:p-5 animate-fade-in"
-      onClick={onClose}
+      onDismiss={onClose}
     >
       {/* Top Interactive Controls (hidden during print) */}
       <div
@@ -334,6 +341,17 @@ export const OrderFormPrintModal: React.FC<OrderFormPrintModalProps> = ({
 
         {/* Quick Pre-Print Field Overrides */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs pt-2 border-t border-slate-200 dark:border-slate-800">
+          {isOrganizationBill && (
+            <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400">
+              ชื่อองค์กร / บริษัท
+              <input
+                type="text"
+                value={organizationName}
+                onChange={(e) => setOrganizationName(e.target.value)}
+                className="mt-0.5 w-full rounded-lg px-2.5 py-1.5 text-xs font-normal text-slate-900 dark:text-slate-100 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700"
+              />
+            </label>
+          )}
           <div>
             <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 mb-0.5">เลขผู้เสียภาษี (TAX ID)</label>
             <input
@@ -367,8 +385,8 @@ export const OrderFormPrintModal: React.FC<OrderFormPrintModalProps> = ({
             </div>
             <div>
               <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 mb-0.5">เครดิต (วัน)</label>
-              <input
-                type="text"
+              <NumberInput
+                min={0}
                 value={creditDays}
                 onChange={(e) => setCreditDays(e.target.value)}
                 placeholder="30"
@@ -414,8 +432,7 @@ export const OrderFormPrintModal: React.FC<OrderFormPrintModalProps> = ({
             </div>
             <div>
               <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 mb-0.5">มัดจำแล้ว (บาท)</label>
-              <input
-                type="number"
+              <NumberInput
                 min={0}
                 step="0.01"
                 value={depositAmount}
@@ -531,7 +548,7 @@ export const OrderFormPrintModal: React.FC<OrderFormPrintModalProps> = ({
         <div className="border border-black mt-2 p-2 space-y-1 text-[10.5px]">
           <div className="grid grid-cols-12 gap-2">
             <div className="col-span-7 border-b border-dotted border-black pb-0.5">
-              <span className="font-bold">ลูกค้า (Customer Name): </span>
+              <span className="font-bold">{isOrganizationBill ? 'ชื่อองค์กร / บริษัท: ' : 'ลูกค้า (Customer Name): '}</span>
               <span className="font-semibold">{customerName}</span>
             </div>
             <div className="col-span-5 border-b border-dotted border-black pb-0.5">
@@ -714,7 +731,7 @@ export const OrderFormPrintModal: React.FC<OrderFormPrintModalProps> = ({
           );
         })}
       </div>
-    </div>,
+    </ModalBackdrop>,
     document.body
   );
 };

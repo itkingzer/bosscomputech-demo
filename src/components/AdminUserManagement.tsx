@@ -1,3 +1,4 @@
+import { PhoneInput } from './ui/FormInputs';
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from '../context/AppContext';
@@ -273,10 +274,9 @@ export const AdminUserManagement: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-slate-700 dark:text-slate-300 font-medium mb-1">เบอร์โทรศัพท์</label>
-                <input
-                  type="text"
-                  placeholder="08x-xxx-xxxx"
+                <label htmlFor="admin-user-phone" className="block text-slate-700 dark:text-slate-300 font-medium mb-1">เบอร์โทรศัพท์</label>
+                <PhoneInput
+                  id="admin-user-phone"
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
                   className="w-full rounded-2xl px-3.5 py-2 bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 placeholder-slate-400 focus:outline-none focus:border-blue-500"

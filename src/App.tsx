@@ -1,8 +1,10 @@
+import { ModalBackdrop } from './components/ui/ModalBackdrop';
 import React, { useState, useEffect, Suspense, lazy } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from './context/AppContext';
 import { LoginPage } from './components/LoginPage';
 import { RepairReceiptPrintDocument } from './components/RepairReceiptPrintDocument';
+import { MyStaffProfile, StaffAvatar } from './components/StaffProfile';
 
 const DashboardView = lazy(() => import('./components/DashboardView').then(m => ({ default: m.DashboardView })));
 const SettingsModal = lazy(() => import('./components/SettingsModal').then(m => ({ default: m.SettingsModal })));
@@ -31,10 +33,11 @@ import companyLogo from './assets/BossCom.jpg';
 
 export const App: React.FC = () => {
   const {
-    currentUser, logout, isSupabaseLive, isSyncing,
+    currentUser, logout, isSupabaseLive, isSyncing, supabaseUrl, supabaseKey,
     orders, items, repairTickets, projects, resetAllDemoData, clearDemoKeepStock,
     theme, toggleTheme, printingRepairTicket
   } = useApp();
+  const canResetDemo = !isSupabaseLive && !(supabaseUrl && supabaseKey);
 
   // Sync theme class & data-theme on <html> so all document.body Portal modals respond immediately
   useEffect(() => {
@@ -51,6 +54,7 @@ export const App: React.FC = () => {
   });
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isClearDemoModalOpen, setIsClearDemoModalOpen] = useState(false);
   const [isResetDemoModalOpen, setIsResetDemoModalOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -60,6 +64,7 @@ export const App: React.FC = () => {
   // Reset activeTab & transient overlays whenever the logged-in user changes (including logout)
   useEffect(() => {
     if (!currentUser) {
+      setIsProfileOpen(false);
       setIsSettingsOpen(false);
       setIsClearDemoModalOpen(false);
       setIsMobileSidebarOpen(false);
@@ -260,21 +265,27 @@ export const App: React.FC = () => {
           </div>
 
           {/* Current User Quick Badge */}
-          <div className="p-4 mx-3 my-3 rounded-2xl liquid-glass border border-white/[0.08] relative overflow-hidden group">
+          <button
+            type="button"
+            onClick={() => {
+              setIsMobileSidebarOpen(false);
+              setIsProfileOpen(true);
+            }}
+            aria-haspopup="dialog"
+            className="p-4 mx-3 my-3 rounded-2xl liquid-glass border border-white/[0.08] relative overflow-hidden group cursor-pointer text-left focus-visible:ring-2 focus-visible:ring-[#FF6B00]"
+          >
             <div className="absolute top-0 right-0 w-24 h-24 bg-[#FF6B00]/10 rounded-full blur-xl pointer-events-none group-hover:bg-[#FF6B00]/20 transition-all"></div>
             <div className="flex items-center gap-3 relative z-10">
-              <div className="w-9 h-9 rounded-xl bg-[#FF6B00]/20 border border-[#FF6B00]/30 flex items-center justify-center font-bold text-[#FF6B00] text-sm">
-                {currentUser.name.slice(0, 1)}
-              </div>
+              <StaffAvatar user={currentUser} className="size-10 text-sm" />
               <div className="flex-1 min-w-0">
                 <div className="text-xs font-bold text-white truncate">{currentUser.name}</div>
                 <div className="text-[10px] text-[#FF6B00] font-medium flex items-center gap-1 mt-0.5">
                   <span className="w-1.5 h-1.5 rounded-full bg-[#FF6B00] animate-pulse"></span>
-                  <span className="truncate">{getRoleDisplayName(currentUser.role)}</span>
+                  <span>โปรไฟล์ของฉัน</span>
                 </div>
               </div>
             </div>
-          </div>
+          </button>
 
           {/* Navigation Links (Filtered strictly to visible items only) */}
           <div className="flex-1 px-3 py-2 space-y-1.5 overflow-y-auto">
@@ -362,11 +373,25 @@ export const App: React.FC = () => {
                 setIsMobileSidebarOpen(false);
                 setIsClearDemoModalOpen(true);
               }}
-              className="sm:hidden w-full flex items-center justify-center gap-2 px-3 py-2.5 min-h-[44px] rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/30 text-xs font-semibold transition-all duration-150 active:scale-[0.97] cursor-pointer"
+              className="sm:hidden w-full flex items-center justify-center gap-2 px-3 py-2.5 min-h-[44px] rounded-xl border bg-emerald-700 hover:bg-emerald-800 text-white border-emerald-700 text-xs font-semibold transition-all duration-150 active:scale-[0.97] cursor-pointer"
             >
               <Eraser className="w-3.5 h-3.5 flex-shrink-0" />
               <span className="truncate">เริ่มใช้งานจริง (ล้างบิลทดสอบ / เหลือสต๊อก)</span>
             </button>
+
+            {canResetDemo && (
+              <button
+                type="button"
+                onClick={() => {
+                  setIsMobileSidebarOpen(false);
+                  setIsResetDemoModalOpen(true);
+                }}
+                className="sm:hidden w-full flex items-center justify-center gap-2 px-3 py-2.5 min-h-11 rounded-xl bg-orange-500/15 hover:bg-orange-500/25 text-orange-300 border border-orange-500/30 text-xs font-semibold cursor-pointer"
+              >
+                <RotateCcw className="size-4" aria-hidden="true" />
+                <span>ทดสอบเดโมใหม่</span>
+              </button>
+            )}
 
             {/* Logout button */}
             <button
@@ -464,22 +489,23 @@ export const App: React.FC = () => {
               onClick={() => setIsClearDemoModalOpen(true)}
               title="เคลียร์ข้อมูล Demo (เหลือไว้เฉพาะคลังสินค้า)"
               aria-label="เริ่มใช้งานจริง (ล้างบิลทดสอบ / เหลือสต๊อก)"
-              className="hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/30 text-[11px] font-semibold transition-all duration-150 active:scale-[0.97] cursor-pointer min-h-[40px] whitespace-nowrap"
+              className="hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-xl border bg-emerald-700 hover:bg-emerald-800 text-white border-emerald-700 text-[11px] font-semibold transition-all duration-150 active:scale-[0.97] cursor-pointer min-h-[40px] whitespace-nowrap"
             >
               <Eraser className="w-3.5 h-3.5 flex-shrink-0" />
               <span className="hidden xl:inline">เริ่มใช้งานจริง (ล้างบิลทดสอบ / เหลือสต๊อก)</span>
               <span className="xl:hidden">ล้างบิลทดสอบ</span>
             </button>
 
-            <button
-              onClick={() => setIsResetDemoModalOpen(true)}
-              title="รีเซ็ตระบบเป็นข้อมูล Demo (เลือกเก็บ Catalog ไว้ได้)"
-              aria-label="รีเซ็ตระบบเป็นข้อมูล Demo"
-              className="hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-xl liquid-glass-card text-slate-600 dark:text-slate-300 hover:text-[#FF6B00] border border-slate-200 dark:border-white/[0.08] text-[11px] font-semibold transition-all duration-150 active:scale-[0.97] cursor-pointer min-h-[40px] whitespace-nowrap"
-            >
-              <RotateCcw className="w-3.5 h-3.5 flex-shrink-0" />
-              <span className="hidden 2xl:inline">รีเซ็ตเดโม่</span>
-            </button>
+            {canResetDemo && (
+              <button
+                type="button"
+                onClick={() => setIsResetDemoModalOpen(true)}
+                className="hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-xl liquid-glass-card text-slate-600 dark:text-slate-300 hover:text-[#FF6B00] border border-slate-200 dark:border-white/[0.08] text-[11px] font-semibold transition-all duration-150 active:scale-[0.97] cursor-pointer min-h-[40px] whitespace-nowrap"
+              >
+                <RotateCcw className="w-3.5 h-3.5 flex-shrink-0" aria-hidden="true" />
+                <span>ทดสอบเดโมใหม่</span>
+              </button>
+            )}
 
             <button
               onClick={() => setIsSettingsOpen(true)}
@@ -534,6 +560,7 @@ export const App: React.FC = () => {
       </div>
 
       {/* Settings Modal */}
+      {isProfileOpen && <MyStaffProfile key={currentUser.id} user={currentUser} onClose={() => setIsProfileOpen(false)} />}
       {isSettingsOpen && (
         <Suspense fallback={null}>
           <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
@@ -543,9 +570,9 @@ export const App: React.FC = () => {
       {/* Confirm Clear Demo Keep Stock Modal */}
       {isClearDemoModalOpen &&
         createPortal(
-          <div
+          <ModalBackdrop
             className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 animate-fade-in"
-            onClick={() => setIsClearDemoModalOpen(false)}
+            onDismiss={() => setIsClearDemoModalOpen(false)}
           >
             <div
               role="dialog"
@@ -601,16 +628,16 @@ export const App: React.FC = () => {
                 </button>
               </div>
             </div>
-          </div>,
+          </ModalBackdrop>,
           document.body
         )}
 
       {/* Reset Demo Data Modal (Keep Catalog vs Full Factory Reset) */}
-      {isResetDemoModalOpen &&
+      {canResetDemo && isResetDemoModalOpen &&
         createPortal(
-          <div
+          <ModalBackdrop
             className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 animate-fade-in"
-            onClick={() => setIsResetDemoModalOpen(false)}
+            onDismiss={() => setIsResetDemoModalOpen(false)}
           >
             <div
               role="dialog"
@@ -633,10 +660,10 @@ export const App: React.FC = () => {
                 </div>
                 <div>
                   <h3 id="reset-demo-modal-title" className="text-base font-bold text-slate-900 dark:text-white">
-                    รีเซ็ตระบบเป็นข้อมูลทดลอง (Demo)
+                    ทดสอบเดโมใหม่
                   </h3>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                    โหลดบิลตัวอย่าง สต๊อก และคิวงานกลับมาทดสอบใหม่
+                    ข้อมูลทดสอบที่แก้ไขไว้ในเบราว์เซอร์นี้จะถูกแทนที่ด้วยข้อมูลตัวอย่าง
                   </p>
                 </div>
               </div>
@@ -684,7 +711,7 @@ export const App: React.FC = () => {
                 </div>
               </div>
             </div>
-          </div>,
+          </ModalBackdrop>,
           document.body
         )}
 

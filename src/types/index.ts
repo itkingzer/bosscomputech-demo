@@ -2,12 +2,23 @@
 // Activity & Audit Log (Timestamped Activity Trail)
 // ทุกเหตุการณ์สำคัญจะถูกบันทึกเป็น ISO timestamp + ชื่อพนักงานผู้กระทำ + บทบาท + หมายเหตุ
 // ==============================================================================
+export type PrepActivityKind = 'accept' | 'stock' | 'hold' | 'stageB' | 'dispatch' | 'project' | 'doa';
+
 export interface ActivityLog {
   timestamp: string;   // ISO 8601 timestamp (เช่น 2026-11-20T17:01:36.952Z)
   action: string;      // ชื่อเหตุการณ์ เช่น 'เปิดบิลขาย', 'รับของเข้าห้องสต๊อก'
   actor: string;       // ชื่อพนักงานผู้กระทำ (currentUser.name)
   role?: UserRole;     // บทบาทผู้กระทำ
   note?: string;       // รายละเอียดเพิ่มเติม
+  stock_po_document?: {
+    id: string;
+    number: string;
+    line: number;
+    supplierQuote?: string;
+    source?: { kind: 'sales' | 'project'; reference: string } | { kind: 'stock' };
+  };
+  stock_po_receipt?: { deliveryNote?: string; taxInvoice?: string };
+  prep_event?: { kind: PrepActivityKind; model: string; serial?: string | null; reference?: string | null };
 }
 
 // แปลง ISO timestamp -> รูปแบบไทยสะอาดตา (พ.ศ. 2 หลัก / 24 ชม.) เช่น "20 พ.ย. 69 14:30"
@@ -307,7 +318,12 @@ export interface UserAccount {
   department?: string;
   is_active?: boolean;
   role: UserRole;
-  avatar?: string;
+  work_positions?: UserRole[] | null;
+  employment_start_date?: string | null;
+  profile_details?: string | null;
+  avatar?: string | null;
+  email?: string | null;
+  address?: string | null;
   phone?: string;
   badge?: string;
   assigned_route?: RouteCode | 'all'; // สายรถประจำตัวของช่าง Onsite
@@ -568,11 +584,25 @@ export interface OrderItem {
   warranty_months?: number;           // ระยะเวลาประกัน (เดือน) - ใช้เมื่อต้องการระบุเป็นเดือน
 }
 
+export type OrderCustomerType = 'individual' | 'organization';
+
+export type OrderHeaderEdit = Pick<Order,
+  'customer_name' | 'customer_contact_name' | 'customer_phone' | 'delivery_location' | 'site_notes'
+>;
+
+export type OrderDraftEdit = Pick<Order,
+  'district' | 'route_code' | 'province_custom' | 'delivery_date' | 'due_date' |
+  'bill_type' | 'payment_term' | 'delivery_mode' | 'items_list' | 'extra_cost' |
+  'deposit_amount' | 'customer_id' | 'contract_id'
+>;
+
 export interface Order {
   id: string;
   sales_ref: string | null;
   salesperson?: string;               // ชื่อพนักงานขายผู้เปิดบิล (auto-tag จาก logged-in user)
   customer_name: string;
+  customer_type?: OrderCustomerType | null;
+  customer_contact_name?: string | null;
   customer_phone?: string;
   delivery_location: string;
   district?: string;
@@ -661,6 +691,12 @@ export interface StockPO {
   ordered_at?: string | null;         // ISO timestamp สั่งซื้อ PO
   project_id?: string | null;         // ผูกกับรหัสโปรเจกต์ PRJ-2026-XXX (ถ้ามี)
 }
+
+export const getStockPoDocument = (po: StockPO) =>
+  po.activity_logs?.find(log => log.stock_po_document)?.stock_po_document;
+
+export const getStockPoReceipt = (po: StockPO) =>
+  po.activity_logs?.find(log => log.stock_po_receipt)?.stock_po_receipt;
 
 // ==============================================================================
 // Project & Site Installation Module (PRJ-2026-XXX)
@@ -1110,6 +1146,7 @@ export interface RepairTicket {
   activity_logs?: ActivityLog[];
   received_by?: string;               // ชื่อพนักงาน/ช่าง Onsite ผู้รับเครื่องมาจากลูกค้า
   received_channel?: ReceivedChannel; // 'front_desk' (รับหน้าร้าน) | 'onsite_pickup' (ช่าง Onsite รับกลับมา)
+  service_sheet_withdrawn_at?: string | null;
   repaired_by?: string | null;        // ชื่อช่างซ่อมหน้าร้านที่รับผิดชอบซ่อม/ส่งเคลมเครื่องนี้
   started_at?: string | null;         // ISO timestamp เริ่มปฏิบัติงาน / รับเครื่องซ่อม
   assigned_at?: string | null;        // ISO timestamp จัดสายรถ & มอบหมายช่าง

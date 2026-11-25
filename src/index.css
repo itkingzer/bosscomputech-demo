@@ -78,6 +78,10 @@
     --accent: #E65A00;
   }
 
+  html.dark {
+    color-scheme: dark;
+  }
+
   body {
     font-family: 'Sarabun', 'Inter', sans-serif;
     background-color: var(--bg-page);
@@ -471,7 +475,7 @@ html.light :is(
   .from-rose-600, .from-red-600,
   .from-blue-600, .from-indigo-600,
   .from-purple-600, .from-violet-600,
-  .from-emerald-600, .from-teal-600,
+  .from-emerald-600, .from-emerald-700, .from-teal-600, .from-teal-700,
   .from-cyan-600, .from-sky-600
 ).text-white,
 html.light :is(
@@ -492,7 +496,7 @@ html.light :is(
   .from-rose-600, .from-red-600,
   .from-blue-600, .from-indigo-600,
   .from-purple-600, .from-violet-600,
-  .from-emerald-600, .from-teal-600,
+  .from-emerald-600, .from-emerald-700, .from-teal-600, .from-teal-700,
   .from-cyan-600, .from-sky-600
 ) .text-white {
   color: #FFFFFF !important;
@@ -981,7 +985,7 @@ html.light ::-webkit-scrollbar-thumb {
   /* Hide everything by default for legacy inline repair receipts.
      Exclude ORDER FORM 2026, #repair-print-root, and .repair-receipt-print-portal
      which each have their own dedicated print layout rules below. */
-  body:not(:has(#order-form-2026-print)):not(:has(#onsite-daily-report-print)):not(:has(#repair-print-root #repair-receipt-print)):not(:has(.repair-receipt-print-portal #repair-receipt-print)) * {
+  body:not(:has(.stock-po-print-dialog[open])):not(:has(#order-form-2026-print)):not(:has(#onsite-daily-report-print, #onsite-dispatch-roster-print)):not(:has(#repair-print-root #repair-receipt-print)):not(:has(.repair-receipt-print-portal #repair-receipt-print)) * {
     display: none !important;
   }
 
@@ -1317,8 +1321,8 @@ html.light ::-webkit-scrollbar-thumb {
 
   /* Hide app chrome, buttons and navbars from the printed page */
   body:not(:has(#order-form-2026-print)) nav,
-  body:not(:has(#order-form-2026-print)) header,
-  body:not(:has(#order-form-2026-print)) footer,
+  body:not(:has(#order-form-2026-print, .stock-po-print-dialog[open])) header,
+  body:not(:has(#order-form-2026-print, .stock-po-print-dialog[open])) footer,
   body:not(:has(#order-form-2026-print)) aside,
   .no-print,
   button {
@@ -1392,6 +1396,7 @@ html.light ::-webkit-scrollbar-thumb {
   }
 
   #order-form-2026-print .order-form-page {
+    width: 100% !important;
     padding: 1.5mm !important;
     margin: 0 !important;
     box-shadow: none !important;
@@ -1539,6 +1544,11 @@ html.light ::-webkit-scrollbar-thumb {
     background: transparent !important;
   }
 
+  @page onsite-dispatch-roster-a4 {
+    size: A4 landscape;
+    margin: 8mm;
+  }
+
   /* Onsite Dispatch Roster (A4 Landscape - ONSITE SERVICE + INSTALLATION) */
   html:has(#onsite-dispatch-roster-print),
   body:has(#onsite-dispatch-roster-print) {
@@ -1575,9 +1585,10 @@ html.light ::-webkit-scrollbar-thumb {
   }
 
   #onsite-dispatch-roster-print {
+    page: onsite-dispatch-roster-a4;
     box-sizing: border-box !important;
     width: 100% !important;
-    max-width: 280mm !important;
+    max-width: 100% !important;
     margin: 0 auto !important;
     padding: 0 !important;
     background: #FFFFFF !important;

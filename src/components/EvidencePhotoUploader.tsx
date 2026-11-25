@@ -1,3 +1,4 @@
+import { ModalBackdrop } from './ui/ModalBackdrop';
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
@@ -27,6 +28,7 @@ interface EvidencePhotoUploaderProps {
   label?: string;
   helperText?: string;
   compact?: boolean;
+  onUploadingChange?: (uploading: boolean) => void;
 }
 
 export const EvidencePhotoUploader: React.FC<EvidencePhotoUploaderProps> = ({
@@ -37,7 +39,8 @@ export const EvidencePhotoUploader: React.FC<EvidencePhotoUploaderProps> = ({
   maxPhotos = MAX_EVIDENCE_PHOTOS,
   label = 'รูปภาพหลักฐาน',
   helperText,
-  compact = false
+  compact = false,
+  onUploadingChange
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
@@ -87,6 +90,7 @@ export const EvidencePhotoUploader: React.FC<EvidencePhotoUploaderProps> = ({
     }
 
     setIsUploading(true);
+    onUploadingChange?.(true);
     setUploadProgress({ done: 0, total: selectedFiles.length });
 
     const newUrls: string[] = [];
@@ -106,6 +110,7 @@ export const EvidencePhotoUploader: React.FC<EvidencePhotoUploaderProps> = ({
       }
     } finally {
       setIsUploading(false);
+      onUploadingChange?.(false);
       setUploadProgress(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
       if (cameraInputRef.current) cameraInputRef.current.value = '';
@@ -273,12 +278,12 @@ export const EvidencePhotoUploader: React.FC<EvidencePhotoUploaderProps> = ({
 
       {/* Full-Screen Lightbox Modal (z-[10050]) */}
       {lightboxIndex !== null && photos[lightboxIndex] && createPortal(
-        <div
+        <ModalBackdrop
           className="fixed inset-0 z-[10050] bg-black/90 backdrop-blur-md flex flex-col items-center justify-center p-3 sm:p-6 animate-fade-in"
           role="dialog"
           aria-modal="true"
           aria-label="ดูรูปภาพหลักฐานขนาดเต็ม"
-          onClick={() => setLightboxIndex(null)}
+          onDismiss={() => setLightboxIndex(null)}
         >
           {/* Top Bar */}
           <div
@@ -335,7 +340,7 @@ export const EvidencePhotoUploader: React.FC<EvidencePhotoUploaderProps> = ({
               </button>
             )}
           </div>
-        </div>,
+        </ModalBackdrop>,
         document.body
       )}
     </div>

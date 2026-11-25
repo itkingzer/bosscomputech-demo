@@ -1,4 +1,8 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import { ModalBackdrop } from './ui/ModalBackdrop';
+import { ProductCatalogModal } from './ProductCatalogModal';
+import { PurchasingActionConfirmation, type PurchasingActionSummary } from './PurchasingActionConfirmation';
+import { NumberInput } from './ui/FormInputs';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from '../context/AppContext';
 import {
@@ -8,13 +12,14 @@ import {
   Timer, ChevronRight, ClipboardList, PackageSearch,
   Search, Trash2, Plus, History, Hash, Camera, Printer
 } from 'lucide-react';
-import { ROUTE_DEFINITIONS, Order, Item, ProductCategory, PRODUCT_CATEGORY_LABELS, Product, StockPO, Project, formatThaiDateTime, formatDateDMY, getLocalDateStr } from '../types';
+import { ROUTE_DEFINITIONS, Order, Item, ProductCategory, PRODUCT_CATEGORY_LABELS, Product, StockPO, Project, formatThaiDateTime, formatDateDMY, getLocalDateStr, getStockPoDocument, getStockPoReceipt } from '../types';
 import { ListControls, useListControls } from './ListControls';
 import { ActivityTimeline } from './ActivityTimeline';
 import { EvidencePhotoUploader } from './EvidencePhotoUploader';
 import { ToastBanner } from './ui/ToastBanner';
 import { OrderFormPrintModal } from './OrderFormPrintModal';
-import { isNonPrepCableOrConsumable, isServiceItem } from '../utils/domainHelpers';
+import { StockPurchaseOrderPrintModal } from './StockPurchaseOrderPrintModal';
+import { isNonPrepCableOrConsumable, isServiceItem, newUuid } from '../utils/domainHelpers';
 
 const DOA_WARRANTY_DAYS = 7;
 
@@ -86,6 +91,9 @@ export const PurchasingStockView: React.FC = () => {
     unit_cost: number;
   };
   const [isStockPoModalOpen, setIsStockPoModalOpen] = useState(false);
+  const [isSavingStockPo, setIsSavingStockPo] = useState(false);
+  const [stockPoError, setStockPoError] = useState('');
+  const [stockPoSearch, setStockPoSearch] = useState('');
   const [stockPoLines, setStockPoLines] = useState<StockPoLine[]>([]);
   const [stockPoSourceOrderId, setStockPoSourceOrderId] = useState<string | null>(null);
   const [stockPoSourceProjectId, setStockPoSourceProjectId] = useState<string | null>(null);
@@ -99,16 +107,13 @@ export const PurchasingStockView: React.FC = () => {
     [projects, actionProjectId]
   );
   const [stockPoMeta, setStockPoMeta] = useState(() => ({
-    supplier: SUPPLIER_PRESETS[1],
-    po_number: `PO-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`,
+    supplier: '',
+    supplierQuote: '',
     notes: ''
   }));
 
   // ---- Catalog Multi-Select Modal (อ่านจาก Product Catalog กลางของฝ่ายขาย) ----
   const [isPoCatalogModalOpen, setIsPoCatalogModalOpen] = useState(false);
-  const [poCatalogSearch, setPoCatalogSearch] = useState('');
-  const [poCatalogCategory, setPoCatalogCategory] = useState<'all' | ProductCategory>('all');
-  const [poCatalogSort, setPoCatalogSort] = useState<'name' | 'cost_desc' | 'cost_asc' | 'stock_desc'>('name');
   // mapping productId -> { qty, unit_cost }
   const [poCatalogPicks, setPoCatalogPicks] = useState<Record<string, { qty: number; unit_cost: number }>>({});
 
@@ -121,6 +126,34 @@ export const PurchasingStockView: React.FC = () => {
   const [inventoryDetail, setInventoryDetail] = useState<{ key: string; model_name: string; category: ProductCategory; rawCount: number; readyCount: number; serials: string[]; qty: number } | null>(null);
   // Stock PO Detail Modal (ติดตาม PO)
   const [poDetail, setPoDetail] = useState<StockPO | null>(null);
+  const [receiptDeliveryNote, setReceiptDeliveryNote] = useState('');
+  const [receiptTaxInvoice, setReceiptTaxInvoice] = useState('');
+  const [confirmation, setConfirmation] = useState<(PurchasingActionSummary & (
+    | { kind: 'receive'; poId: string; receipt: NonNullable<Parameters<typeof receiveStockPOToStorage>[1]> }
+    | { kind: 'send'; order: Order; billNo: string; itemsToCut: Parameters<typeof cutStock>[2] }
+  )) | null>(null);
+  const [confirmationBusy, setConfirmationBusy] = useState(false);
+  const [confirmationError, setConfirmationError] = useState('');
+  const confirmationInFlight = useRef(false);
+  const poDocument = poDetail ? getStockPoDocument(poDetail) : undefined;
+  const poReceipt = poDetail ? getStockPoReceipt(poDetail) : undefined;
+  const sourceOrder = orders.find(order => order.id === stockPoSourceOrderId);
+  const purchaseSourceLabel = stockPoSourceProjectId
+    ? `โปรเจกต์ ${stockPoSourceProjectId}`
+    : sourceOrder ? `บิลขาย ${sourceOrder.sales_ref || sourceOrder.id}` : 'ซื้อเข้าสต๊อก';
+
+  const openPoDetail = (po: StockPO) => {
+    setReceiptDeliveryNote('');
+    setReceiptTaxInvoice('');
+    setPoDetail(po);
+  };
+
+  const closeStockPoForm = () => {
+    if (isSavingStockPo) return;
+    setStockPoError('');
+    setIsStockPoModalOpen(false);
+  };
+  const [printStockPo, setPrintStockPo] = useState<StockPO | null>(null);
   const [printProjectTarget, setPrintProjectTarget] = useState<{ project: Project; batchNo?: number | null } | null>(null);
   // DOA Claim Tracking Modal
   const [doaClaimItem, setDoaClaimItem] = useState<Item | null>(null);
@@ -133,7 +166,7 @@ export const PurchasingStockView: React.FC = () => {
   const [inventorySearch, setInventorySearch] = useState('');
 
   // Lock background scroll while any modal is open
-  const anyModalOpen = isStockPoModalOpen || isPoCatalogModalOpen || !!actionOrder || !!actionProject || !!batchDetail || !!inventoryDetail || !!poDetail || !!doaClaimItem;
+  const anyModalOpen = !!confirmation || isStockPoModalOpen || isPoCatalogModalOpen || !!actionOrder || !!actionProject || !!batchDetail || !!inventoryDetail || !!poDetail || !!doaClaimItem || !!printStockPo;
   useEffect(() => {
     if (!anyModalOpen) return;
     const htmlEl = document.documentElement;
@@ -157,8 +190,8 @@ export const PurchasingStockView: React.FC = () => {
     setStockPoSourceProjectId(null);
     setStockPoLines([]);
     setStockPoMeta({
-      supplier: SUPPLIER_PRESETS[1],
-      po_number: `PO-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`,
+      supplier: '',
+      supplierQuote: '',
       notes: ''
     });
     setIsStockPoModalOpen(true);
@@ -182,9 +215,9 @@ export const PurchasingStockView: React.FC = () => {
     setStockPoSourceProjectId(null);
     setStockPoLines(missingLines);
     setStockPoMeta({
-      supplier: supplierInputs[order.id] || order.items_list?.[0]?.supplier || SUPPLIER_PRESETS[1],
-      po_number: `PO-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`,
-      notes: `สั่งซื้อรายการที่ขาดสำหรับออเดอร์ ${order.sales_ref || order.id} (${order.customer_name})`
+      supplier: supplierInputs[order.id] || order.items_list?.[0]?.supplier || '',
+      supplierQuote: '',
+      notes: ''
     });
     setActionOrder(null);
     setIsStockPoModalOpen(true);
@@ -261,9 +294,9 @@ export const PurchasingStockView: React.FC = () => {
     setStockPoSourceProjectId(project.id);
     setStockPoLines(missingLines);
     setStockPoMeta({
-      supplier: SUPPLIER_PRESETS[1],
-      po_number: `PO-${project.id}-${Math.floor(10 + Math.random() * 90)}`,
-      notes: `สั่งซื้อ PO ผูกโปรเจกต์ ${project.id} (${project.site_name} • ${project.customer_name})`
+      supplier: '',
+      supplierQuote: '',
+      notes: ''
     });
     setActionProjectId(null);
     setIsStockPoModalOpen(true);
@@ -315,9 +348,6 @@ export const PurchasingStockView: React.FC = () => {
       prefill[l.product_id] = { qty: l.qty, unit_cost: l.unit_cost };
     });
     setPoCatalogPicks(prefill);
-    setPoCatalogSearch('');
-    setPoCatalogCategory('all');
-    setPoCatalogSort('name');
     setIsPoCatalogModalOpen(true);
   };
 
@@ -384,16 +414,20 @@ export const PurchasingStockView: React.FC = () => {
     setStockPoLines(prev => prev.filter(l => l.product_id !== productId));
   };
 
-  const handleSubmitStockPo = (e: React.FormEvent) => {
+  const handleSubmitStockPo = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (stockPoLines.length === 0) {
-      alert('กรุณาเลือกสินค้าจากแคตตาล็อกเพื่อสั่งซื้อ PO อย่างน้อย 1 รายการ');
-      return;
-    }
-    const basePoNumber = stockPoMeta.po_number.trim() || `PO-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`;
+    if (isSavingStockPo || !stockPoMeta.supplier || stockPoLines.length === 0) return;
+    const documentId = newUuid();
+    const basePoNumber = `PO-${new Date().getFullYear()}-${documentId.replace(/-/g, '').slice(0, 12).toUpperCase()}`;
+    const source = stockPoSourceProjectId
+      ? { kind: 'project' as const, reference: stockPoSourceProjectId }
+      : sourceOrder ? { kind: 'sales' as const, reference: sourceOrder.sales_ref || sourceOrder.id }
+      : { kind: 'stock' as const };
     // สร้าง Stock PO 1 ใบต่อ 1 รายการสินค้า (อ้างอิง product_id + ชื่อตรงกับแคตตาล็อกกลาง 100%)
-    stockPoLines.forEach((line, idx) => {
-      createStockPO({
+    setIsSavingStockPo(true);
+    setStockPoError('');
+    try {
+      await createStockPO(stockPoLines.map((line, idx) => ({
         product_name: line.product_name,
         category: line.category,
         qty: Math.max(1, line.qty),
@@ -402,8 +436,18 @@ export const PurchasingStockView: React.FC = () => {
         po_number: stockPoLines.length > 1 ? `${basePoNumber}-${idx + 1}` : basePoNumber,
         notes: stockPoMeta.notes.trim() || null,
         project_id: stockPoSourceProjectId || null
+      })), {
+        id: documentId,
+        number: basePoNumber,
+        supplierQuote: stockPoMeta.supplierQuote.trim() || undefined,
+        source,
       });
-    });
+    } catch {
+      setStockPoError('บันทึกใบสั่งซื้อไม่สำเร็จ กรุณาลองอีกครั้ง');
+      return;
+    } finally {
+      setIsSavingStockPo(false);
+    }
     if (stockPoSourceOrderId) {
       updateOrderPOStatus(stockPoSourceOrderId, 'waiting_po', stockPoMeta.supplier, basePoNumber);
       setStockPoSourceOrderId(null);
@@ -413,22 +457,35 @@ export const PurchasingStockView: React.FC = () => {
     }
     const totalQty = stockPoLines.reduce((sum, l) => sum + Math.max(1, l.qty), 0);
     setIsStockPoModalOpen(false);
+    setStockPoSearch('');
+    setMainTab('po_tracking');
     setToast(`เปิดใบ ${basePoNumber} (${stockPoLines.length} รายการ รวม ${totalQty} ชิ้น) เรียบร้อย -> รอของเข้าคลัง`);
     setTimeout(() => setToast(''), 4000);
   };
 
-  const handleReceiveStockPo = (poId: string, productName: string, qty: number) => {
-    receiveStockPOToStorage(poId);
-    const key = (productName || '').trim().toLowerCase();
-    const waitingOrder = allIncomingOrders.find(o =>
-      (o.items_list || []).some(it => (it.model_name || '').trim().toLowerCase() === key)
-    );
-    if (waitingOrder) {
-      setToast(`รับของ "${productName}" ${qty} ชิ้นเข้าคลังแล้ว — บิล ${waitingOrder.sales_ref || waitingOrder.id} พร้อมเช็ก/ตัดสต๊อกส่งช่างได้ที่แท็บ 1`);
-    } else {
-      setToast(`รับของ Stock PO "${productName}" ${qty} ชิ้น เข้าคลังเรียบร้อยแล้ว`);
-    }
-    setTimeout(() => setToast(''), 5000);
+  const reviewReceiveStockPo = (po: StockPO) => {
+    const receipt = {
+      deliveryNote: receiptDeliveryNote.trim() || undefined,
+      taxInvoice: receiptTaxInvoice.trim() || undefined,
+    };
+    const source = getStockPoDocument(po)?.source;
+    setConfirmationError('');
+    setConfirmation({
+      kind: 'receive',
+      poId: po.id,
+      receipt,
+      title: 'ตรวจสอบก่อนรับของเข้า PO',
+      description: 'ตรวจรุ่น จำนวน และเอกสารให้ตรงกับของที่ได้รับ เมื่อยืนยัน ระบบจะบันทึกรับสินค้าเข้าคลัง',
+      confirmLabel: 'ยืนยันรับเข้าคลัง',
+      details: [
+        { label: 'เลขที่ PO', value: po.po_number },
+        { label: 'ผู้ขาย', value: po.supplier || '—' },
+        ...(source?.kind === 'sales' ? [{ label: 'อ้างอิงบิลขาย', value: source.reference }] : []),
+        { label: 'เลขใบส่งของ', value: receipt.deliveryNote || 'ยังไม่ระบุ' },
+        { label: 'เลขใบกำกับภาษี', value: receipt.taxInvoice || 'ยังไม่ระบุ' },
+      ],
+      lines: [{ name: po.product_name, quantity: po.qty }],
+    });
   };
 
   const handleSendRawToPrep = (itemId: string, modelName: string) => {
@@ -733,7 +790,7 @@ export const PurchasingStockView: React.FC = () => {
   };
 
   // Step 3: ปล่อยของ / ตัดสต๊อกให้ช่างเตรียมสินค้า
-  const handleCutStockAndSendPrep = (orderId: string, overridePrepNote?: string) => {
+  const reviewCutStockAndSendPrep = (orderId: string, overridePrepNote?: string) => {
     const order = orders.find(o => o.id === orderId);
     if (!order) return;
 
@@ -745,7 +802,7 @@ export const PurchasingStockView: React.FC = () => {
     }
 
     const defaultBill = `INV-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`;
-    const billNo = (billInputs[orderId] || defaultBill).trim();
+    const billNo = billInputs[orderId]?.trim() || defaultBill;
     const supplier = supplierInputs[orderId] || 'สต๊อกร้าน (Main Store)';
     const poNo = poInputs[orderId] || `PO-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`;
     const prepNote = (overridePrepNote ?? prepNoteInputs[orderId] ?? '').trim();
@@ -776,15 +833,72 @@ export const PurchasingStockView: React.FC = () => {
         stockItemId: stockPickInputs[`${orderId}:0`] || undefined
       }];
 
-    cutStock(orderId, billNo, itemsToCut);
+    setConfirmationError('');
+    setConfirmation({
+      kind: 'send',
+      order,
+      billNo,
+      itemsToCut,
+      title: itemsToCut.length ? 'ตรวจสอบก่อนตัดสต๊อกและส่งช่าง' : 'ตรวจสอบก่อนบันทึกบิลบริการ',
+      description: itemsToCut.length
+        ? 'เมื่อยืนยัน ระบบจะตัดสต๊อก ผูกสินค้ากับบิลนี้ และส่งต่อไปยังคิวตามประเภทสินค้า'
+        : 'บิลนี้มีเฉพาะค่าบริการหรือค่าแรง เมื่อยืนยัน ระบบจะบันทึกเลขที่บิล',
+      confirmLabel: itemsToCut.length ? 'ยืนยันตัดสต๊อกและส่งต่อ' : 'ยืนยันบันทึกบิล',
+      details: [
+        { label: 'ออเดอร์ขาย', value: order.sales_ref || order.id },
+        { label: 'ลูกค้า', value: order.customer_name },
+        { label: 'เลขที่บิล (INV)', value: billNo },
+        ...(prepNote ? [{ label: 'หมายเหตุถึงช่าง', value: prepNote }] : []),
+      ],
+      lines: itemsToCut.map(item => ({
+        name: item.model_name,
+        quantity: item.quantity,
+        destination: isNonPrepCableOrConsumable(item.model_name) ? 'เข้าคิวพร้อมส่งมอบ' : 'เข้าคิวช่างเตรียมสินค้า',
+      })),
+    });
+  };
 
-    const totalQty = itemsToCut.reduce((sum, item) => sum + item.quantity, 0);
-    setToast(
-      totalQty > 0
-        ? `ตัดสต๊อกบิล ${billNo} สำเร็จ! ตัดของจากคลัง & ส่งคิว ${totalQty} ชิ้นให้ช่างเตรียมสินค้าแล้ว`
-        : `บันทึกบิล ${billNo} สำเร็จ! (รายการค่าบริการ/ค่าแรง ไม่ต้องตัดสต๊อก)`
-    );
-    setTimeout(() => setToast(''), 4000);
+  const confirmPurchasingAction = async () => {
+    if (!confirmation || confirmationInFlight.current || confirmationError) return;
+    confirmationInFlight.current = true;
+    setConfirmationBusy(true);
+    try {
+      if (confirmation.kind === 'receive') {
+        const po = stockPOs.find(item => item.id === confirmation.poId);
+        const line = confirmation.lines[0];
+        if (po?.status !== 'ordered' || po.qty !== line.quantity || po.product_name !== line.name) {
+          setConfirmationError('รายการ PO เปลี่ยนไป กรุณาย้อนกลับและเปิดรายการอีกครั้ง');
+          return;
+        }
+        await receiveStockPOToStorage(po.id, confirmation.receipt);
+        setToast(`รับสินค้า “${po.product_name}” ${po.qty} ชิ้นเข้าคลังแล้ว`);
+        setPoDetail(null);
+      } else {
+        const { order, billNo, itemsToCut } = confirmation;
+        const liveOrder = allIncomingOrders.find(item => item.id === order.id);
+        const requiredByModel = new Map<string, number>();
+        for (const item of itemsToCut) {
+          const model = item.model_name.trim().toLowerCase();
+          requiredByModel.set(model, (requiredByModel.get(model) || 0) + item.quantity);
+        }
+        const stockAvailable = [...requiredByModel].every(([model, quantity]) => getAvailableStock(model) >= quantity);
+        if (!liveOrder || liveOrder.updated_at !== order.updated_at || !getOrderPrepReadiness(liveOrder).canSendToPrep || !stockAvailable) {
+          setConfirmationError('ข้อมูลบิลหรือจำนวนสินค้าในคลังไม่พร้อมตามรายการนี้ กรุณาย้อนกลับและตรวจสอบอีกครั้ง');
+          return;
+        }
+        await cutStock(order.id, billNo, itemsToCut);
+        setToast(itemsToCut.length ? `ตัดสต๊อกและผูกสินค้ากับบิล ${billNo} แล้ว` : `บันทึกบิลบริการ ${billNo} แล้ว`);
+        setActionOrder(null);
+        setBatchDetail(null);
+      }
+      setConfirmation(null);
+      setTimeout(() => setToast(''), 4000);
+    } catch {
+      setConfirmationError('บันทึกไม่สำเร็จ กรุณาย้อนกลับเพื่อตรวจสอบสถานะรายการก่อนดำเนินการอีกครั้ง');
+    } finally {
+      confirmationInFlight.current = false;
+      setConfirmationBusy(false);
+    }
   };
 
   const caseACount = allIncomingOrders.filter(o => getOrderPrepReadiness(o).stateCase === 'case_a').length;
@@ -820,13 +934,23 @@ export const PurchasingStockView: React.FC = () => {
     initialPageSize: 10
   });
 
-  const orderedStockPoList = useListControls(orderedStockPOs, {
+  const matchesPoSearch = (po: StockPO) => {
+    const document = getStockPoDocument(po);
+    const receipt = getStockPoReceipt(po);
+    const source = document?.source;
+    const query = stockPoSearch.trim().toLowerCase();
+    return !query || [po.po_number, po.supplier, po.product_name, document?.supplierQuote, po.project_id,
+      source?.kind === 'stock' ? 'ซื้อเข้าสต๊อก' : source?.reference, receipt?.deliveryNote, receipt?.taxInvoice]
+      .some(value => value?.toLowerCase().includes(query));
+  };
+
+  const orderedStockPoList = useListControls(orderedStockPOs.filter(matchesPoSearch), {
     getDate: (po) => po.ordered_at || po.created_at,
     initialSort: 'newest',
     initialPageSize: 10
   });
 
-  const receivedStockPoList = useListControls(receivedStockPOs, {
+  const receivedStockPoList = useListControls(receivedStockPOs.filter(matchesPoSearch), {
     getDate: (po) => po.received_at || po.updated_at || po.created_at,
     initialSort: 'newest',
     initialPageSize: 10
@@ -972,29 +1096,6 @@ export const PurchasingStockView: React.FC = () => {
     }
   ];
 
-  // ---- Catalog list for PO multi-select modal (search + category + sort) ----
-  const poCatalogFiltered = useMemo(() => {
-    const q = poCatalogSearch.trim().toLowerCase();
-    const list = products.filter(p => {
-      const matchesSearch = !q || p.name.toLowerCase().includes(q);
-      const matchesCategory = poCatalogCategory === 'all' || p.category === poCatalogCategory;
-      return matchesSearch && matchesCategory;
-    });
-    const stockOf = (name: string) => stockCountByName[(name || '').trim().toLowerCase()] || 0;
-    switch (poCatalogSort) {
-      case 'cost_desc':
-        return [...list].sort((a, b) => b.cost_price - a.cost_price);
-      case 'cost_asc':
-        return [...list].sort((a, b) => a.cost_price - b.cost_price);
-      case 'stock_desc':
-        return [...list].sort((a, b) => stockOf(b.name) - stockOf(a.name));
-      default:
-        return [...list].sort((a, b) => a.name.localeCompare(b.name, 'th'));
-    }
-  }, [products, poCatalogSearch, poCatalogCategory, poCatalogSort, stockCountByName]);
-
-  const poCatalogSelectedCount = Object.keys(poCatalogPicks).length;
-
   const accentClasses: Record<string, { active: string; badge: string; icon: string }> = {
     blue: {
       active: 'bg-blue-500/15 dark:bg-blue-500/20 border border-blue-500/40 dark:border-blue-500/50 text-blue-900 dark:text-white shadow-sm',
@@ -1083,7 +1184,7 @@ export const PurchasingStockView: React.FC = () => {
           <button
             type="button"
             onClick={openStockPoModal}
-            className="w-full sm:w-auto px-4 sm:px-5 py-2.5 sm:py-3 sm:min-h-[48px] rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 text-black font-black text-xs sm:text-sm transition cursor-pointer flex items-center justify-center gap-1.5 sm:gap-2 shadow-lg shadow-emerald-500/20 border border-white/20 active:scale-[0.97]"
+            className="w-full sm:w-auto px-4 sm:px-5 py-2.5 sm:py-3 sm:min-h-[48px] rounded-xl bg-gradient-to-r from-emerald-700 to-teal-800 hover:from-emerald-800 text-white font-black text-xs sm:text-sm transition cursor-pointer flex items-center justify-center gap-1.5 sm:gap-2 shadow-lg shadow-emerald-500/20 border border-white/20 active:scale-[0.97]"
           >
             <PackagePlus className="w-4 h-4 sm:w-5 sm:h-5" />
             <span className="sm:hidden">+ เปิดใบ PO สต๊อก</span>
@@ -1369,8 +1470,8 @@ export const PurchasingStockView: React.FC = () => {
                           {stateCase === 'case_c' && (
                             <button
                               type="button"
-                              onClick={(e) => { e.stopPropagation(); handleCutStockAndSendPrep(order.id); }}
-                              className="px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 text-black text-[11px] font-extrabold cursor-pointer active:scale-95 transition flex items-center gap-1 shadow-sm"
+                              onClick={(e) => { e.stopPropagation(); reviewCutStockAndSendPrep(order.id); }}
+                              className="px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-emerald-700 to-teal-800 text-white text-[11px] font-extrabold cursor-pointer active:scale-95 transition flex items-center gap-1 shadow-sm"
                             >
                               <Send className="w-3 h-3" />
                               <span>ตัดสต๊อก</span>
@@ -1735,13 +1836,23 @@ export const PurchasingStockView: React.FC = () => {
         {/* ================= TAB 2: PO TRACKING ================= */}
         {mainTab === 'po_tracking' && (
           <div className="space-y-5 mt-4">
+            <label className="block max-w-xl space-y-1 text-sm font-semibold">
+              <span>ค้นหาใบสั่งซื้อ</span>
+              <input type="search" value={stockPoSearch} onChange={event => {
+                setStockPoSearch(event.target.value);
+                orderedStockPoList.setPage(1);
+                receivedStockPoList.setPage(1);
+              }}
+                placeholder="เลข PO, ผู้ขาย, สินค้า หรือเลขเอกสารผู้ขาย"
+                className="min-h-11 w-full rounded-xl border border-slate-300 bg-white px-3 dark:border-slate-700 dark:bg-slate-900" />
+            </label>
             {/* Box 1: Stock POs waiting for delivery (ordered only) */}
             <div className="p-3 sm:p-4 rounded-2xl bg-purple-50/40 dark:bg-purple-500/[0.04] border border-purple-200 dark:border-purple-500/25 space-y-3">
               <div className="flex items-center justify-between flex-wrap gap-2">
                 <span className="text-xs font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
                   <PackageSearch className="w-4 h-4 text-purple-600 dark:text-purple-400" />
                   <span className="sm:hidden">Stock PO รอของเข้า</span>
-                  <span className="hidden sm:inline">ใบสั่งซื้อเข้าสต๊อก (Stock PO) — รอของเข้า</span>
+                  <span className="hidden sm:inline">รายการสั่งซื้อที่รอรับสินค้า</span>
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-purple-600 text-white">
                     {orderedStockPOs.length}
                   </span>
@@ -1749,16 +1860,16 @@ export const PurchasingStockView: React.FC = () => {
                 <button
                   type="button"
                   onClick={openStockPoModal}
-                  className="px-3 py-1.5 rounded-xl bg-emerald-100 hover:bg-emerald-200 text-emerald-900 border border-emerald-300 dark:bg-emerald-500/20 dark:hover:bg-emerald-500/30 dark:text-emerald-200 dark:border-emerald-500/30 text-[11px] font-bold transition cursor-pointer flex items-center gap-1 active:scale-95"
+                  className="px-3 py-1.5 rounded-xl border bg-emerald-700 hover:bg-emerald-800 text-white border-emerald-700 text-[11px] font-bold transition cursor-pointer flex items-center gap-1 active:scale-95"
                 >
                   <PackagePlus className="w-3.5 h-3.5" />
-                  <span>สร้าง Stock PO</span>
+                  <span>สร้างใบสั่งซื้อ</span>
                 </button>
               </div>
-              {orderedStockPOs.length === 0 ? (
+              {orderedStockPoList.total === 0 ? (
                 <div className="text-center py-6 text-slate-500 border border-dashed border-purple-300/70 dark:border-white/[0.1] rounded-xl bg-white/60 dark:bg-transparent">
                   <PackageSearch className="w-7 h-7 mx-auto mb-1.5 text-slate-400 dark:text-slate-600" />
-                  <p className="text-xs font-medium text-slate-700 dark:text-slate-300">ไม่มี Stock PO ที่รอของเข้า</p>
+                  <p className="text-xs font-medium text-slate-700 dark:text-slate-300">{stockPoSearch.trim() ? 'ไม่พบรายการรอรับที่ตรงกับคำค้น' : 'ยังไม่มีรายการรอรับ'}</p>
                 </div>
               ) : (
                 <>
@@ -1774,32 +1885,22 @@ export const PurchasingStockView: React.FC = () => {
                     onPageSizeChange={orderedStockPoList.setPageSize}
                     onPageChange={orderedStockPoList.setPage}
                     pageSizeOptions={[10, 20, 30]}
-                    unit="ใบ"
+                    unit="รายการ"
                     className="mb-2"
                   />
                   <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2.5">
                     {orderedStockPoList.pageItems.map((po) => {
-                      const poKey = (po.product_name || '').trim().toLowerCase();
-                      const linkedWaitingOrder = allIncomingOrders.find(o =>
-                        (o.items_list || []).some(it => (it.model_name || '').trim().toLowerCase() === poKey)
-                      );
+                      const document = getStockPoDocument(po);
                       return (
-                        <div
+                        <button
                           key={po.id}
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => setPoDetail(po)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' || e.key === ' ') {
-                              e.preventDefault();
-                              setPoDetail(po);
-                            }
-                          }}
+                          type="button"
+                          onClick={() => openPoDetail(po)}
                           className="text-left p-3.5 rounded-2xl liquid-glass-card border border-purple-200 dark:border-purple-500/25 hover:border-purple-500/60 transition active:scale-[0.99] cursor-pointer flex flex-col gap-2 min-h-[136px]"
                         >
                           <div className="flex items-center justify-between gap-2">
                             <span className="px-2 py-0.5 rounded-md bg-purple-100 text-purple-900 border border-purple-300 dark:bg-purple-500/15 dark:text-purple-300 dark:border-purple-500/30 font-mono text-[10px] font-bold truncate">
-                              {po.po_number}
+                              {document?.number || po.po_number}
                             </span>
                             <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 text-purple-900 border border-purple-300 dark:bg-purple-500/15 dark:text-purple-300 dark:border-purple-500/30 whitespace-nowrap">
                               รอของเข้า
@@ -1818,27 +1919,22 @@ export const PurchasingStockView: React.FC = () => {
                               {po.supplier || '-'} • {PRODUCT_CATEGORY_LABELS[po.category]}
                               {po.project_id ? ` • ผูก ${po.project_id}` : ''}
                             </div>
-                            {linkedWaitingOrder && (
+                            {document?.source?.kind === 'sales' && (
                               <div className="text-[10px] font-bold text-[#C2410C] dark:text-[#FF8A24] truncate">
-                                รอส่งต่อบิล: {linkedWaitingOrder.sales_ref || linkedWaitingOrder.id} ({linkedWaitingOrder.customer_name})
+                                บิลขาย {document.source.reference}
                               </div>
                             )}
                           </div>
                           <div className="flex items-center justify-between gap-1.5 flex-wrap mt-auto pt-1">
                             <span className="text-[10px] text-rose-700 dark:text-rose-300/80 font-mono font-bold data-key">ทุน ฿{fmt(po.unit_cost)}/หน่วย</span>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleReceiveStockPo(po.id, po.product_name, po.qty);
-                              }}
-                              className="px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-teal-500 to-emerald-600 hover:from-teal-400 text-black text-[11px] font-extrabold cursor-pointer active:scale-95 transition flex items-center gap-1 shadow-sm"
+                            <span
+                              className="px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-teal-700 to-emerald-800 hover:from-teal-800 text-white text-[11px] font-extrabold cursor-pointer active:scale-95 transition flex items-center gap-1 shadow-sm"
                             >
                               <ShieldCheck className="w-3.5 h-3.5" />
-                              <span>รับของเข้าคลัง</span>
-                            </button>
+                              <span>เปิดใบ / รับของ</span>
+                            </span>
                           </div>
-                        </div>
+                        </button>
                       );
                     })}
                   </div>
@@ -1852,16 +1948,16 @@ export const PurchasingStockView: React.FC = () => {
                 <span className="text-xs font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
                   <CheckCircle className="w-4 h-4 text-teal-600 dark:text-teal-400" />
                   <span className="sm:hidden">Stock PO รับเข้าคลังแล้ว</span>
-                  <span className="hidden sm:inline">รับแล้ว — ใบสั่งซื้อเข้าสต๊อก (Stock PO) ที่รับสินค้าเข้าคลังแล้ว</span>
+                  <span className="hidden sm:inline">รายการสั่งซื้อที่รับสินค้าแล้ว</span>
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-teal-600 text-white">
                     {receivedStockPOs.length}
                   </span>
                 </span>
               </div>
-              {receivedStockPOs.length === 0 ? (
+              {receivedStockPoList.total === 0 ? (
                 <div className="text-center py-6 text-slate-500 border border-dashed border-teal-300/70 dark:border-white/[0.1] rounded-xl bg-white/60 dark:bg-transparent">
                   <CheckCircle className="w-7 h-7 mx-auto mb-1.5 text-teal-500/60" />
-                  <p className="text-xs font-medium text-slate-700 dark:text-slate-300">ยังไม่มีใบ Stock PO ที่รับสินค้าแล้ว</p>
+                  <p className="text-xs font-medium text-slate-700 dark:text-slate-300">{stockPoSearch.trim() ? 'ไม่พบรายการรับแล้วที่ตรงกับคำค้น' : 'ยังไม่มีรายการรับสินค้าแล้ว'}</p>
                 </div>
               ) : (
                 <>
@@ -1877,7 +1973,7 @@ export const PurchasingStockView: React.FC = () => {
                     onPageSizeChange={receivedStockPoList.setPageSize}
                     onPageChange={receivedStockPoList.setPage}
                     pageSizeOptions={[10, 20, 30]}
-                    unit="ใบ"
+                    unit="รายการ"
                     className="mb-2"
                   />
                   <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2.5">
@@ -1885,12 +1981,12 @@ export const PurchasingStockView: React.FC = () => {
                       <button
                         key={po.id}
                         type="button"
-                        onClick={() => setPoDetail(po)}
+                        onClick={() => openPoDetail(po)}
                         className="text-left p-3.5 rounded-2xl liquid-glass-card border border-teal-200 dark:border-teal-500/25 hover:border-teal-500/60 transition active:scale-[0.98] cursor-pointer flex flex-col gap-2 min-h-[120px]"
                       >
                         <div className="flex items-center justify-between gap-2">
                           <span className="px-2 py-0.5 rounded-md bg-teal-100 text-teal-900 border border-teal-300 dark:bg-teal-500/15 dark:text-teal-300 dark:border-teal-500/30 font-mono text-[10px] font-bold truncate">
-                            {po.po_number}
+                            {getStockPoDocument(po)?.number || po.po_number}
                           </span>
                           <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-100 text-teal-900 border border-teal-300 dark:bg-teal-500/15 dark:text-teal-300 dark:border-teal-500/30 whitespace-nowrap">
                             รับเข้าแล้ว
@@ -2345,8 +2441,7 @@ export const PurchasingStockView: React.FC = () => {
                           <span className="text-slate-500 font-mono mr-1">{idx + 1}.</span>
                           {it.model_name} <span className="text-slate-500">(x{it.quantity})</span>
                         </div>
-                        <input
-                          type="number"
+                        <NumberInput
                           min={0}
                           placeholder="ราคาทุน/หน่วย"
                           value={getItemCost(actionOrder.id, idx, it.unit_cost) || ''}
@@ -2358,8 +2453,7 @@ export const PurchasingStockView: React.FC = () => {
                   </div>
                   <div className="flex items-center justify-between gap-2 pt-2 border-t border-rose-200 dark:border-rose-500/15">
                     <label className="text-[11px] text-slate-700 dark:text-slate-300">ต้นทุนค่าแรง/อื่นๆ (Extra Job Cost)</label>
-                    <input
-                      type="number"
+                    <NumberInput
                       min={0}
                       placeholder="0"
                       value={getExtraCost(actionOrder.id, actionOrder.extra_cost) || ''}
@@ -2511,8 +2605,8 @@ export const PurchasingStockView: React.FC = () => {
                   <div className="space-y-2">
                     <button
                       type="button"
-                      onClick={() => { handleCutStockAndSendPrep(actionOrder.id); setActionOrder(null); }}
-                      className="w-full px-5 py-3 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 text-black font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-500/25 border border-white/20 active:scale-95"
+                      onClick={() => reviewCutStockAndSendPrep(actionOrder.id)}
+                      className="w-full px-5 py-3 bg-gradient-to-r from-emerald-700 to-teal-800 hover:from-emerald-800 text-white font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-500/25 border border-white/20 active:scale-95"
                     >
                       <Send className="w-4 h-4" />
                       <span>ตัดสต๊อกส่งช่างเตรียมติดวอย/จัดส่ง</span>
@@ -2520,11 +2614,10 @@ export const PurchasingStockView: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => {
-                        handleCutStockAndSendPrep(
+                        reviewCutStockAndSendPrep(
                           actionOrder.id,
                           'ด่วน! รับของวันนี้ ส่งพรุ่งนี้ — ขอช่างเตรียมเทส & ติดวอยประกันวันนี้เลย'
                         );
-                        setActionOrder(null);
                       }}
                       className="w-full px-4 py-2.5 bg-amber-100 hover:bg-amber-200 dark:bg-amber-500/20 dark:hover:bg-amber-500/30 text-amber-900 dark:text-amber-200 border border-amber-300 dark:border-amber-500/40 font-extrabold rounded-xl text-[11px] transition cursor-pointer flex items-center justify-center gap-1.5 active:scale-95"
                     >
@@ -2542,7 +2635,7 @@ export const PurchasingStockView: React.FC = () => {
 
       {/* ===== BATCH DETAIL MODAL ===== */}
       {batchDetail && createPortal(
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-fade-in" onClick={() => setBatchDetail(null)}>
+        <ModalBackdrop className="fixed inset-0 z-[9999] flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-fade-in" onDismiss={() => setBatchDetail(null)}>
           <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-3xl w-full sm:w-[95vw] max-w-lg max-h-[88dvh] sm:max-h-[90vh] overflow-y-auto overscroll-contain pb-[max(0.5rem,env(safe-area-inset-bottom))] animate-modal-pop" onClick={(e) => e.stopPropagation()}>
             <div className="sticky top-0 z-10 flex items-start justify-between gap-3 p-4 sm:p-5 border-b border-slate-200 dark:border-slate-800 bg-slate-50/90 dark:bg-slate-900/95 backdrop-blur-xl rounded-t-3xl">
               <div className="min-w-0">
@@ -2595,8 +2688,7 @@ export const PurchasingStockView: React.FC = () => {
 
               <div>
                 <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1.5">จำนวนที่ส่งช่างเทส & ติดโลโก้</label>
-                <input
-                  type="number"
+                <NumberInput
                   min={1}
                   max={batchDetail.itemIds.length}
                   value={batchSendQty[batchDetail.key] ?? batchDetail.itemIds.length}
@@ -2621,11 +2713,8 @@ export const PurchasingStockView: React.FC = () => {
                       </div>
                       <button
                         type="button"
-                        onClick={() => {
-                          handleCutStockAndSendPrep(firstOrd.id);
-                          setBatchDetail(null);
-                        }}
-                        className="w-full px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 text-black font-extrabold text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-md active:scale-95"
+                        onClick={() => reviewCutStockAndSendPrep(firstOrd.id)}
+                        className="w-full px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-700 to-teal-800 hover:from-emerald-800 text-white font-extrabold text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-md active:scale-95"
                       >
                         <Send className="w-4 h-4" />
                         <span>ตัดผูกบิล {firstOrd.sales_ref || firstOrd.id} ให้ช่างติดวอยส่งออกเลย (ไม่ต้องวนสต๊อก)</span>
@@ -2644,13 +2733,13 @@ export const PurchasingStockView: React.FC = () => {
               </div>
             </div>
           </div>
-        </div>,
+        </ModalBackdrop>,
         document.body
       )}
 
       {/* ===== INVENTORY DETAIL MODAL ===== */}
       {inventoryDetail && createPortal(
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-fade-in" onClick={() => setInventoryDetail(null)}>
+        <ModalBackdrop className="fixed inset-0 z-[9999] flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-fade-in" onDismiss={() => setInventoryDetail(null)}>
           <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-3xl w-full sm:w-[95vw] max-w-lg max-h-[88dvh] sm:max-h-[90vh] overflow-y-auto overscroll-contain pb-[max(0.5rem,env(safe-area-inset-bottom))] animate-modal-pop" onClick={(e) => e.stopPropagation()}>
             <div className="sticky top-0 z-10 flex items-start justify-between gap-3 p-4 sm:p-5 border-b border-slate-200 dark:border-slate-800 bg-slate-50/90 dark:bg-slate-900/95 backdrop-blur-xl rounded-t-3xl">
               <div className="min-w-0">
@@ -2698,18 +2787,25 @@ export const PurchasingStockView: React.FC = () => {
               </button>
             </div>
           </div>
-        </div>,
+        </ModalBackdrop>,
         document.body
       )}
 
       {/* ===== PO DETAIL MODAL ===== */}
+      {printStockPo && (
+        <StockPurchaseOrderPrintModal
+          selectedPo={printStockPo}
+          stockPOs={stockPOs}
+          onClose={() => setPrintStockPo(null)}
+        />
+      )}
       {poDetail && createPortal(
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-fade-in" onClick={() => setPoDetail(null)}>
+        <ModalBackdrop className="fixed inset-0 z-[9999] flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-fade-in" onDismiss={() => setPoDetail(null)}>
           <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-3xl w-full sm:w-[95vw] max-w-lg max-h-[88dvh] sm:max-h-[90vh] overflow-y-auto overscroll-contain pb-[max(0.5rem,env(safe-area-inset-bottom))] animate-modal-pop" onClick={(e) => e.stopPropagation()}>
             <div className="sticky top-0 z-10 flex items-start justify-between gap-3 p-4 sm:p-5 border-b border-slate-200 dark:border-slate-800 bg-slate-50/90 dark:bg-slate-900/95 backdrop-blur-xl rounded-t-3xl">
               <div className="min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-purple-100 text-purple-900 border border-purple-300 dark:bg-purple-500/15 dark:text-purple-300 dark:border-purple-500/25 font-mono">{poDetail.po_number}</span>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-purple-100 text-purple-900 border border-purple-300 dark:bg-purple-500/15 dark:text-purple-300 dark:border-purple-500/25 font-mono">{poDocument?.number || poDetail.po_number}</span>
                   {poDetail.status === 'ordered' && <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-purple-100 text-purple-900 border border-purple-300 dark:bg-purple-500/15 dark:text-purple-300 dark:border-purple-500/25">รอของเข้า</span>}
                   {poDetail.status === 'received' && <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-teal-100 text-teal-900 border border-teal-300 dark:bg-teal-500/15 dark:text-teal-300 dark:border-teal-500/25">รับเข้าแล้ว</span>}
                   {poDetail.status === 'cancelled' && <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-200 text-slate-700 border border-slate-300 dark:bg-white/10 dark:text-slate-400 dark:border-white/10">ยกเลิก</span>}
@@ -2723,6 +2819,17 @@ export const PurchasingStockView: React.FC = () => {
             </div>
 
             <div className="p-4 sm:p-5 space-y-4">
+              <dl className="grid gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm dark:border-slate-700 dark:bg-slate-800/70">
+                <div><dt className="font-semibold">เลขใบเสนอราคาจากผู้ขาย</dt><dd className="break-words">{poDocument?.supplierQuote || '—'}</dd></div>
+                <div>
+                  <dt className="font-semibold">งานที่สั่งซื้อ</dt>
+                  <dd>{poDocument?.source?.kind === 'stock' ? 'ซื้อเข้าสต๊อก'
+                    : poDocument?.source ? `${poDocument.source.kind === 'sales' ? 'บิลขาย' : 'โปรเจกต์'} ${poDocument.source.reference}`
+                    : poDetail.project_id ? `โปรเจกต์ ${poDetail.project_id}` : '—'}</dd>
+                </div>
+                {poReceipt?.deliveryNote && <div><dt className="font-semibold">เลขใบส่งของ</dt><dd className="break-words">{poReceipt.deliveryNote}</dd></div>}
+                {poReceipt?.taxInvoice && <div><dt className="font-semibold">เลขใบกำกับภาษี</dt><dd className="break-words">{poReceipt.taxInvoice}</dd></div>}
+              </dl>
               <div className="grid grid-cols-3 gap-2">
                 <div className="rounded-xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 p-2.5 text-center">
                   <p className="text-[10px] text-slate-500 dark:text-slate-400">จำนวน</p>
@@ -2756,15 +2863,38 @@ export const PurchasingStockView: React.FC = () => {
               )}
 
               <div className="flex flex-col gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setPrintStockPo(poDetail)}
+                  className="flex items-center justify-center gap-2 w-full px-5 py-3 rounded-xl text-xs font-bold text-white bg-indigo-700 hover:bg-indigo-800"
+                >
+                  <Printer className="w-4 h-4" />
+                  พิมพ์ใบสั่งซื้อ (A4)
+                </button>
                 {poDetail.status === 'ordered' && (
+                  <form className="space-y-3 rounded-xl border border-teal-200 p-3 dark:border-teal-500/40"
+                    onSubmit={event => {
+                      event.preventDefault();
+                      reviewReceiveStockPo(poDetail);
+                    }}>
+                    <h4 className="text-sm font-bold">รับสินค้ารายการนี้ · {fmt(poDetail.qty)} ชิ้น</h4>
+                    <p className="text-xs text-slate-600 dark:text-slate-300">ตรวจจำนวนสินค้า แล้วกรอกเลขจากเอกสารที่ผู้ขายส่งมา หากยังไม่มีเอกสารให้เว้นว่างได้</p>
+                    <label className="block text-xs font-semibold">
+                      เลขใบส่งของ
+                      <input value={receiptDeliveryNote} onChange={event => setReceiptDeliveryNote(event.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-800" />
+                    </label>
+                    <label className="block text-xs font-semibold">
+                      เลขใบกำกับภาษี
+                      <input value={receiptTaxInvoice} onChange={event => setReceiptTaxInvoice(event.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-800" />
+                    </label>
                   <button
-                    type="button"
-                    onClick={() => { handleReceiveStockPo(poDetail.id, poDetail.product_name, poDetail.qty); setPoDetail(null); }}
-                    className="w-full px-5 py-3 bg-gradient-to-r from-teal-500 to-emerald-600 hover:from-teal-400 text-black font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-teal-500/25 border border-white/20 active:scale-95"
+                    type="submit"
+                    className="w-full px-5 py-3 bg-gradient-to-r from-teal-700 to-emerald-800 hover:from-teal-800 text-white font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-teal-500/25 border border-white/20 active:scale-95"
                   >
                     <ShieldCheck className="w-4 h-4" />
-                    <span>ยืนยันรับของเข้า (เข้าห้องสต๊อก)</span>
+                    <span>ตรวจสอบก่อนรับสินค้า</span>
                   </button>
+                  </form>
                 )}
                 <button
                   type="button"
@@ -2776,20 +2906,20 @@ export const PurchasingStockView: React.FC = () => {
               </div>
             </div>
           </div>
-        </div>,
+        </ModalBackdrop>,
         document.body
       )}
 
       {/* ===== STOCK PO MODAL ===== */}
       {isStockPoModalOpen && createPortal(
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-fade-in" onClick={() => setIsStockPoModalOpen(false)}>
+        <ModalBackdrop className="fixed inset-0 z-[9999] flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-fade-in" onDismiss={closeStockPoForm}>
           <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-3xl w-full sm:w-[95vw] max-w-2xl max-h-[88dvh] sm:max-h-[90vh] overflow-y-auto overscroll-contain pb-[max(0.5rem,env(safe-area-inset-bottom))] animate-modal-pop" onClick={(e) => e.stopPropagation()}>
             <div className="sticky top-0 z-10 flex items-start justify-between gap-3 p-4 sm:p-5 border-b border-slate-200 dark:border-slate-800 bg-slate-50/90 dark:bg-slate-900/95 backdrop-blur-xl rounded-t-3xl">
               <div>
-                <h3 className="text-base sm:text-lg font-extrabold text-slate-900 dark:text-white flex items-center gap-2"><ShoppingCart className="w-4 h-4 text-[#FF6B00]" /> สร้างใบ Stock PO</h3>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">สั่งซื้อเข้าสต๊อกล่วงหน้า (Proactive Replenishment)</p>
+                <h3 className="text-base sm:text-lg font-extrabold text-slate-900 dark:text-white flex items-center gap-2"><ShoppingCart className="w-4 h-4 text-[#FF6B00]" /> สร้างใบสั่งซื้อ</h3>
+                <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{purchaseSourceLabel}</p>
               </div>
-              <button type="button" onClick={() => setIsStockPoModalOpen(false)} className="shrink-0 p-2 rounded-xl bg-slate-100 dark:bg-white/[0.04] hover:bg-slate-200 dark:hover:bg-white/[0.08] text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition cursor-pointer active:scale-95">
+              <button type="button" aria-label="ปิดแบบฟอร์มใบสั่งซื้อ" disabled={isSavingStockPo} onClick={closeStockPoForm} className="shrink-0 min-h-11 min-w-11 grid place-items-center rounded-xl bg-slate-100 dark:bg-white/[0.04] hover:bg-slate-200 dark:hover:bg-white/[0.08] text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition cursor-pointer active:scale-95">
                 <X className="w-4 h-4" />
               </button>
             </div>
@@ -2797,25 +2927,36 @@ export const PurchasingStockView: React.FC = () => {
             <form onSubmit={handleSubmitStockPo} className="p-4 sm:p-5 space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1.5">Supplier</label>
+                  <label htmlFor="stock-po-supplier" className="block text-sm font-bold mb-1.5">ผู้ขาย (Supplier)</label>
                   <select
+                    id="stock-po-supplier"
+                    required
                     value={stockPoMeta.supplier}
                     onChange={(e) => setStockPoMeta(prev => ({ ...prev, supplier: e.target.value }))}
-                    className="w-full px-3 py-2 rounded-xl text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 focus:outline-none focus:border-blue-500"
+                    className="w-full min-h-11 px-3 py-2 rounded-xl text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700"
                   >
+                    <option value="">เลือกผู้ขาย</option>
+                    {stockPoMeta.supplier && !SUPPLIER_PRESETS.includes(stockPoMeta.supplier) && (
+                      <option value={stockPoMeta.supplier}>{stockPoMeta.supplier}</option>
+                    )}
                     {SUPPLIER_PRESETS.map(s => <option key={s} value={s}>{s}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1.5">เลขที่ PO</label>
+                  <label htmlFor="stock-po-supplier-quote" className="block text-sm font-bold mb-1.5">เลขใบเสนอราคาจากผู้ขาย <span className="font-normal text-slate-500 dark:text-slate-400">(ถ้ามี)</span></label>
                   <input
+                    id="stock-po-supplier-quote"
                     type="text"
-                    value={stockPoMeta.po_number}
-                    onChange={(e) => setStockPoMeta(prev => ({ ...prev, po_number: e.target.value }))}
-                    className="w-full px-3 py-2 rounded-xl text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 font-mono focus:outline-none focus:border-blue-500"
+                    value={stockPoMeta.supplierQuote}
+                    onChange={(e) => setStockPoMeta(prev => ({ ...prev, supplierQuote: e.target.value }))}
+                    placeholder="เช่น QT-SIS-1234"
+                    className="w-full min-h-11 px-3 py-2 rounded-xl text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700"
                   />
                 </div>
               </div>
+              <p className="rounded-xl bg-indigo-50 px-3 py-2 text-sm text-indigo-900 dark:bg-indigo-950 dark:text-indigo-200">
+                ระบบจะออกเลขใบสั่งซื้อของบริษัทให้เมื่อกดบันทึก
+              </p>
 
               <div>
                 <div className="flex items-center justify-between mb-1.5">
@@ -2842,16 +2983,14 @@ export const PurchasingStockView: React.FC = () => {
                           <p className="text-[10px] text-slate-500 dark:text-slate-400">{PRODUCT_CATEGORY_LABELS[line.category]}</p>
                         </div>
                         <div className="flex items-center gap-1.5 shrink-0">
-                          <input
-                            type="number"
+                          <NumberInput
                             min={1}
                             value={line.qty}
                             onChange={(e) => handleUpdateStockPoLine(line.product_id, { qty: Math.max(1, Number(e.target.value) || 1) })}
                             className="w-14 px-2 py-1 rounded-lg text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 text-center tabular-nums focus:outline-none focus:border-blue-500"
                             title="จำนวน"
                           />
-                          <input
-                            type="number"
+                          <NumberInput
                             min={0}
                             value={line.unit_cost}
                             onChange={(e) => handleUpdateStockPoLine(line.product_id, { unit_cost: Math.max(0, Number(e.target.value) || 0) })}
@@ -2892,160 +3031,65 @@ export const PurchasingStockView: React.FC = () => {
                 </div>
               )}
 
+              {stockPoError && <p role="alert" className="text-sm text-red-700 dark:text-red-300">{stockPoError}</p>}
               <div className="flex gap-2 pt-1">
                 <button
                   type="button"
-                  onClick={() => setIsStockPoModalOpen(false)}
+                  onClick={closeStockPoForm}
+                  disabled={isSavingStockPo}
                   className="flex-1 px-4 py-2.5 bg-slate-100 dark:bg-white/[0.04] hover:bg-slate-200 dark:hover:bg-white/[0.08] text-slate-700 dark:text-slate-200 font-bold rounded-xl text-xs transition cursor-pointer border border-slate-300 dark:border-slate-700 active:scale-95"
                 >
                   ยกเลิก
                 </button>
                 <button
                   type="submit"
-                  disabled={stockPoLines.length === 0}
+                  disabled={isSavingStockPo || stockPoLines.length === 0}
                   className="flex-1 px-4 py-2.5 bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold rounded-xl text-xs transition cursor-pointer shadow-lg shadow-[#FF6B00]/25 border border-white/20 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
-                  บันทึก Stock PO
+                  {isSavingStockPo ? 'กำลังบันทึก…' : 'บันทึกใบสั่งซื้อ'}
                 </button>
               </div>
             </form>
           </div>
-        </div>,
+        </ModalBackdrop>,
         document.body
       )}
 
-      {/* ===== CATALOG MULTI-SELECT MODAL ===== */}
-      {isPoCatalogModalOpen && createPortal(
-        <div className="fixed inset-0 z-[10000] flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-fade-in" onClick={() => setIsPoCatalogModalOpen(false)}>
-          <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-3xl w-full sm:w-[95vw] max-w-2xl max-h-[88dvh] sm:max-h-[90vh] flex flex-col overflow-hidden pb-[max(0.25rem,env(safe-area-inset-bottom))] animate-modal-pop" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-start justify-between gap-3 p-4 sm:p-5 bg-slate-50/90 dark:bg-slate-900/95 border-b border-slate-200 dark:border-slate-800 rounded-t-3xl">
-              <div>
-                <h3 className="text-base sm:text-lg font-extrabold text-slate-900 dark:text-white flex items-center gap-2"><PackageSearch className="w-4 h-4 text-[#FF6B00]" /> เลือกสินค้าจากแคตตาล็อก</h3>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">เลือกแล้ว {poCatalogSelectedCount} รายการ</p>
-              </div>
-              <button type="button" onClick={() => setIsPoCatalogModalOpen(false)} className="shrink-0 p-2 rounded-xl bg-slate-100 dark:bg-white/[0.04] hover:bg-slate-200 dark:hover:bg-white/[0.08] text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition cursor-pointer active:scale-95">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="p-3 sm:p-4 border-b border-slate-200 dark:border-white/[0.06] space-y-2">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 dark:text-slate-500" />
-                <input
-                  type="text"
-                  value={poCatalogSearch}
-                  onChange={(e) => setPoCatalogSearch(e.target.value)}
-                  placeholder="ค้นหาชื่อสินค้า..."
-                  className="w-full pl-9 pr-3 py-2 rounded-xl text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 placeholder-slate-400 focus:outline-none focus:border-blue-500"
-                />
-              </div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <select
-                  value={poCatalogCategory}
-                  onChange={(e) => setPoCatalogCategory(e.target.value as 'all' | ProductCategory)}
-                  className="px-2.5 py-1.5 rounded-lg text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 focus:outline-none focus:border-blue-500"
-                >
-                  <option value="all">ทุกหมวดหมู่</option>
-                  {(Object.keys(PRODUCT_CATEGORY_LABELS) as ProductCategory[]).map(c => (
-                    <option key={c} value={c}>{PRODUCT_CATEGORY_LABELS[c]}</option>
-                  ))}
-                </select>
-                <select
-                  value={poCatalogSort}
-                  onChange={(e) => setPoCatalogSort(e.target.value as 'name' | 'cost_desc' | 'cost_asc' | 'stock_desc')}
-                  className="px-2.5 py-1.5 rounded-lg text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 focus:outline-none focus:border-blue-500"
-                >
-                  <option value="name">ชื่อ A-Z</option>
-                  <option value="cost_desc">ทุนสูง→ต่ำ</option>
-                  <option value="cost_asc">ทุนต่ำ→สูง</option>
-                  <option value="stock_desc">สต๊อกมาก→น้อย</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-2">
-              {poCatalogFiltered.length === 0 ? (
-                <div className="py-10 text-center">
-                  <PackageSearch className="w-10 h-10 text-slate-400 dark:text-slate-600 mx-auto mb-2" />
-                  <p className="text-xs text-slate-500">ไม่พบสินค้าในแคตตาล็อก</p>
-                </div>
-              ) : (
-                poCatalogFiltered.map((product) => {
-                  const picked = poCatalogPicks[product.id];
-                  const stock = stockCountByName[(product.name || '').trim().toLowerCase()] || 0;
-                  return (
-                    <div
-                      key={product.id}
-                      className={`rounded-xl border p-2.5 transition ${picked ? 'bg-[#FF6B00]/10 border-[#FF6B00]/40' : 'bg-slate-50 dark:bg-slate-800/70 border-slate-200 dark:border-slate-700'}`}
-                    >
-                      <div className="flex items-center gap-2.5">
-                        <button
-                          type="button"
-                          onClick={() => togglePoCatalogPick(product)}
-                          className={`shrink-0 w-5 h-5 rounded-md border flex items-center justify-center transition cursor-pointer active:scale-90 ${picked ? 'bg-[#FF6B00] border-[#FF6B00]' : 'bg-white dark:bg-transparent border-slate-300 dark:border-white/20'}`}
-                        >
-                          {picked && <Check className="w-3.5 h-3.5 text-black" />}
-                        </button>
-                        <div className="min-w-0 flex-1">
-                          <p className="text-xs font-bold text-slate-900 dark:text-white truncate">{product.name}</p>
-                          <p className="text-[10px] text-slate-500 dark:text-slate-400">{PRODUCT_CATEGORY_LABELS[product.category]} · สต๊อก {stock} · ทุน ฿{fmt(product.cost_price)}</p>
-                        </div>
-                      </div>
-                      {picked && (
-                        <div className="flex items-center gap-2 mt-2 pl-7">
-                          <label className="text-[10px] text-slate-600 dark:text-slate-400">จำนวน</label>
-                          <input
-                            type="number"
-                            min={1}
-                            value={picked.qty}
-                            onChange={(e) => updatePoCatalogPick(product.id, { qty: Math.max(1, Number(e.target.value) || 1) })}
-                            className="w-16 px-2 py-1 rounded-lg text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 text-center tabular-nums focus:outline-none focus:border-blue-500"
-                          />
-                          <label className="text-[10px] text-slate-600 dark:text-slate-400">ทุน/หน่วย</label>
-                          <input
-                            type="number"
-                            min={0}
-                            value={picked.unit_cost}
-                            onChange={(e) => updatePoCatalogPick(product.id, { unit_cost: Math.max(0, Number(e.target.value) || 0) })}
-                            className="w-20 px-2 py-1 rounded-lg text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 text-right tabular-nums focus:outline-none focus:border-blue-500"
-                          />
-                        </div>
-                      )}
-                    </div>
-                  );
-                })
-              )}
-            </div>
-
-            <div className="p-3 sm:p-4 bg-slate-50/90 dark:bg-slate-900/95 border-t border-slate-200 dark:border-slate-800 rounded-b-3xl flex gap-2">
-              <button
-                type="button"
-                onClick={() => setIsPoCatalogModalOpen(false)}
-                className="flex-1 px-4 py-2.5 bg-slate-100 dark:bg-white/[0.04] hover:bg-slate-200 dark:hover:bg-white/[0.08] text-slate-700 dark:text-slate-200 font-bold rounded-xl text-xs transition cursor-pointer border border-slate-300 dark:border-slate-700 active:scale-95"
-              >
-                ยกเลิก
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmPoCatalogSelection}
-                disabled={poCatalogSelectedCount === 0}
-                className="flex-1 px-4 py-2.5 bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold rounded-xl text-xs transition cursor-pointer shadow-lg shadow-[#FF6B00]/25 border border-white/20 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                ยืนยันเลือก ({poCatalogSelectedCount})
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body
+      {isPoCatalogModalOpen && (
+        <ProductCatalogModal
+          products={products}
+          description="เลือกสินค้าและระบุจำนวนสำหรับใบสั่งซื้อ"
+          confirmLabel="เพิ่มเข้าใบสั่งซื้อ"
+          priceLabel="ต้นทุน"
+          getPrice={item => item.cost_price}
+          getStock={name => stockCountByName[name.trim().toLowerCase()] ?? 0}
+          quantities={Object.fromEntries(Object.entries(poCatalogPicks).map(([id, pick]) => [id, pick.qty]))}
+          total={Object.values(poCatalogPicks).reduce((sum, pick) => sum + pick.qty * pick.unit_cost, 0)}
+          onToggle={togglePoCatalogPick}
+          onQuantityChange={(id, qty) => updatePoCatalogPick(id, { qty })}
+          onConfirm={handleConfirmPoCatalogSelection}
+          onClose={() => setIsPoCatalogModalOpen(false)}
+          renderActions={item => (
+            <NumberInput
+              min={0}
+              step="any"
+              value={poCatalogPicks[item.id]?.unit_cost ?? 0}
+              onChange={e => updatePoCatalogPick(item.id, { unit_cost: Number(e.target.value) || 0 })}
+              aria-label={"ต้นทุนต่อหน่วย " + item.name}
+              title="ต้นทุนต่อหน่วย"
+              className="ml-auto w-24 rounded-lg px-2 py-1 text-[11px] bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 font-mono tabular-nums focus:outline-none focus:border-blue-500"
+            />
+          )}
+        />
       )}
       {/* ===== DOA CLAIM TRACKING MODAL ===== */}
       {doaClaimItem && createPortal(
-        <div
+        <ModalBackdrop
           className="fixed inset-0 z-[9999] flex items-center justify-center p-3 sm:p-4 bg-black/60 dark:bg-black/75 backdrop-blur-sm animate-fade-in"
           role="dialog"
           aria-modal="true"
           aria-label="ติดตามเคลมของเสีย DOA กับ Supplier"
-          onClick={() => setDoaClaimItem(null)}
+          onDismiss={() => setDoaClaimItem(null)}
         >
           <div
             className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-rose-500/30 dark:border-rose-500/40 shadow-2xl rounded-3xl w-full sm:w-[95vw] max-w-lg max-h-[88dvh] sm:max-h-[90vh] overflow-y-auto overscroll-contain pb-[max(0.5rem,env(safe-area-inset-bottom))] animate-modal-pop"
@@ -3217,7 +3261,7 @@ export const PurchasingStockView: React.FC = () => {
                   <button
                     type="button"
                     onClick={handleConfirmDoaReplacement}
-                    className="w-full px-5 py-2.5 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 text-black font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-500/25 border border-white/20 active:scale-95"
+                    className="w-full px-5 py-2.5 bg-gradient-to-r from-emerald-700 to-teal-800 hover:from-emerald-800 text-white font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-500/25 border border-white/20 active:scale-95"
                   >
                     <ShieldCheck className="w-4 h-4" />
                     <span>
@@ -3284,7 +3328,7 @@ export const PurchasingStockView: React.FC = () => {
               </button>
             </div>
           </div>
-        </div>,
+        </ModalBackdrop>,
         document.body
       )}
 
@@ -3292,9 +3336,9 @@ export const PurchasingStockView: React.FC = () => {
       {/* PROJECT ACTION MODAL (PRJ-... Shortage Check, Linked PO & Batch Release)  */}
       {/* ========================================================================= */}
       {actionProject && createPortal(
-        <div
+        <ModalBackdrop
           className="fixed inset-0 z-[9999] flex items-center justify-center p-3 sm:p-4 bg-black/70 backdrop-blur-sm animate-fade-in overscroll-contain"
-          onClick={() => setActionProjectId(null)}
+          onDismiss={() => setActionProjectId(null)}
         >
           <div
             onClick={(e) => e.stopPropagation()}
@@ -3378,9 +3422,9 @@ export const PurchasingStockView: React.FC = () => {
                                       unit_cost: catProduct ? Math.max(0, catProduct.cost_price) : 0
                                     }]);
                                     setStockPoMeta({
-                                      supplier: SUPPLIER_PRESETS[1],
-                                      po_number: `PO-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`,
-                                      notes: `สั่งซื้อตามคำขอหน้างาน ${actionProject.id}: ${req.item_name} x${req.qty}`
+                                      supplier: '',
+                                      supplierQuote: '',
+                                      notes: ''
                                     });
                                     setActionProjectId(null);
                                     setIsStockPoModalOpen(true);
@@ -3397,7 +3441,7 @@ export const PurchasingStockView: React.FC = () => {
                                   <button
                                     type="button"
                                     onClick={() => updateProjectMaterialRequestStatus(actionProject.id, req.id, 'fulfilled')}
-                                    className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-bold cursor-pointer"
+                                    className="px-2.5 py-1 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-[10px] font-bold cursor-pointer"
                                   >
                                     จัดส่งเข้าไซต์แล้ว (มี {reqAvail})
                                   </button>
@@ -3532,9 +3576,9 @@ export const PurchasingStockView: React.FC = () => {
                                               unit_cost: it.unit_cost > 0 ? it.unit_cost : (catProduct ? Math.max(0, catProduct.cost_price) : 0)
                                             }]);
                                             setStockPoMeta({
-                                              supplier: SUPPLIER_PRESETS[1],
-                                              po_number: `PO-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`,
-                                              notes: `สั่งซื้อเติมสต๊อกโปรเจกต์ ${actionProject.id} (${actionProject.site_name})`
+                                              supplier: '',
+                                              supplierQuote: '',
+                                              notes: ''
                                             });
                                             setActionProjectId(null);
                                             setIsStockPoModalOpen(true);
@@ -3563,8 +3607,7 @@ export const PurchasingStockView: React.FC = () => {
                                       <label className="text-[11px] font-bold text-slate-600 dark:text-slate-400">
                                         เบิกงวดที่ {nextBatchNo}:
                                       </label>
-                                      <input
-                                        type="number"
+                                      <NumberInput
                                         min={0}
                                         max={row.releasableNow}
                                         disabled={row.releasableNow === 0}
@@ -3670,7 +3713,7 @@ export const PurchasingStockView: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => handleReleaseProjectBatchSubmit(actionProject)}
-                        className="flex-1 py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 text-black font-extrabold text-xs transition cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/25"
+                        className="flex-1 py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-700 to-teal-800 hover:from-emerald-800 text-white font-extrabold text-xs transition cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/25"
                       >
                         <Send className="w-4 h-4" />
                         <span>ปล่อยของออกเป็นงวดเบิก (Release Batch #{nextBatchNo})</span>
@@ -3689,8 +3732,18 @@ export const PurchasingStockView: React.FC = () => {
               );
             })()}
           </div>
-        </div>,
+        </ModalBackdrop>,
         document.body
+      )}
+
+      {confirmation && (
+        <PurchasingActionConfirmation
+          summary={confirmation}
+          busy={confirmationBusy}
+          error={confirmationError}
+          onCancel={() => setConfirmation(null)}
+          onConfirm={confirmPurchasingAction}
+        />
       )}
 
       {/* Official A4 ORDER FORM 2026 Print Modal (Project / Batch) */}

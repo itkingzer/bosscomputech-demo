@@ -2,7 +2,8 @@ import React, { createContext, useContext, useState, useEffect, useRef } from 'r
 import { UserAccount, Order, Item, RepairTicket, RepairStatus, RepairLifecycleStatus, ServiceType, RouteCode, JobCategory, Product, StockPO, ProductCategory, getRouteByDistrict, ActivityLog, computeWarrantyExpire, REPAIR_LIFECYCLE_META, ReceivedChannel, ROUTE_DEFINITIONS, WarrantyLookupResult, lookupWarrantyBySerial as lookupWarrantyHelper, Project, ProjectItem, ProjectItemType, ProjectMaterialRequestStatus, Contract, ContractItem, BILLING_BADGE_META, getOrderBillingBadgeKey, SiteVisit, SiteVisitItemRef, SiteVisitPrepStatus, SiteVisitStatus } from '../types';
 import { INITIAL_USERS, INITIAL_ORDERS, INITIAL_ITEMS, INITIAL_REPAIR_TICKETS, INITIAL_PRODUCTS, INITIAL_STOCK_POS, INITIAL_PROJECTS, INITIAL_CONTRACTS } from '../data/initialData';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { newUuid, isSerialDuplicate, isNonPrepCableOrConsumable, isServiceItem } from '../utils/domainHelpers';
+import { newUuid, isSerialDuplicate, isNonPrepCableOrConsumable, isServiceItem, canChangeDraftOrder } from '../utils/domainHelpers';
+import type { OrderDraftEdit, OrderHeaderEdit } from '../types';
 
 const safeLoadJson = <T,>(key: string, fallback: T): T => {
   try {
@@ -56,6 +57,17 @@ const appendLog = (logs: ActivityLog[] | undefined | null, entry: ActivityLog): 
   entry
 ];
 
+const recordPrepEvent = (
+  entry: ActivityLog, kind: NonNullable<ActivityLog['prep_event']>['kind'], item: Item, serial = item.serial_number
+) => {
+  entry.prep_event = {
+    kind,
+    model: item.model_name,
+    serial,
+    reference: item.project_id || item.order_id || item.po_no
+  };
+};
+
 // ------------------------------------------------------------------------------
 // Onsite -> In-House Repair handoff payload
 // ------------------------------------------------------------------------------
@@ -80,13 +92,19 @@ export interface OnsiteHandoffPayload {
   photo_urls?: string[];
 }
 
+type ServiceSheetAction =
+  | { kind: 'edit'; fields: Pick<RepairTicket, 'customer_name' | 'customer_phone' | 'device_model' | 'walkin_sn' | 'fault_symptom' | 'delivery_location'> }
+  | { kind: 'withdraw' | 'delete' };
+
 interface AppContextType {
+  serviceSheetHistory: RepairTicket[];
+  manageServiceSheet: (ticketId: string, action: ServiceSheetAction) => Promise<void>;
   currentUser: UserAccount | null;
   login: (username: string, role?: string) => boolean;
   logout: () => void;
   users: UserAccount[];
-  addUser: (user: Omit<UserAccount, 'id'>) => void;
-  updateUser: (id: string, updates: Partial<UserAccount>) => void;
+  addUser: (user: Omit<UserAccount, 'id'>) => Promise<boolean>;
+  updateUser: (id: string, updates: Partial<UserAccount>) => Promise<boolean>;
   deleteUser: (id: string) => void;
   markOrderBilled: (orderId: string, taxInvoiceNo?: string) => void;
   markProjectBilled: (projectId: string, taxInvoiceNo?: string) => void;
@@ -183,7 +201,7 @@ interface AppContextType {
     serialNumber: string,
     voidDate: string,
     prepNote?: string
-  ) => boolean;
+  ) => Promise<boolean>;
   addProjectDailyLog: (
     projectId: string,
     payload: {
@@ -222,7 +240,9 @@ interface AppContextType {
   updateProduct: (id: string, patch: Partial<Omit<Product, 'id'>>) => void;
   deleteProduct: (id: string) => void;
 
-  createOrder: (order: Omit<Order, 'id' | 'created_at' | 'order_status'> & { planned_model?: string; planned_quantity?: number }) => void;
+  createOrder: (order: Omit<Order, 'id' | 'created_at' | 'order_status'> & { planned_model?: string; planned_quantity?: number }) => Promise<boolean>;
+  editOrder: (original: Order, changes: OrderHeaderEdit, draftChanges?: OrderDraftEdit) => Promise<boolean>;
+  deleteDraftOrder: (orderId: string) => Promise<boolean>;
   updateOrderPOStatus: (orderId: string, status: 'waiting_po' | 'pending_purchasing' | 'po_received_in_stock', supplier?: string, poNo?: string) => void;
   receivePOIntoStock: (
     orderId: string,
@@ -235,23 +255,26 @@ interface AppContextType {
     orderId: string,
     billNo: string,
     itemsToCut: { model_name: string; quantity: number; item_type?: 'hardware' | 'service'; supplier?: string; po_no?: string; prep_note?: string; unit_cost?: number; stockItemId?: string }[]
-  ) => void;
+  ) => Promise<void>;
 
   // Proactive Stock Replenishment (Stock PO -> Storage Room raw_stock -> Prep -> In-Stock Ready -> Sales)
-  createStockPO: (po: Omit<StockPO, 'id' | 'status' | 'created_at' | 'received_at'>) => void;
-  receiveStockPOToStorage: (stockPoId: string) => void;
+  createStockPO: (
+    lines: Omit<StockPO, 'id' | 'status' | 'created_at' | 'received_at'>[],
+    document: Omit<NonNullable<ActivityLog['stock_po_document']>, 'line'>
+  ) => Promise<void>;
+  receiveStockPOToStorage: (stockPoId: string, receipt?: ActivityLog['stock_po_receipt']) => Promise<void>;
   cancelStockPO: (stockPoId: string) => void;
   sendRawStockToPrep: (itemId: string) => void;
-  movePrepStockToReady: (itemId: string, serialNumber: string, notes?: string) => boolean;
+  movePrepStockToReady: (itemId: string, serialNumber: string, notes?: string) => Promise<boolean>;
   allocateStockToOrder: (orderId: string, billNo: string, stockItemIds: string[]) => void;
 
   // Prep operations
-  acceptPrepTask: (itemId: string, techName: string) => void;
-  prepFinishToStock: (itemId: string, serialNumber: string, prepNote?: string) => boolean;
+  acceptPrepTask: (itemId: string, techName: string) => Promise<void>;
+  prepFinishToStock: (itemId: string, serialNumber: string, prepNote?: string) => Promise<boolean>;
   prepFinishToReadyStock: (itemId: string, serialNumber: string, prepNote?: string) => boolean;
-  prepFinishLogoToStageB: (itemId: string, serialNumber: string, prepNote?: string) => boolean;
-  prepFinishAndDispatch: (itemId: string, serialNumber: string, voidDate: string, prepNote?: string) => boolean;
-  applyVoidAndDispatch: (itemId: string, voidDate: string) => void;
+  prepFinishLogoToStageB: (itemId: string, serialNumber: string, prepNote?: string) => Promise<boolean>;
+  prepFinishAndDispatch: (itemId: string, serialNumber: string, voidDate: string, prepNote?: string) => Promise<boolean>;
+  applyVoidAndDispatch: (itemId: string, voidDate: string) => Promise<void>;
   prepInboundStock: (modelName: string, serialNumber: string, notes?: string) => boolean;
   prepOutboundDispatch: (itemId: string, serialNumber: string, voidDate: string) => boolean;
 
@@ -287,7 +310,7 @@ interface AppContextType {
   removeSiteVisit: (projectId: string, visitId: string) => void;
   assignRepairTicketOnsite: (ticketId: string, techs: string[], jobCategory?: JobCategory) => void;
   acceptOnsiteJob: (itemId: string, techName: string) => void;
-  confirmOnsiteDelivery: (itemId: string, deliveryNotes?: string, photoUrls?: string[]) => void;
+  confirmOnsiteDelivery: (entries: { id: string; note?: string }[], photoUrls: string[], signatureUrl?: string) => Promise<void>;
   /**
    * ช่าง Onsite ส่งต่อเครื่องเข้าคิวซ่อมหน้าร้าน (Handoff to Repair Tech)
    * - สร้างใบรับซ่อมใหม่ (REP-...) ด้วย received_channel = 'onsite_pickup'
@@ -617,7 +640,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             if (data && data.length > 0) setProjects(data as Project[]);
           } else if (table === 'users') {
             const { data } = await client.from('users').select('*').order('created_at', { ascending: true });
-            if (data && data.length > 0) setUsers(data as UserAccount[]);
+            if (data && data.length > 0) {
+              const refreshedUsers = data as UserAccount[];
+              setUsers(refreshedUsers);
+              setCurrentUser(previous => refreshedUsers.find(user => user.id === previous?.id) ?? previous);
+            }
           } else if (table === 'contracts') {
             const [{ data: cData }, { data: ciData }] = await Promise.all([
               client.from('contracts').select('*').order('created_at', { ascending: false }),
@@ -714,27 +741,34 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setCurrentUser(null);
   };
 
-  const addUser = (userData: Omit<UserAccount, 'id'>) => {
+  const addUser = async (userData: Omit<UserAccount, 'id'>) => {
     const newUser: UserAccount = {
       is_active: true,
       ...userData,
       id: 'u-' + Date.now()
     };
-    setUsers(prev => [...prev, newUser]);
     if (isSupabaseLive && supabaseClient) {
-      void supabaseClient.from('users').insert([newUser]).then(({ error }) => {
-        if (error) console.warn('Supabase users insert warning:', error.message);
-      });
+      const { error } = await supabaseClient.from('users').insert(newUser);
+      if (error) {
+        console.warn('Supabase users insert warning:', error.message);
+        return false;
+      }
     }
+    setUsers(prev => prev.some(user => user.id === newUser.id) ? prev : [...prev, newUser]);
+    return true;
   };
 
-  const updateUser = (id: string, updates: Partial<UserAccount>) => {
-    setUsers(prev => prev.map(u => (u.id === id ? { ...u, ...updates } : u)));
+  const updateUser = async (id: string, updates: Partial<UserAccount>) => {
     if (isSupabaseLive && supabaseClient) {
-      void supabaseClient.from('users').update(updates).eq('id', id).then(({ error }) => {
-        if (error) console.warn('Supabase users update warning:', error.message);
-      });
+      const { error } = await supabaseClient.from('users').update(updates).eq('id', id).select('id').single();
+      if (error) {
+        console.warn('Supabase users update warning:', error.message);
+        return false;
+      }
     }
+    setUsers(prev => prev.map(u => (u.id === id ? { ...u, ...updates } : u)));
+    setCurrentUser(previous => previous?.id === id ? { ...previous, ...updates } : previous);
+    return true;
   };
 
   const deleteUser = (id: string) => {
@@ -978,6 +1012,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       salesperson: orderData.salesperson || currentUser?.name,
       customer_id: orderData.customer_id ?? null,
       customer_name: orderData.customer_name,
+      customer_type: orderData.customer_type,
+      customer_contact_name: orderData.customer_contact_name,
       customer_phone: orderData.customer_phone,
       delivery_location: orderData.delivery_location,
       district: orderData.district,
@@ -1015,10 +1051,70 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const { _planned_model: _pm, _planned_quantity: _pq, ...dbOrder } = newOrder;
       void _pm;
       void _pq;
-      await supabaseClient.from('orders').insert([dbOrder]);
+      const { error } = await supabaseClient.from('orders').insert([dbOrder]);
+      if (error) {
+        console.error('Failed to create order:', error);
+        return false;
+      }
     } else {
       setOrders(prev => [newOrder, ...prev]);
     }
+    return true;
+  };
+
+  const editOrder: AppContextType['editOrder'] = async (original, changes, draftChanges) => {
+    const orderId = original.id;
+    const target = orders.find(order => order.id === orderId);
+    if (!target || target.updated_at !== original.updated_at) return false;
+    if (draftChanges && !canChangeDraftOrder(target, items)) return false;
+    const actor = currentUserRef.current;
+    const entry = makeLog('แก้ไขข้อมูลใบสั่งขาย', actor?.name || 'ระบบ', actor?.role);
+    const updates = { ...changes, ...draftChanges, activity_logs: [...(target.activity_logs || []), entry] };
+
+    if (isSupabaseLive && supabaseClient) {
+      const query = supabaseClient.from('orders').update({
+        ...updates,
+        ...(draftChanges ? { delivery_date: draftChanges.delivery_date || null } : {}),
+      }).eq('id', orderId);
+      if (draftChanges) {
+        const linked = await supabaseClient.from('items').select('id').eq('order_id', orderId).limit(1);
+        if (linked.error || linked.data?.length) return false;
+        query.eq('order_status', 'pending_purchasing').is('bill_no', null)
+          .is('po_created_at', null).or('billing_status.is.null,billing_status.eq.pending');
+      }
+      if (target.updated_at) query.eq('updated_at', target.updated_at);
+      const { data, error } = await query.select();
+      if (error || !data?.length) return false;
+      setOrders(prev => prev.map(order => order.id === orderId ? data[0] as Order : order));
+      return true;
+    }
+
+    setOrders(prev => prev.map(order => order.id === orderId ? {
+      ...order,
+      ...updates,
+      ...(draftChanges?.items_list ? {
+        _planned_model: draftChanges.items_list[0]?.model_name,
+        _planned_quantity: draftChanges.items_list.reduce((sum, item) => sum + item.quantity, 0),
+      } : {}),
+    } : order));
+    return true;
+  };
+
+  const deleteDraftOrder: AppContextType['deleteDraftOrder'] = async (orderId) => {
+    const target = orders.find(order => order.id === orderId);
+    if (!target || !canChangeDraftOrder(target, items)) return false;
+
+    if (isSupabaseLive && supabaseClient) {
+      const linked = await supabaseClient.from('items').select('id').eq('order_id', orderId).limit(1);
+      if (linked.error || linked.data?.length) return false;
+      const { data, error } = await supabaseClient.from('orders').delete()
+        .eq('id', orderId).eq('order_status', 'pending_purchasing').is('bill_no', null)
+        .is('po_created_at', null).or('billing_status.is.null,billing_status.eq.pending').select('id');
+      if (error || !data?.length) return false;
+    }
+
+    setOrders(prev => prev.filter(order => order.id !== orderId));
+    return true;
   };
 
   const updateOrderPOStatus = async (
@@ -1394,27 +1490,32 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // ==========================================================================
 
   // 1. จัดซื้อเปิดใบสั่งซื้อเข้าสต๊อก (Stock PO) ล่วงหน้า ไม่ผูกกับออเดอร์ลูกค้า
-  const createStockPO = async (poData: Omit<StockPO, 'id' | 'status' | 'created_at' | 'received_at'>) => {
+  const createStockPO = async (
+    lines: Omit<StockPO, 'id' | 'status' | 'created_at' | 'received_at'>[],
+    document: Omit<NonNullable<ActivityLog['stock_po_document']>, 'line'>
+  ) => {
     const actor = currentUserRef.current;
     const now = new Date().toISOString();
-    const poLog = makeLog(
-      'สั่งซื้อ PO',
-      actor?.name || 'ระบบ',
-      actor?.role,
-      `PO: ${poData.po_number} | ${poData.product_name} x${poData.qty} | Supplier: ${poData.supplier || '-'}`
-    );
-    const newPO: StockPO = {
-      ...poData,
-      id: 'spo-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
-      status: 'ordered',
-      received_at: null,
-      created_at: now,
-      activity_logs: [poLog],
-      created_by: poLog.actor,
-      ordered_at: now
-    };
+    const newPOs = lines.map((poData, index): StockPO => {
+      const poLog = makeLog(
+        'สั่งซื้อ PO',
+        actor?.name || 'ระบบ',
+        actor?.role,
+        `PO: ${document.number} | ${poData.product_name} x${poData.qty} | Supplier: ${poData.supplier || '-'}`
+      );
+      return {
+        ...poData,
+        id: 'spo-' + newUuid(),
+        status: 'ordered',
+        received_at: null,
+        created_at: now,
+        activity_logs: [{ ...poLog, stock_po_document: { ...document, line: index + 1 } }],
+        created_by: poLog.actor,
+        ordered_at: now
+      };
+    });
     if (isSupabaseLive && supabaseClient) {
-      await supabaseClient.from('stock_pos').insert([{
+      const { error } = await supabaseClient.from('stock_pos').insert(newPOs.map(newPO => ({
         po_number: newPO.po_number,
         product_name: newPO.product_name,
         category: newPO.category,
@@ -1423,18 +1524,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         supplier: newPO.supplier,
         status: newPO.status,
         notes: newPO.notes || null,
+        project_id: newPO.project_id || null,
         activity_logs: newPO.activity_logs,
         created_by: newPO.created_by,
         ordered_at: newPO.ordered_at
-      }]);
+      })));
+      if (error) throw error;
     } else {
-      setStockPOs(prev => [newPO, ...prev]);
+      setStockPOs(prev => [...newPOs, ...prev]);
     }
   };
 
   // 2. รับของ Stock PO เข้าห้องสต๊อกตรงๆ -> สร้าง item จำนวน qty ชิ้น สถานะ raw_stock (ยังไม่เตรียม)
   //    ไม่ส่งเข้า PrepView อัตโนมัติ - นับถอยหลังเทส 7 วัน (DOA) ก่อน
-  const receiveStockPOToStorage = async (stockPoId: string) => {
+  const receiveStockPOToStorage = async (stockPoId: string, receipt?: ActivityLog['stock_po_receipt']) => {
     const po = stockPOs.find(p => p.id === stockPoId);
     if (!po || po.status !== 'ordered') return;
 
@@ -1449,6 +1552,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       actor?.role,
       `PO: ${po.po_number} | ${po.product_name} x${po.qty}`
     );
+    if (receipt?.deliveryNote || receipt?.taxInvoice) receiveLog.stock_po_receipt = receipt;
     const newItems: Item[] = Array.from({ length: Math.max(1, po.qty) }).map((_, i) => ({
       id: 'itm-spo-' + Date.now() + '-' + i + '-' + Math.random().toString(36).slice(2, 5),
       order_id: null,
@@ -1608,7 +1712,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // 3. ช่างเตรียมตรวจเช็ก + ติดโลโก้ + ยิง S/N -> ย้ายเข้าสต๊อกพร้อมขาย (in_stock, ยังไม่ติดวอย)
-  const movePrepStockToReady = (itemId: string, serialNumber: string, notes?: string): boolean => {
+  const movePrepStockToReady = async (itemId: string, serialNumber: string, notes?: string): Promise<boolean> => {
     const sn = serialNumber.trim();
     if (!sn) return false;
     if (isSerialDuplicate(items, sn, itemId)) return false;
@@ -1616,10 +1720,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const preppedAt = new Date().toISOString();
     const actor = currentUserRef.current;
     const target = items.find(i => i.id === itemId);
+    if (!target) return false;
     const entry = makeLog('ติดโลโก้ & สแกน S/N', actor?.name || 'ระบบ', actor?.role, `S/N: ${sn} | เก็บเข้าคลังพร้อมขาย`);
     const finalNotes = notes || 'ตรวจเช็ก/ติดโลโก้/ยิง S/N ผ่าน เก็บเข้าสต๊อกพร้อมขาย (ยังไม่ติดวอย)';
+    recordPrepEvent(entry, 'stock', target, sn);
     if (isSupabaseLive && supabaseClient) {
-      void supabaseClient.from('items').update({
+      const { error } = await supabaseClient.from('items').update({
         serial_number: sn,
         status: 'in_stock',
         order_id: null,
@@ -1630,6 +1736,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         notes: finalNotes,
         activity_logs: appendLog(target?.activity_logs, entry)
       }).eq('id', itemId);
+      if (error) throw error;
     }
     setItems(prev => prev.map(i => i.id === itemId ? {
       ...i,
@@ -1648,8 +1755,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // 3.0 Stage A -> Stage B (สำหรับสินค้าที่ผูกออเดอร์หรือโปรเจกต์แล้ว และยังไม่ได้ติดโลโก้)
   // เทส + สแกน S/N + ติดโลโก้เสร็จ -> คง status 'pending_prep' แต่ตั้ง logo_applied: true เพื่อส่งต่อเข้า Stage B (ติดวอย)
-  const prepFinishLogoToStageB = (itemId: string, serialNumber: string, prepNote?: string): boolean => {
+  const prepFinishLogoToStageB = async (itemId: string, serialNumber: string, prepNote?: string): Promise<boolean> => {
     const target = items.find(i => i.id === itemId);
+    if (!target) return false;
     const sn = (serialNumber || target?.serial_number || '').trim();
     if (!sn) return false;
     if (isSerialDuplicate(items, sn, itemId)) return false;
@@ -1663,8 +1771,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       `S/N: ${sn} | ส่งต่อ Stage B เพื่อติดวอยประกัน`
     );
 
+    recordPrepEvent(entry, 'stageB', target, sn);
     if (isSupabaseLive && supabaseClient) {
-      void supabaseClient.from('items').update({
+      const { error } = await supabaseClient.from('items').update({
         serial_number: sn,
         logo_applied: true,
         prepped_at: target?.prepped_at || now,
@@ -1672,6 +1781,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         notes: prepNote || 'เทส + ติดโลโก้ + สแกน S/N แล้ว -> ส่งต่อ Stage B ติดวอยประกัน',
         activity_logs: appendLog(target?.activity_logs, entry)
       }).eq('id', itemId);
+      if (error) throw error;
     }
     setItems(prev => prev.map(i => i.id === itemId ? {
       ...i,
@@ -1691,7 +1801,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     payload: { serialNumber?: string; reason: string; notes?: string; photoUrls?: string[] }
   ) => {
     const target = items.find(i => i.id === itemId);
-    if (!target) return;
+    if (!target) throw new Error('Prep item unavailable');
 
     const now = new Date().toISOString();
     const actor = currentUserRef.current;
@@ -1710,8 +1820,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     ].filter(Boolean);
     const entry = makeLog(actionText, techName, actor?.role, detailParts.join(' | ') || undefined);
 
+    recordPrepEvent(entry, 'doa', target, cleanSn);
     if (isSupabaseLive && supabaseClient) {
-      await supabaseClient.from('items').update({
+      const { error } = await supabaseClient.from('items').update({
         status: 'doa_reported',
         serial_number: cleanSn,
         doa_reason: reasonText,
@@ -1721,19 +1832,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         photo_urls: cleanPhotos,
         activity_logs: appendLog(target.activity_logs, entry)
       }).eq('id', itemId);
-    } else {
-      setItems(prev => prev.map(i => i.id === itemId ? {
-        ...i,
-        status: 'doa_reported' as const,
-        serial_number: cleanSn,
-        doa_reason: reasonText,
-        doa_notes: cleanNotes,
-        doa_reported_at: now,
-        doa_reported_by: techName,
-        photo_urls: cleanPhotos,
-        activity_logs: appendLog(i.activity_logs, entry)
-      } : i));
+      if (error) throw error;
     }
+    setItems(prev => prev.map(i => i.id === itemId ? {
+      ...i,
+      status: 'doa_reported' as const,
+      serial_number: cleanSn,
+      doa_reason: reasonText,
+      doa_notes: cleanNotes,
+      doa_reported_at: now,
+      doa_reported_by: techName,
+      photo_urls: cleanPhotos,
+      activity_logs: appendLog(i.activity_logs, entry)
+    } : i));
   };
 
   // 3.2 จัดซื้อบันทึกแจ้งเคลม / ส่งคืน Supplier แล้ว (doa_sent_supplier)
@@ -1970,31 +2081,34 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // ช่างเตรียมรับงาน
   const acceptPrepTask = async (itemId: string, techName: string) => {
+    const target = items.find(i => i.id === itemId);
+    if (!target || target.assigned_prep_tech) throw new Error('Prep task unavailable');
     const acceptedAt = new Date().toISOString();
     const actor = currentUserRef.current;
     const entry = makeLog('ช่างกดรับงาน', actor?.name || techName || 'ระบบ', actor?.role, `ช่างผู้รับงาน: ${techName}`);
+    recordPrepEvent(entry, 'accept', target);
     if (isSupabaseLive && supabaseClient) {
-      const target = items.find(i => i.id === itemId);
-      await supabaseClient.from('items').update({
+      const { error } = await supabaseClient.from('items').update({
         assigned_prep_tech: techName,
         prep_accepted_at: acceptedAt,
         prep_accepted_log_at: acceptedAt,
         activity_logs: appendLog(target?.activity_logs, entry)
       }).eq('id', itemId);
-    } else {
-      setItems(prev => prev.map(i => i.id === itemId ? {
-        ...i,
-        assigned_prep_tech: techName,
-        prep_accepted_at: acceptedAt,
-        prep_accepted_log_at: acceptedAt,
-        activity_logs: appendLog(i.activity_logs, entry)
-      } : i));
+      if (error) throw error;
     }
+    setItems(prev => prev.map(i => i.id === itemId ? {
+      ...i,
+      assigned_prep_tech: techName,
+      prep_accepted_at: acceptedAt,
+      prep_accepted_log_at: acceptedAt,
+      activity_logs: appendLog(i.activity_logs, entry)
+    } : i));
   };
 
   // จังหวะที่ 1/Stage B: เก็บเข้าสต๊อกรอวันส่งมอบ (ยังไม่ติดวอยประกัน) -> prepped_in_stock
-  const prepFinishToStock = (itemId: string, serialNumber: string, prepNote?: string): boolean => {
+  const prepFinishToStock = async (itemId: string, serialNumber: string, prepNote?: string): Promise<boolean> => {
     const target = items.find(i => i.id === itemId);
+    if (!target) return false;
     const sn = (serialNumber || target?.serial_number || '').trim();
     if (!sn) return false;
     if (isSerialDuplicate(items, sn, itemId)) {
@@ -2011,8 +2125,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       `S/N: ${sn} | เก็บรอวันส่งมอบ (ยังไม่ติดวอย)`
     );
     const finalNotes = prepNote || 'เก็บรอวันส่งมอบตามออเดอร์ (ยังไม่ติดวอยประกัน)';
+    recordPrepEvent(entry, 'hold', target, sn);
     if (isSupabaseLive && supabaseClient) {
-      void supabaseClient.from('items').update({
+      const { error } = await supabaseClient.from('items').update({
         serial_number: sn,
         status: 'prepped_in_stock',
         logo_applied: true,
@@ -2022,6 +2137,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         notes: finalNotes,
         activity_logs: appendLog(target?.activity_logs, entry)
       }).eq('id', itemId);
+      if (error) throw error;
     }
     setItems(prev => prev.map(i => i.id === itemId ? {
       ...i,
@@ -2078,8 +2194,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Stage B: ติดวอยประกัน & พร้อมส่งออกเลย -> ส่งตรงไปหน้าร้าน/จัดส่ง (ready_for_dispatch)
-  const prepFinishAndDispatch = (itemId: string, serialNumber: string, voidDate: string, prepNote?: string): boolean => {
+  const prepFinishAndDispatch = async (itemId: string, serialNumber: string, voidDate: string, prepNote?: string): Promise<boolean> => {
     const target = items.find(i => i.id === itemId);
+    if (!target) return false;
     const sn = (serialNumber || target?.serial_number || '').trim();
     if (!sn) return false;
     if (isSerialDuplicate(items, sn, itemId)) return false;
@@ -2090,8 +2207,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const warrantyExpire = computeWarrantyExpire(preppedAt, target?.warranty_years, target?.warranty_months);
     const entry = makeLog('แปะวอยประกัน', actor?.name || 'ระบบ', actor?.role, `S/N: ${sn} | วอยประกัน: ${voidDate}`);
     const finalNotes = prepNote || 'ติดวอยประกัน & พร้อมส่งออกเลย (ส่งตรงหน้าร้านจัดสายรถ)';
+    recordPrepEvent(entry, 'dispatch', target, sn);
     if (isSupabaseLive && supabaseClient) {
-      void supabaseClient.from('items').update({
+      const { error } = await supabaseClient.from('items').update({
         serial_number: sn,
         status: 'ready_for_dispatch',
         logo_applied: true,
@@ -2104,6 +2222,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         notes: finalNotes,
         activity_logs: appendLog(target?.activity_logs, entry)
       }).eq('id', itemId);
+      if (error) throw error;
     }
     setItems(prev => prev.map(i => i.id === itemId ? {
       ...i,
@@ -2127,11 +2246,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const actor = currentUserRef.current;
     const now = new Date().toISOString();
     const target = items.find(i => i.id === itemId);
+    if (!target) throw new Error('Prep item unavailable');
     // เริ่มนับประกันตั้งแต่วันแปะวอย (timestamp จริง) + คำนวณวันหมดประกัน
     const warrantyExpire = computeWarrantyExpire(now, target?.warranty_years, target?.warranty_months);
     const entry = makeLog('แปะวอยประกัน', actor?.name || 'ระบบ', actor?.role, `วอยประกัน: ${voidDate}`);
+    recordPrepEvent(entry, 'dispatch', target);
     if (isSupabaseLive && supabaseClient) {
-      await supabaseClient.from('items').update({
+      const { error } = await supabaseClient.from('items').update({
         status: 'ready_for_dispatch',
         void_date: voidDate,
         warranty_applied_at: now,
@@ -2139,17 +2260,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         warranty_expire_date: warrantyExpire,
         activity_logs: appendLog(target?.activity_logs, entry)
       }).eq('id', itemId);
-    } else {
-      setItems(prev => prev.map(i => i.id === itemId ? {
-        ...i,
-        status: 'ready_for_dispatch',
-        void_date: voidDate,
-        warranty_applied_at: now,
-        warranty_void_date: now,
-        warranty_expire_date: warrantyExpire,
-        activity_logs: appendLog(i.activity_logs, entry)
-      } : i));
+      if (error) throw error;
     }
+    setItems(prev => prev.map(i => i.id === itemId ? {
+      ...i,
+      status: 'ready_for_dispatch',
+      void_date: voidDate,
+      warranty_applied_at: now,
+      warranty_void_date: now,
+      warranty_expire_date: warrantyExpire,
+      activity_logs: appendLog(i.activity_logs, entry)
+    } : i));
   };
 
   // 1. เตรียมของเข้าสต๊อก (Inbound Stock)
@@ -2271,6 +2392,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const actor = currentUserRef.current;
     const now = new Date().toISOString();
     const target = items.find(i => i.id === itemId);
+    if (!target || target.scheduled_date || (
+      target.status !== 'ready_for_dispatch' && target.status !== 'assigned_onsite'
+    )) {
+      throw new Error('Item is no longer available for scheduling');
+    }
     const entry = makeLog(
       `ลงตารางวิ่งงานล่วงหน้า (${payload.scheduled_date})`,
       actor?.name || 'หน้าร้าน',
@@ -2287,18 +2413,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       job_category: payload.job_category || target?.job_category || 'delivery',
       assigned_at: now
     };
+    const activityLogs = appendLog(target.activity_logs, entry);
     if (isSupabaseLive && supabaseClient) {
-      await supabaseClient.from('items').update({
-        ...patch,
-        activity_logs: appendLog(target?.activity_logs, entry)
-      }).eq('id', itemId);
-    } else {
-      setItems(prev => prev.map(i => i.id === itemId ? {
-        ...i,
-        ...patch,
-        activity_logs: appendLog(i.activity_logs, entry)
-      } : i));
+      const { data, error } = await supabaseClient.from('items')
+        .update({ ...patch, activity_logs: activityLogs })
+        .eq('id', itemId)
+        .eq('status', target.status)
+        .is('scheduled_date', null)
+        .select('id')
+        .maybeSingle();
+      if (error) throw error;
+      if (!data) throw new Error('Item is no longer available for scheduling');
     }
+    setItems(prev => prev.map(i => i.id === itemId && i.status === target.status && !i.scheduled_date
+      ? { ...i, ...patch, activity_logs: activityLogs }
+      : i));
   };
 
   const unscheduleItemDispatch = async (itemId: string) => {
@@ -2519,60 +2648,61 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // 3. ช่าง Onsite ส่งมอบสินค้าถึงมือลูกค้า
-  const confirmOnsiteDelivery = async (itemId: string, deliveryNotes?: string, photoUrls?: string[]) => {
-    const targetItem = items.find(i => i.id === itemId);
-    const orderId = targetItem?.order_id;
+  const confirmOnsiteDelivery = async (entries: { id: string; note?: string }[], photoUrls: string[], signatureUrl?: string) => {
+    const notes = new Map(entries.map(entry => [entry.id, entry.note]));
+    const targets = items.filter(item => notes.has(item.id));
     const actor = currentUserRef.current;
     const now = new Date().toISOString();
-    const cleanPhotos = photoUrls && photoUrls.length > 0
-      ? photoUrls.slice(0, 3)
-      : (targetItem?.photo_urls || null);
-    const logDetail = [
-      deliveryNotes || null,
-      cleanPhotos && cleanPhotos.length > 0 ? `แนบรูปหลักฐาน ${cleanPhotos.length} รูป` : null
-    ].filter(Boolean).join(' | ') || undefined;
-    const itemEntry = makeLog('ส่งมอบติดตั้งเสร็จสิ้น', actor?.name || 'ระบบ', actor?.role, logDetail);
-
-    const updatedItems = items.map(i => i.id === itemId ? {
-      ...i,
-      status: 'delivered' as const,
-      delivered_at: now,
-      notes: deliveryNotes ? `${i.notes || ''} | ${deliveryNotes}` : i.notes,
-      photo_urls: cleanPhotos,
-      activity_logs: appendLog(i.activity_logs, itemEntry)
-    } : i);
-
-    const relatedOrderItems = updatedItems.filter(i => i.order_id === orderId);
-    const allDelivered = relatedOrderItems.length > 0 && relatedOrderItems.every(i => i.status === 'delivered');
-    const orderEntry = makeLog('ส่งมอบติดตั้งเสร็จสิ้น', actor?.name || 'ระบบ', actor?.role, 'ออเดอร์ส่งมอบครบทุกชิ้น');
+    const deliveryPhotos = photoUrls.slice(0, 3);
+    const updates = new Map(targets.filter(item => item.status === 'assigned_onsite').map(item => {
+      const note = notes.get(item.id);
+      const action = item.delivery_mode === 'drop_off' ? 'ส่งมอบสินค้าเสร็จสิ้น' : 'ส่งมอบติดตั้งเสร็จสิ้น';
+      const detail = [note, `รูปหลักฐานการส่งมอบ ${deliveryPhotos.length} รูป`].filter(Boolean).join(' | ');
+      return [item.id, {
+        status: 'delivered' as const,
+        delivered_at: now,
+        notes: note ? [item.notes, note].filter(Boolean).join(' | ') : item.notes,
+        photo_urls: Array.from(new Set([...deliveryPhotos, ...(signatureUrl ? [signatureUrl] : []), ...(item.photo_urls || [])])),
+        activity_logs: appendLog(item.activity_logs, makeLog(action, actor?.name || 'ระบบ', actor?.role, detail))
+      }] as const;
+    }));
+    const applyUpdates = (source: Item[]) => source.map(item => ({ ...item, ...updates.get(item.id) }));
+    const orderId = targets[0]?.order_id;
+    const orderEntry = makeLog('ส่งมอบสินค้าครบทั้งออเดอร์', actor?.name || 'ระบบ', actor?.role);
 
     if (isSupabaseLive && supabaseClient) {
-      await supabaseClient.from('items').update({
-        status: 'delivered',
-        delivered_at: now,
-        photo_urls: cleanPhotos,
-        activity_logs: appendLog(targetItem?.activity_logs, itemEntry)
-      }).eq('id', itemId);
+      const client = supabaseClient;
+      const results = await Promise.all([...updates].map(([id, update]) =>
+        client.from('items').update(update).eq('id', id).eq('status', 'assigned_onsite')
+      ));
+      const failed = results.find(result => result.error);
+      if (failed?.error) throw failed.error;
 
-      if (orderId && allDelivered) {
-        const targetOrder = orders.find(o => o.id === orderId);
-        await supabaseClient.from('orders').update({
-          order_status: 'fulfilled',
-          fulfilled_at: now,
-          activity_logs: appendLog(targetOrder?.activity_logs, orderEntry)
-        }).eq('id', orderId);
+      if (orderId) {
+        const { data, error } = await client.from('items').select('status').eq('order_id', orderId);
+        if (error) throw error;
+        if (data?.length && data.every(item => item.status === 'delivered')) {
+          const targetOrder = orders.find(order => order.id === orderId);
+          const { error: orderError } = await client.from('orders').update({
+            order_status: 'fulfilled',
+            fulfilled_at: now,
+            activity_logs: appendLog(targetOrder?.activity_logs, orderEntry)
+          }).eq('id', orderId).neq('order_status', 'fulfilled');
+          if (orderError) throw orderError;
+        }
       }
     } else {
-      setItems(updatedItems);
-      if (orderId && allDelivered) {
-        setOrders(prev => prev.map(o => o.id === orderId ? {
-          ...o,
+      const relatedItems = applyUpdates(items).filter(item => item.order_id === orderId);
+      if (orderId && relatedItems.length && relatedItems.every(item => item.status === 'delivered')) {
+        setOrders(prev => prev.map(order => order.id === orderId ? {
+          ...order,
           order_status: 'fulfilled',
           fulfilled_at: now,
-          activity_logs: appendLog(o.activity_logs, orderEntry)
-        } : o));
+          activity_logs: appendLog(order.activity_logs, orderEntry)
+        } : order));
       }
     }
+    setItems(applyUpdates);
   };
 
   // ---------------------------------------------------------------------------
@@ -2718,7 +2848,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       (ticketData.intake_channel === 'onsite_pickup' ? 'onsite_pickup' : 'front_desk');
     const receivedByName = ticketData.received_by || actor?.name || 'ระบบ';
     const intakeAction =
-      receivedChannel === 'onsite_pickup'
+      receivedChannel === 'onsite_service_sheet'
+        ? 'ออกใบ Service Sheet และส่งเข้าคิวห้องช่าง'
+        : receivedChannel === 'onsite_pickup'
         ? `รับเครื่องซ่อมจากหน้างาน โดย ${receivedByName}`
         : 'เริ่มปฏิบัติงาน / รับเครื่องซ่อม';
     const intakeLog = makeLog(
@@ -2749,7 +2881,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
 
     if (isSupabaseLive && supabaseClient) {
-      await supabaseClient.from('repair_tickets').insert([newTicket]);
+      const { error } = await supabaseClient.from('repair_tickets').insert([newTicket]);
+      if (receivedChannel === 'onsite_service_sheet') {
+        if (error) throw error;
+        setRepairTickets(prev => [newTicket, ...prev.filter(ticket => ticket.id !== newTicket.id)]);
+      }
     } else {
       setRepairTickets(prev => [newTicket, ...prev]);
     }
@@ -3028,11 +3164,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const techName = actor?.name || 'ช่าง Onsite';
     const target = repairTickets.find(t => t.id === ticketId);
     const cleanPhotos = photoUrls && photoUrls.length > 0
-      ? photoUrls.slice(0, 3)
+      ? Array.from(new Set([...(target?.photo_urls || []), ...photoUrls.slice(0, 3)]))
       : (target?.photo_urls || null);
     const logNoteParts = [
       note || 'ช่าง Onsite ส่งคืนเครื่องซ่อมให้ลูกค้าเรียบร้อย',
-      cleanPhotos && cleanPhotos.length > 0 ? `แนบรูปหลักฐาน ${cleanPhotos.length} รูป` : null
+      photoUrls?.length ? `แนบรูปหลักฐานส่งคืน ${Math.min(photoUrls.length, 3)} รูป` : null
     ].filter(Boolean);
     const entry = makeLog(
       `ส่งมอบเครื่องซ่อมคืนลูกค้าเสร็จสิ้น โดย ${techName}`,
@@ -3368,6 +3504,48 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setRepairTickets(prev => prev.filter(t => t.id !== ticketId));
   };
 
+  const manageServiceSheet: AppContextType['manageServiceSheet'] = async (ticketId, action) => {
+    const actor = currentUserRef.current;
+    const ticket = repairTickets.find(row => row.id === ticketId && row.received_channel === 'onsite_service_sheet');
+    if (!ticket || !actor || (actor.role !== 'admin' && ticket.received_by !== actor.name)) {
+      throw new Error('ไม่พบ Service Sheet ที่คุณจัดการได้');
+    }
+    if (action.kind !== 'edit' && !ticket.service_sheet_withdrawn_at &&
+        (ticket.status !== 'open' || (ticket.repair_status && ticket.repair_status !== 'pending_check') || ticket.repaired_by)) {
+      throw new Error('ใบงานนี้ออกจากคิวรอตรวจแล้ว');
+    }
+    if (action.kind === 'withdraw' && ticket.service_sheet_withdrawn_at) return;
+
+    const now = new Date().toISOString();
+    const patch = {
+      ...(action.kind === 'edit' ? action.fields : { service_sheet_withdrawn_at: now }),
+      updated_at: now,
+      activity_logs: appendLog(ticket.activity_logs, makeLog(
+        action.kind === 'edit' ? 'แก้ไข Service Sheet' : 'ถอน Service Sheet จากคิวห้องช่าง',
+        actor.name, actor.role
+      ))
+    };
+
+    if (isSupabaseLive && supabaseClient) {
+      const table = supabaseClient.from('repair_tickets');
+      let query = (action.kind === 'delete' ? table.delete() : table.update(patch))
+        .eq('id', ticketId).eq('received_channel', 'onsite_service_sheet');
+      if (actor.role !== 'admin') query = query.eq('received_by', actor.name);
+      if (action.kind !== 'edit') {
+        query = ticket.service_sheet_withdrawn_at
+          ? query.eq('service_sheet_withdrawn_at', ticket.service_sheet_withdrawn_at)
+          : query.is('service_sheet_withdrawn_at', null).eq('status', 'open')
+            .eq('repair_status', 'pending_check').is('repaired_by', null);
+      }
+      const { data, error } = await query.select('id').maybeSingle();
+      if (error || !data) throw new Error('บันทึกการเปลี่ยนแปลงไม่ได้ กรุณาตรวจสอบสถานะใบงานแล้วลองอีกครั้ง');
+    }
+
+    setRepairTickets(prev => action.kind === 'delete'
+      ? prev.filter(row => row.id !== ticketId)
+      : prev.map(row => row.id === ticketId ? { ...row, ...patch } : row));
+  };
+
   const updateSupabaseConfig = (url: string, key: string) => {
     localStorage.setItem('boss_sb_url', url);
     localStorage.setItem('boss_sb_key', key);
@@ -3385,6 +3563,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const resetAllDemoData = (options?: { preserveCatalog?: boolean }) => {
+    if (isSupabaseLive || (supabaseUrl && supabaseKey)) return;
     const preserveCatalog = options?.preserveCatalog ?? false;
     localStorage.removeItem('boss_orders');
     localStorage.removeItem('boss_items');
@@ -3769,12 +3948,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return { batchNo: nextBatchNo, equipmentCount, consumableCount };
   };
 
-  const prepFinishProjectEquipment = (
+  const prepFinishProjectEquipment = async (
     itemId: string,
     serialNumber: string,
     voidDate: string,
     prepNote?: string
-  ): boolean => {
+  ): Promise<boolean> => {
     const target = items.find(i => i.id === itemId);
     if (!target || !target.project_id) return false;
     const sn = (serialNumber || target.serial_number || '').trim();
@@ -3800,30 +3979,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       actor?.role || 'prep',
       `S/N: ${sn} | วอยประกัน: ${voidDate} | โปรเจกต์ ${target.project_id} • งวดที่ ${target.project_batch_no || 1}`
     );
+    recordPrepEvent(itemLog, 'project', target, sn);
 
-    setItems(prev =>
-      prev.map(i =>
-        i.id === itemId
-          ? {
-              ...i,
-              serial_number: sn,
-              status: 'ready_for_dispatch' as const,
-              logo_applied: true,
-              void_date: voidDate,
-              prepped_at: now,
-              warranty_applied_at: now,
-              warranty_void_date: now,
-              warranty_expire_date: warrantyExpire,
-              assigned_techs: assignedTechs || [],
-              assigned_onsite_tech: assignedTechs?.[0] || null,
-              assigned_at: now,
-              dispatched_at: now,
-              notes: prepNote || `ติดวอยประกัน & ส่งเข้าไซต์งาน ${target.project_id} งวดที่ ${target.project_batch_no || 1}`,
-              activity_logs: appendLog(i.activity_logs, itemLog)
-            }
-          : i
-      )
-    );
+    const changes = {
+      serial_number: sn,
+      status: 'ready_for_dispatch' as const,
+      logo_applied: true,
+      void_date: voidDate,
+      prepped_at: now,
+      warranty_applied_at: now,
+      warranty_void_date: now,
+      warranty_expire_date: warrantyExpire,
+      assigned_techs: assignedTechs || [],
+      assigned_onsite_tech: assignedTechs?.[0] || null,
+      assigned_at: now,
+      dispatched_at: now,
+      notes: prepNote || `ติดวอยประกัน & ส่งเข้าไซต์งาน ${target.project_id} งวดที่ ${target.project_batch_no || 1}`,
+      activity_logs: appendLog(target.activity_logs, itemLog)
+    };
+    if (isSupabaseLive && supabaseClient) {
+      const { error } = await supabaseClient.from('items').update(changes).eq('id', itemId);
+      if (error) throw error;
+    }
+    setItems(prev => prev.map(item => item.id === itemId ? { ...item, ...changes } : item));
 
     updateProjectById(target.project_id, p => {
       const nextItems = p.items.map(pi => {
@@ -4287,7 +4465,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       markProjectBilled,
       orders,
       items,
-      repairTickets,
+      repairTickets: repairTickets.filter(ticket => !ticket.service_sheet_withdrawn_at),
+      serviceSheetHistory: repairTickets.filter(ticket => ticket.received_channel === 'onsite_service_sheet' &&
+        (currentUser?.role === 'admin' || ticket.received_by === currentUser?.name)),
+      manageServiceSheet,
       products,
       stockPOs,
       projects,
@@ -4310,6 +4491,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       updateProduct,
       deleteProduct,
       createOrder,
+      editOrder,
+      deleteDraftOrder,
       updateOrderPOStatus,
       receivePOIntoStock,
       updateOrderCosts,

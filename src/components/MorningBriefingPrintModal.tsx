@@ -1,3 +1,4 @@
+import { ModalBackdrop } from './ui/ModalBackdrop';
 import React, { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Printer, X } from 'lucide-react';
@@ -70,9 +71,9 @@ export const MorningBriefingPrintModal: React.FC<MorningBriefingPrintModalProps>
   }, {});
 
   return createPortal(
-    <div
+    <ModalBackdrop
       className="morning-briefing-print-portal fixed inset-0 z-[10000] bg-black/70 backdrop-blur-sm flex flex-col items-center justify-start overflow-y-auto overscroll-contain p-2 sm:p-5 animate-fade-in"
-      onClick={onClose}
+      onDismiss={onClose}
     >
       {/* Top Interactive Controls (hidden during print) */}
       <div
@@ -219,7 +220,7 @@ export const MorningBriefingPrintModal: React.FC<MorningBriefingPrintModalProps>
           </div>
         </div>
       </div>
-    </div>,
+    </ModalBackdrop>,
     document.body
   );
 };

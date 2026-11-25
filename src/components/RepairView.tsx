@@ -1,3 +1,5 @@
+import { ModalBackdrop } from './ui/ModalBackdrop';
+import { NumberInput, PhoneInput, normalizePhone } from './ui/FormInputs';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from '../context/AppContext';
@@ -24,6 +26,7 @@ import {
 } from './ui/Modal';
 import { lookupPurchaseBySn } from '../utils/snLookup';
 import { RepairIntakeModal } from './RepairIntakeModal';
+import { EvidencePhotoUploader } from './EvidencePhotoUploader';
 import { PrintGuideButton } from './PrintGuideButton';
 
 const ACCESSORY_PRESETS = [
@@ -252,7 +255,7 @@ export const RepairView: React.FC = () => {
     const res = lookupPurchaseBySn(val, items, orders, repairTickets);
     if (res.found) {
       if (res.customerName) setCustName(res.customerName);
-      if (res.customerPhone) setCustPhone(res.customerPhone);
+      if (res.customerPhone) setCustPhone(normalizePhone(res.customerPhone));
       if (res.deviceModel) setDeviceModel(res.deviceModel);
       if (res.district && DISTRICT_OPTIONS.includes(res.district)) {
         setDistrict(res.district);
@@ -550,7 +553,7 @@ export const RepairView: React.FC = () => {
     setOpenMenuId(null);
     setEditTicketId(ticket.id);
     setEditCustName(ticket.customer_name || '');
-    setEditCustPhone(ticket.customer_phone || '');
+    setEditCustPhone(normalizePhone(ticket.customer_phone || ''));
     setEditDeviceModel(ticket.device_model || '');
     setEditSn(ticket.walkin_sn || '');
     setEditFaultSymptom(ticket.fault_symptom || '');
@@ -922,7 +925,7 @@ export const RepairView: React.FC = () => {
                   )}
                   <button
                     onClick={() => handleSaveAll(ticket)}
-                    className="w-full sm:w-auto min-h-[44px] py-2.5 px-5 rounded-xl font-extrabold text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-1.5 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 hover:brightness-105 text-white shadow-lg shadow-emerald-500/25 border border-white/20 active:scale-[0.97]"
+                    className="w-full sm:w-auto min-h-[44px] py-2.5 px-5 rounded-xl font-extrabold text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-1.5 bg-gradient-to-r from-emerald-700 to-emerald-800 hover:from-emerald-800 hover:to-emerald-900 text-white shadow-lg shadow-emerald-500/25 border border-white/20 active:scale-[0.97]"
                   >
                     <Save className="w-4 h-4" />
                     <span>บันทึกข้อมูลและสถานะ (Save Changes)</span>
@@ -1026,6 +1029,16 @@ export const RepairView: React.FC = () => {
               </div>
 
               {/* Service Type Toggle (draft) */}
+              {!!ticket.photo_urls?.length && (
+                <EvidencePhotoUploader
+                  value={ticket.photo_urls}
+                  onChange={() => {}}
+                  folder="onsite"
+                  editable={false}
+                  maxPhotos={Math.max(3, ticket.photo_urls.length)}
+                  label="รูปหลักฐานประกอบใบรับซ่อม"
+                />
+              )}
               <div>
                 <label className={modalLabelClass}>ประเภทงานซ่อม *</label>
                 <div className="grid grid-cols-2 gap-2">
@@ -1184,9 +1197,9 @@ export const RepairView: React.FC = () => {
                     className={modalInputClass}
                   />
                   <label className={modalLabelClass + ' mt-2'}>ค่าใช้จ่าย (บาท)</label>
-                  <input
-                    type="number"
+                  <NumberInput
                     min={0}
+                    step="0.01"
                     placeholder="0"
                     value={draftCost}
                     onChange={(e) => setDraftCost(e.target.value)}
@@ -1212,12 +1225,12 @@ export const RepairView: React.FC = () => {
       {/* NESTED MODAL: STATUS PICKER (stacked above Repair Detail Modal) */}
       {/* ========================================================================= */}
       {isStatusPickerOpen && createPortal(
-        <div
+        <ModalBackdrop
           className="fixed inset-0 z-[10000] flex items-center justify-center p-4 sm:p-6 bg-black/70 dark:bg-black/80 backdrop-blur-md overflow-y-auto overscroll-contain animate-fade-in"
           role="dialog"
           aria-modal="true"
           aria-label="เลือกสถานะงานซ่อม"
-          onClick={() => setIsStatusPickerOpen(false)}
+          onDismiss={() => setIsStatusPickerOpen(false)}
         >
           <div
             onClick={(e) => e.stopPropagation()}
@@ -1294,7 +1307,7 @@ export const RepairView: React.FC = () => {
               </div>
             </div>
           </div>
-        </div>,
+        </ModalBackdrop>,
         document.body
       )}
 
@@ -1384,8 +1397,8 @@ export const RepairView: React.FC = () => {
               <input type="text" value={custName} onChange={(e) => setCustName(e.target.value)} className={modalInputClass} placeholder="ชื่อ-นามสกุล" />
             </div>
             <div>
-              <label className={modalLabelClass}>เบอร์โทร</label>
-              <input type="tel" value={custPhone} onChange={(e) => setCustPhone(e.target.value)} className={modalInputClass} placeholder="08X-XXX-XXXX" />
+              <label htmlFor="repair-customer-phone" className={modalLabelClass}>เบอร์โทร</label>
+              <PhoneInput id="repair-customer-phone" value={custPhone} onChange={(e) => setCustPhone(e.target.value)} className={modalInputClass} />
             </div>
             <div>
               <label className={modalLabelClass}>อำเภอ / พื้นที่</label>
@@ -1725,8 +1738,8 @@ export const RepairView: React.FC = () => {
               <input type="text" value={editCustName} onChange={(e) => setEditCustName(e.target.value)} className={modalInputClass} placeholder="ชื่อ-นามสกุล" />
             </div>
             <div>
-              <label className={modalLabelClass}>เบอร์โทร</label>
-              <input type="tel" value={editCustPhone} onChange={(e) => setEditCustPhone(e.target.value)} className={modalInputClass} placeholder="08X-XXX-XXXX" />
+              <label htmlFor="repair-edit-phone" className={modalLabelClass}>เบอร์โทร</label>
+              <PhoneInput id="repair-edit-phone" value={editCustPhone} onChange={(e) => setEditCustPhone(e.target.value)} className={modalInputClass} />
             </div>
             <div>
               <label className={modalLabelClass}>รุ่นอุปกรณ์</label>

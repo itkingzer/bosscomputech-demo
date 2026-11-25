@@ -1,3 +1,4 @@
+import { ModalBackdrop } from './ui/ModalBackdrop';
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Html5Qrcode } from 'html5-qrcode';
@@ -266,12 +267,12 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
     if (!open) return null;
 
     return createPortal(
-        <div
+        <ModalBackdrop
             className="fixed inset-0 z-[10050] flex items-center justify-center p-3 sm:p-4 bg-black/70 backdrop-blur-sm overflow-y-auto overscroll-contain animate-fade-in"
             role="dialog"
             aria-modal="true"
             aria-label={title}
-            onClick={handleClose}
+            onDismiss={handleClose}
         >
             <div
                 className="w-full max-w-md max-h-[92dvh] overflow-y-auto overscroll-contain rounded-3xl shadow-2xl border border-slate-200 dark:border-white/10 bg-white dark:bg-[#12141A] text-slate-900 dark:text-white animate-modal-pop"
@@ -364,7 +365,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                     </div>
                 </div>
             </div>
-        </div>,
+        </ModalBackdrop>,
         document.body
     );
 };

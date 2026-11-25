@@ -1,3 +1,4 @@
+import { ModalBackdrop } from './ui/ModalBackdrop';
 import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Printer, X, CheckSquare, Square } from 'lucide-react';
@@ -6,6 +7,8 @@ import { COMPANY_NAME, COMPANY_ADDRESS, COMPANY_PHONE } from './RepairReceiptPri
 
 export interface OnsiteCompletedReportRow {
   id: string;
+  orderId?: string;
+  productModel?: string;
   dateKey: string;
   kind: string;
   refNo: string;
@@ -65,13 +68,37 @@ export const OnsiteDailyReportPrintModal: React.FC<OnsiteDailyReportPrintModalPr
     ? jobs.filter((j) => j.dateKey === selectedDate)
     : jobs;
 
+  const jobsByBill = new Map<string, OnsiteCompletedReportRow[]>();
+  for (const job of filteredJobs) {
+    const key = job.orderId ? `order:${job.orderId}` : job.id;
+    const group = jobsByBill.get(key);
+    if (group) group.push(job);
+    else jobsByBill.set(key, [job]);
+  }
+
+  const reportRows = [...jobsByBill.values()].map(group => {
+    const [first] = group;
+    if (!first.orderId) return first;
+
+    const quantities = new Map<string, number>();
+    for (const job of group) {
+      const model = job.productModel?.trim() || 'ไม่ระบุรุ่น';
+      quantities.set(model, (quantities.get(model) ?? 0) + 1);
+    }
+    return {
+      ...first,
+      detail: [...quantities].map(([model, quantity]) => `${model} × ${quantity} ชิ้น`).join('\n'),
+      techs: [...new Set(group.flatMap(job => job.techs))]
+    };
+  });
+
   const displayDate = selectedDate ? formatDateDMY(selectedDate) : 'ทั้งหมด';
   const printedToday = formatDateDMY(new Date().toISOString());
 
   return createPortal(
-    <div
+    <ModalBackdrop
       className="onsite-report-print-portal fixed inset-0 z-[10000] bg-black/70 backdrop-blur-sm flex flex-col items-center justify-start overflow-y-auto overscroll-contain p-2 sm:p-5 animate-fade-in"
-      onClick={onClose}
+      onDismiss={onClose}
     >
       {/* Top Interactive Controls (hidden during print) */}
       <div
@@ -174,7 +201,7 @@ export const OnsiteDailyReportPrintModal: React.FC<OnsiteDailyReportPrintModalPr
         <div className="grid grid-cols-3 gap-2 mb-3 text-[11px]">
           <div className="border border-black px-2.5 py-1.5">
             <span className="font-bold">งาน Onsite ปิดสำเร็จ: </span>
-            <span className="font-mono font-extrabold text-[13px]">{filteredJobs.length}</span> งาน
+            <span className="font-mono font-extrabold text-[13px]">{reportRows.length}</span> งาน
           </div>
           <div className="border border-black px-2.5 py-1.5">
             <span className="font-bold">งานโปรเจกต์ที่ติดตาม: </span>
@@ -189,7 +216,7 @@ export const OnsiteDailyReportPrintModal: React.FC<OnsiteDailyReportPrintModalPr
         {/* Table 1: Completed Onsite Jobs */}
         <div className="mb-4">
           <div className="font-extrabold text-[12px] mb-1.5">
-            1. รายการปิดงานเสร็จของช่าง Onsite ({filteredJobs.length} งาน)
+            1. รายการปิดงานเสร็จของช่าง Onsite ({reportRows.length} งาน)
           </div>
           <table className="w-full border-collapse border border-black text-[10.5px]">
             <thead>
@@ -203,15 +230,15 @@ export const OnsiteDailyReportPrintModal: React.FC<OnsiteDailyReportPrintModalPr
               </tr>
             </thead>
             <tbody>
-              {filteredJobs.length === 0 ? (
+              {reportRows.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="border border-black px-2 py-4 text-center">
                     ไม่มีรายการปิดงานช่าง Onsite ในวันที่ {displayDate}
                   </td>
                 </tr>
               ) : (
-                filteredJobs.map((j, idx) => (
-                  <tr key={j.id}>
+                reportRows.map((j, idx) => (
+                  <tr key={j.id} className="align-top print:break-inside-avoid">
                     <td className="border border-black px-1.5 py-1 text-center">{idx + 1}</td>
                     <td className="border border-black px-1.5 py-1">
                       <div className="font-bold">{j.kind}</div>
@@ -221,7 +248,7 @@ export const OnsiteDailyReportPrintModal: React.FC<OnsiteDailyReportPrintModalPr
                       <div className="font-bold">{j.customerName}</div>
                       <div className="text-[9.5px]">{j.location}</div>
                     </td>
-                    <td className="border border-black px-1.5 py-1">{j.detail}</td>
+                    <td className="border border-black px-1.5 py-1 whitespace-pre-line break-words">{j.detail}</td>
                     <td className="border border-black px-1.5 py-1">
                       {j.techs.length > 0 ? j.techs.join(', ') : '-'}
                     </td>
@@ -332,7 +359,7 @@ export const OnsiteDailyReportPrintModal: React.FC<OnsiteDailyReportPrintModalPr
           </div>
         </div>
       </div>
-    </div>,
+    </ModalBackdrop>,
     document.body
   );
 };

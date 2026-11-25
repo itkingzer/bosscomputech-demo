@@ -1,3 +1,5 @@
+import { ModalBackdrop } from './ui/ModalBackdrop';
+import { PhoneInput, NumberInput, normalizePhone } from './ui/FormInputs';
 import React, { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from '../context/AppContext';
@@ -11,18 +13,21 @@ import { ROUTE_DEFINITIONS, RouteCode, RepairTicket, Item, Project, Product, Pro
 import { ListControls, useListControls } from './ListControls';
 import { ActivityTimeline, LatestUpdateBadge } from './ActivityTimeline';
 import { BarcodeScannerModal } from './BarcodeScannerModal';
+import { DeliverySignaturePad } from './DeliverySignaturePad';
+import { uploadEvidenceImage } from '../services/imageStorageService';
 import { EvidencePhotoUploader } from './EvidencePhotoUploader';
 import { ToastBanner } from './ui/ToastBanner';
 import { OrderFormPrintModal } from './OrderFormPrintModal';
 import { OnsiteDispatchRosterModal } from './OnsiteDispatchRosterModal';
 import { RepairIntakeModal, RepairIntakeInitialValues } from './RepairIntakeModal';
+import { ServiceSheetHistoryModal } from './ServiceSheetHistoryModal';
 import { PrintGuideButton } from './PrintGuideButton';
 import {
   Modal, modalInputClass, modalLabelClass,
   modalPrimaryBtnClass
 } from './ui/Modal';
 import { lookupPurchaseBySn } from '../utils/snLookup';
-import { isNonPrepCableOrConsumable, toTelHref } from '../utils/domainHelpers';
+import { isNonPrepCableOrConsumable, toTelHref, worksInPosition } from '../utils/domainHelpers';
 
 // ---------------------------------------------------------------------------
 // Official "ใบรับซ่อมสินค้า" receipt helpers (shared with RepairView)
@@ -177,6 +182,7 @@ export const OnsiteView: React.FC = () => {
   const [repairIntakeOpen, setRepairIntakeOpen] = useState(false);
   const [intakeInitialValues, setIntakeInitialValues] = useState<RepairIntakeInitialValues | null>(null);
   const [toast, setToast] = useState('');
+  const [serviceSheetHistoryOpen, setServiceSheetHistoryOpen] = useState(false);
   const [dispatchRosterOpen, setDispatchRosterOpen] = useState(false);
   const [rosterDate, setRosterDate] = useState<string>(() => getLocalDateStr(1));
   const vehicleMap = useMemo<Record<string, string>>(() => {
@@ -284,6 +290,12 @@ export const OnsiteView: React.FC = () => {
   // Service Sheet Modal Mode
   const [modalMode, setModalMode] = useState<'pickup_task' | 'service_sheet'>('pickup_task');
   const [deliveryPhotos, setDeliveryPhotos] = useState<Record<string, string[]>>({});
+  const [deliverySignature, setDeliverySignature] = useState<string | null>(null);
+  const [goodsDeliveryPhotos, setGoodsDeliveryPhotos] = useState<Record<string, string[]>>({});
+  const [confirmDeliveryKey, setConfirmDeliveryKey] = useState<string | null>(null);
+  const [uploadingDeliveryProof, setUploadingDeliveryProof] = useState(false);
+  const [savingDelivery, setSavingDelivery] = useState(false);
+  const [deliveryError, setDeliveryError] = useState('');
   const [pickupPhotos, setPickupPhotos] = useState<string[]>([]);
   const [sendToRepairShop, setSendToRepairShop] = useState(true);
 
@@ -310,7 +322,7 @@ export const OnsiteView: React.FC = () => {
     const res = lookupPurchaseBySn(val, items, orders, repairTickets);
     if (res.found) {
       if (res.customerName) setCustName(res.customerName);
-      if (res.customerPhone) setCustPhone(res.customerPhone);
+      if (res.customerPhone) setCustPhone(normalizePhone(res.customerPhone));
       if (res.deviceModel) setDeviceModel(res.deviceModel);
       if (res.district && DISTRICT_OPTIONS.some(d => d.district === res.district)) {
         setDistrict(res.district);
@@ -342,7 +354,7 @@ export const OnsiteView: React.FC = () => {
   const [activeJob, setActiveJob] = useState<{ kind: 'new_goods' | 'repair_return' | 'pickup'; key: string } | null>(null);
   const [printProjectTarget, setPrintProjectTarget] = useState<{ project: Project; initialBatchNo?: number | null } | null>(null);
 
-  const onsiteTechUsers = users.filter(u => u.role === 'onsite' && u.is_active !== false);
+  const onsiteTechUsers = users.filter(u => worksInPosition(u, 'onsite') && u.is_active !== false);
 
   // Warranty Auto-Check by S/N (uses shared lookupWarrantyBySerial supporting 1-5y/months)
   const warrantyLookup = sn.trim().length >= 3 ? lookupWarrantyBySerial(sn) : null;
@@ -499,12 +511,31 @@ export const OnsiteView: React.FC = () => {
     setTimeout(() => setToast(''), 3500);
   };
 
-  const handleDeliveryConfirmGroup = (group: ItemGroup) => {
-    const photos = deliveryPhotos[group.key];
-    group.items.forEach(it => {
-      const note = deliveryNotes[it.id] || 'ติดตั้งและส่งมอบถึงมือลูกค้าเรียบร้อย';
-      confirmOnsiteDelivery(it.id, note, photos);
-    });
+  const handleDeliveryConfirmGroup = async (group: ItemGroup) => {
+    if (savingDelivery || uploadingDeliveryProof) return;
+    const photos = goodsDeliveryPhotos[group.key] ?? [];
+    setSavingDelivery(true);
+    setDeliveryError('');
+    try {
+      let signatureUrl: string | undefined;
+      if (deliverySignature) {
+        const blob = await (await fetch(deliverySignature)).blob();
+        signatureUrl = await uploadEvidenceImage(new File([blob], 'delivery-signature.png', { type: blob.type }), 'onsite');
+      }
+      await confirmOnsiteDelivery(group.items.map(item => ({
+        id: item.id,
+        note: deliveryNotes[item.id]?.trim()
+      })), photos, signatureUrl);
+    } catch {
+      setDeliveryError('บันทึกการส่งมอบไม่สำเร็จ กรุณาลองอีกครั้ง');
+      return;
+    } finally {
+      setSavingDelivery(false);
+    }
+    setActiveJob(null);
+    setConfirmDeliveryKey(null);
+    setDeliverySignature(null);
+    setGoodsDeliveryPhotos(prev => ({ ...prev, [group.key]: [] }));
     setToast(`ส่งมอบสินค้าใหม่ทั้งชุด ${group.items.length} เครื่องสำเร็จ และปิดงานเรียบร้อยแล้ว`);
     setTimeout(() => setToast(''), 3500);
   };
@@ -522,7 +553,7 @@ export const OnsiteView: React.FC = () => {
     setSendToRepairShop(true);
     setOriginJob({ kind: 'ticket', id: ticket.id });
     setCustName(ticket.customer_name);
-    setCustPhone(ticket.customer_phone || '');
+    setCustPhone(normalizePhone(ticket.customer_phone || ''));
     setDistrict(ticket.district || 'เมืองสุราษฎร์ธานี');
     setDeliveryLocation(ticket.delivery_location || '');
     setProvinceCustom(ticket.province_custom || '');
@@ -636,11 +667,19 @@ export const OnsiteView: React.FC = () => {
             </p>
           </div>
 
-          <div className="hidden sm:flex flex-row items-center gap-2 w-auto">
+          <div className="flex flex-wrap items-center gap-2 w-auto">
+            <button
+              type="button"
+              onClick={() => setServiceSheetHistoryOpen(true)}
+              className={modalPrimaryBtnClass + ' min-h-11 sm:hidden'}
+            >
+              <ClipboardList className="w-4 h-4" />
+              ประวัติ Service Sheet
+            </button>
             <button
               type="button"
               onClick={() => setDispatchRosterOpen(true)}
-              className="px-4 py-3 min-h-[48px] bg-indigo-600 hover:bg-indigo-500 active:scale-[0.97] text-white font-extrabold rounded-xl text-sm transition-all duration-150 cursor-pointer flex items-center justify-center gap-2 shadow-md"
+              className="hidden px-4 py-3 min-h-[48px] bg-indigo-600 hover:bg-indigo-500 active:scale-[0.97] text-white font-extrabold rounded-xl text-sm transition-all duration-150 cursor-pointer sm:flex items-center justify-center gap-2 shadow-md"
             >
               <Printer className="w-5 h-5" />
               <span>พิมพ์ใบจัดคิวพรุ่งนี้ (Print)</span>
@@ -648,7 +687,7 @@ export const OnsiteView: React.FC = () => {
             <button
               type="button"
               onClick={() => handleOpenNewServiceSheet()}
-              className="px-5 py-3 min-h-[48px] bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:brightness-110 active:scale-[0.97] text-black font-black rounded-xl text-sm transition-all duration-150 cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-[#FF6B00]/25 border border-white/20"
+              className="hidden px-5 py-3 min-h-[48px] bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:brightness-110 active:scale-[0.97] text-black font-black rounded-xl text-sm transition-all duration-150 cursor-pointer sm:flex items-center justify-center gap-2 shadow-lg shadow-[#FF6B00]/25 border border-white/20"
             >
               <ClipboardList className="w-5 h-5" />
               <span>+ ออกใบรับเครื่องซ่อมหน้างาน</span>
@@ -656,8 +695,7 @@ export const OnsiteView: React.FC = () => {
           </div>
         </div>
 
-        {/* Quick 3-Card Summary ("งานของคุณตอนนี้") — hidden on mobile so job cards appear immediately */}
-        <div className="hidden sm:grid sm:grid-cols-3 gap-3 mb-5">
+        <div className="mb-5 hidden gap-3 sm:grid sm:grid-cols-2 lg:grid-cols-4">
           <button
             type="button"
             onClick={() => setSelectedCategory('projects')}
@@ -698,6 +736,15 @@ export const OnsiteView: React.FC = () => {
               </div>
             </div>
             <Wrench className="w-7 h-7 text-amber-600 dark:text-amber-400 shrink-0" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setServiceSheetHistoryOpen(true)}
+            className="flex min-h-[68px] cursor-pointer items-center justify-between gap-2 rounded-2xl border border-sky-300 bg-sky-50 p-3.5 text-left text-sm font-bold text-sky-900 transition hover:border-sky-500 dark:border-sky-500/35 dark:bg-sky-500/10 dark:text-sky-300"
+          >
+            <span>ประวัติ Service Sheet</span>
+            <ClipboardList className="h-7 w-7 shrink-0 text-sky-600 dark:text-sky-400" />
           </button>
         </div>
 
@@ -1380,7 +1427,13 @@ export const OnsiteView: React.FC = () => {
           if (!jobTicket) return null;
         }
 
-        const closeModal = () => setActiveJob(null);
+        const closeModal = () => {
+          if (savingDelivery || uploadingDeliveryProof) return;
+          setDeliveryError('');
+          setDeliverySignature(null);
+          setConfirmDeliveryKey(null);
+          setActiveJob(null);
+        };
 
         // ---------- NEW GOODS JOB ----------
         if (jobGroup) {
@@ -1393,11 +1446,19 @@ export const OnsiteView: React.FC = () => {
             : (firstItem.assigned_onsite_tech ? [firstItem.assigned_onsite_tech] : []);
           const isAccepted = group.items.every(it => !!it.onsite_accepted_at);
           const deliveryLabel = DELIVERY_MODE_LABEL[group.delivery_mode || 'install'] || 'ส่งพร้อมติดตั้ง';
+          const isConfirmingDelivery = confirmDeliveryKey === group.key;
+          const cancelDeliveryConfirmation = () => {
+            if (savingDelivery) return;
+            setConfirmDeliveryKey(null);
+            setDeliveryError('');
+          };
 
           return (
+            <>
             <Modal
               open
               onClose={closeModal}
+              closeOnEscape={!isConfirmingDelivery}
               ariaLabel="รายละเอียดงาน Onsite"
               title={`งานส่งของใหม่ • ${group.model_name}`}
               subtitle={`${order?.customer_name || '-'}${rMeta ? ` • ${rMeta.shortName}` : ''}`}
@@ -1416,14 +1477,18 @@ export const OnsiteView: React.FC = () => {
                     </button>
                   ) : (
                     <button
-                      onClick={() => { handleDeliveryConfirmGroup(group); closeModal(); }}
-                      className="w-full px-5 py-3 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 active:scale-95 text-black font-extrabold rounded-xl text-sm transition cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/25 border border-white/20"
+                      onClick={() => setConfirmDeliveryKey(group.key)}
+                      disabled={savingDelivery || uploadingDeliveryProof || isConfirmingDelivery}
+                      className="w-full px-5 py-3 bg-gradient-to-r from-emerald-700 to-emerald-800 hover:from-emerald-800 active:scale-95 text-white font-extrabold rounded-xl text-sm transition cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/25 border border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       <CheckCircle className="w-4 h-4" />
-                      <span>ยืนยันส่งมอบ/ติดตั้งเสร็จสิ้น ({group.items.length} เครื่อง)</span>
+                      <span>{group.delivery_mode === 'drop_off'
+                        ? `ส่งมอบและจบงาน (${group.items.length} เครื่อง)`
+                        : `ส่งมอบ ติดตั้งเสร็จ และจบงาน (${group.items.length} เครื่อง)`}</span>
                     </button>
                   )}
                   <button
+                    disabled={savingDelivery || isConfirmingDelivery}
                     onClick={() => {
                       handleOpenNewServiceSheet({
                         customer_name: order?.customer_name,
@@ -1482,7 +1547,7 @@ export const OnsiteView: React.FC = () => {
                     {order?.customer_phone && (
                       <a
                         href={`tel:${order.customer_phone.replace(/[^0-9+]/g, '')}`}
-                        className="mt-1.5 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-extrabold shadow-sm"
+                        className="mt-1.5 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-extrabold shadow-sm"
                       >
                         <Phone className="w-3.5 h-3.5" />
                         <span>โทร: {order.customer_phone}</span>
@@ -1497,6 +1562,19 @@ export const OnsiteView: React.FC = () => {
                     </p>
                   </div>
                 </div>
+
+                {isAccepted && <div className="p-3 rounded-xl bg-slate-50 dark:bg-white/[0.03] border border-slate-200 dark:border-white/[0.08]">
+                  <EvidencePhotoUploader
+                    key={group.key}
+                    value={goodsDeliveryPhotos[group.key] ?? []}
+                    onChange={(urls) => setGoodsDeliveryPhotos(prev => ({ ...prev, [group.key]: urls }))}
+                    onUploadingChange={setUploadingDeliveryProof}
+                    editable={!savingDelivery}
+                    folder="onsite"
+                    label="รูปหลักฐานการส่งมอบ (ไม่บังคับ)"
+                    helperText="แนบรูปส่งมอบหรือรูปใบส่งของได้ตามสะดวก"
+                  />
+                </div>}
 
                 {/* Team */}
                 {teamTechs.length > 0 && (
@@ -1517,9 +1595,10 @@ export const OnsiteView: React.FC = () => {
                   </div>
                 )}
 
-                {/* Per-item delivery notes */}
-                <div className="space-y-2">
-                  <p className={modalLabelClass}>รายการเครื่อง & บันทึกการส่งมอบ</p>
+                <details className="space-y-2">
+                  <summary className="min-h-11 cursor-pointer rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-xs font-semibold text-slate-700 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-slate-200">
+                    หมายเหตุการส่งมอบ ({group.items.length} เครื่อง)
+                  </summary>
                   {group.items.map((item, idx) => (
                     <div key={item.id} className="p-3 rounded-xl bg-slate-50 dark:bg-white/[0.03] border border-slate-200 dark:border-white/[0.08] space-y-2">
                       <div className="flex items-center justify-between">
@@ -1535,25 +1614,15 @@ export const OnsiteView: React.FC = () => {
                       </div>
                       <input
                         type="text"
-                        placeholder="บันทึกการส่งมอบ / เซ็นรับ"
+                        aria-label={`หมายเหตุการส่งมอบ ${item.serial_number}`}
+                        placeholder="หมายเหตุการส่งมอบ (ถ้ามี)"
                         value={deliveryNotes[item.id] || ''}
                         onChange={(e) => setDeliveryNotes({ ...deliveryNotes, [item.id]: e.target.value })}
                         className={modalInputClass}
                       />
                     </div>
                   ))}
-                </div>
-
-                {/* Onsite Delivery / Installation Evidence Photos */}
-                <div className="p-3 rounded-xl bg-slate-50 dark:bg-white/[0.03] border border-slate-200 dark:border-white/[0.08]">
-                  <EvidencePhotoUploader
-                    value={deliveryPhotos[group.key] ?? firstItem.photo_urls ?? []}
-                    onChange={(urls) => setDeliveryPhotos(prev => ({ ...prev, [group.key]: urls }))}
-                    folder="onsite"
-                    label="รูปถ่ายหลักฐานหน้างาน / การส่งมอบ"
-                    helperText="ถ่ายรูปการติดตั้ง, หน้างาน หรือเอกสารเซ็นรับ (สูงสุด 3 รูป)"
-                  />
-                </div>
+                </details>
 
                 {/* Activity */}
                 <div className="pt-3 border-t border-slate-200 dark:border-white/[0.08] space-y-2">
@@ -1564,8 +1633,51 @@ export const OnsiteView: React.FC = () => {
                   />
                   <ActivityTimeline logs={firstItem.activity_logs} />
                 </div>
+                {isAccepted && (
+                  <DeliverySignaturePad onChange={setDeliverySignature} disabled={savingDelivery || isConfirmingDelivery} />
+                )}
+
               </div>
             </Modal>
+            {isConfirmingDelivery && (
+              <Modal
+                open
+                onClose={cancelDeliveryConfirmation}
+                title="ยืนยันจบงาน"
+                maxWidthClass="max-w-sm"
+                accentClass="border-emerald-500/40"
+                lockScroll={false}
+                footer={
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <button
+                      type="button"
+                      autoFocus
+                      onClick={cancelDeliveryConfirmation}
+                      disabled={savingDelivery}
+                      className="min-h-11 rounded-xl border border-slate-300 px-4 text-sm font-bold dark:border-slate-600 disabled:opacity-50"
+                    >
+                      ยกเลิก
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleDeliveryConfirmGroup(group)}
+                      disabled={savingDelivery || uploadingDeliveryProof}
+                      className="min-h-11 rounded-xl bg-emerald-700 px-4 text-sm font-bold text-white hover:bg-emerald-800 disabled:opacity-50"
+                    >
+                      {savingDelivery ? 'กำลังบันทึก…' : 'ยืนยันจบงาน'}
+                    </button>
+                  </div>
+                }
+              >
+                <p className="text-sm">
+                  {goodsDeliveryPhotos[group.key]?.length
+                    ? 'ยืนยันส่งมอบและจบงานนี้หรือไม่?'
+                    : 'ยังไม่ได้แนบรูป ต้องการจบงานโดยไม่แนบรูปหรือไม่?'}
+                </p>
+                {deliveryError && <p role="alert" className="mt-2 text-sm text-rose-600 dark:text-rose-300">{deliveryError}</p>}
+              </Modal>
+            )}
+            </>
           );
         }
 
@@ -1653,7 +1765,7 @@ export const OnsiteView: React.FC = () => {
                   {ticket.customer_phone && (
                     <a
                       href={`tel:${ticket.customer_phone.replace(/[^0-9+]/g, '')}`}
-                      className="mt-1.5 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-extrabold shadow-sm"
+                      className="mt-1.5 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-extrabold shadow-sm"
                     >
                       <Phone className="w-3.5 h-3.5" />
                       <span>โทร: {ticket.customer_phone}</span>
@@ -1704,7 +1816,7 @@ export const OnsiteView: React.FC = () => {
               {(isReturn || (ticket.photo_urls && ticket.photo_urls.length > 0)) && (
                 <div className="p-3 rounded-xl bg-slate-50 dark:bg-white/[0.03] border border-slate-200 dark:border-white/[0.08]">
                   <EvidencePhotoUploader
-                    value={deliveryPhotos[ticket.id] ?? ticket.photo_urls ?? []}
+                    value={(isReturn ? deliveryPhotos[ticket.id] : ticket.photo_urls) ?? []}
                     onChange={(urls) => setDeliveryPhotos(prev => ({ ...prev, [ticket.id]: urls }))}
                     folder="onsite"
                     editable={isReturn}
@@ -1761,6 +1873,17 @@ export const OnsiteView: React.FC = () => {
             </div>
 
             <form onSubmit={handleSubmitPickupForm} className="space-y-4 text-xs">
+              {/* Evidence Photos in Pickup / Service Sheet Form */}
+              <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+                <EvidencePhotoUploader
+                  value={pickupPhotos}
+                  onChange={setPickupPhotos}
+                  folder="onsite"
+                  label="รูปถ่ายอาการเสีย / สภาพเครื่องหน้างาน"
+                  helperText="แนบรูปอาการเสีย, ตำหนิ หรือสภาพหน้างาน (สูงสุด 3 รูป)"
+                />
+              </div>
+
               {/* S/N Smart Search & Auto-Fill */}
               <div className="rounded-2xl p-3.5 border border-slate-200 dark:border-white/[0.1] bg-slate-50 dark:bg-white/[0.03] space-y-2">
                 <div className="flex flex-wrap items-center justify-between gap-1.5">
@@ -1832,10 +1955,9 @@ export const OnsiteView: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-700 dark:text-slate-300 font-medium mb-1">เบอร์โทรติดต่อ</label>
-                  <input
-                    type="text"
-                    placeholder="08x-xxx-xxxx"
+                  <label htmlFor="onsite-customer-phone" className="block text-slate-700 dark:text-slate-300 font-medium mb-1">เบอร์โทรติดต่อ</label>
+                  <PhoneInput
+                    id="onsite-customer-phone"
                     value={custPhone}
                     onChange={(e) => setCustPhone(e.target.value)}
                     className="w-full rounded-xl px-3 py-2 bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 placeholder-slate-400 focus:outline-none focus:border-blue-500"
@@ -1981,17 +2103,6 @@ export const OnsiteView: React.FC = () => {
                   </p>
                 </div>
               )}
-
-              {/* Evidence Photos in Pickup / Service Sheet Form */}
-              <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
-                <EvidencePhotoUploader
-                  value={pickupPhotos}
-                  onChange={setPickupPhotos}
-                  folder="onsite"
-                  label="รูปถ่ายอาการเสีย / สภาพเครื่องหน้างาน"
-                  helperText="แนบรูปอาการเสีย, ตำหนิ หรือสภาพหน้างาน (สูงสุด 3 รูป)"
-                />
-              </div>
 
               {/* Recorded By Tech */}
               <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 flex items-center justify-between text-[11px] text-slate-700 dark:text-slate-300">
@@ -2277,7 +2388,7 @@ export const OnsiteView: React.FC = () => {
                   {activeProject.phone && (
                     <a
                       href={`tel:${activeProject.phone.replace(/[^0-9+]/g, '')}`}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-[11px]"
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white font-extrabold text-[11px]"
                     >
                       <Phone className="w-3 h-3" />
                       <span>โทร {activeProject.phone}</span>
@@ -2356,7 +2467,7 @@ export const OnsiteView: React.FC = () => {
                                   setToast(`ปิดรอบเข้าไซต์ ${sv.id} (${formatDateDMY(sv.visit_date)}) เรียบร้อยแล้ว`);
                                   setTimeout(() => setToast(''), 4000);
                                 }}
-                                className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] cursor-pointer flex items-center gap-1"
+                                className="px-3 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-[11px] cursor-pointer flex items-center gap-1"
                               >
                                 <CheckCircle className="w-3.5 h-3.5" />
                                 <span>ปิดรอบเข้าไซต์นี้ (Complete Visit)</span>
@@ -2646,8 +2757,7 @@ export const OnsiteView: React.FC = () => {
                     <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
                       <div>
                         <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">จำนวนที่ขอเพิ่ม *</label>
-                        <input
-                          type="number"
+                        <NumberInput
                           min={1}
                           required
                           value={reqQty}
@@ -2722,6 +2832,15 @@ export const OnsiteView: React.FC = () => {
                   <p className="text-[11px] text-emerald-800/90 dark:text-emerald-300/90">
                     เมื่อลูกค้าตรวจรับงานติดตั้งครบถ้วนแล้ว ให้แนบรูปถ่ายส่งมอบงานและกดยืนยันเพื่อปิดโปรเจกต์ {activeProject.id}
                   </p>
+                  <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700">
+                    <EvidencePhotoUploader
+                      value={handoverPhotosInput}
+                      onChange={setHandoverPhotosInput}
+                      folder="onsite"
+                      label="รูปถ่ายส่งมอบงาน / ใบตรวจรับงาน (Final Handover Photos)"
+                      helperText="แนบรูปผลงานติดตั้งเสร็จสมบูรณ์ หรือเอกสารใบส่งมอบงาน"
+                    />
+                  </div>
                   <div>
                     <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                       บันทึกการตรวจรับงาน / ชื่อผู้เซ็นรับมอบฝั่งลูกค้า
@@ -2734,18 +2853,9 @@ export const OnsiteView: React.FC = () => {
                       className="w-full rounded-xl px-3 py-2 bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700"
                     />
                   </div>
-                  <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700">
-                    <EvidencePhotoUploader
-                      value={handoverPhotosInput}
-                      onChange={setHandoverPhotosInput}
-                      folder="onsite"
-                      label="รูปถ่ายส่งมอบงาน / ใบตรวจรับงาน (Final Handover Photos)"
-                      helperText="แนบรูปผลงานติดตั้งเสร็จสมบูรณ์ หรือเอกสารใบส่งมอบงาน"
-                    />
-                  </div>
                   <button
                     type="submit"
-                    className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 text-black font-extrabold text-sm shadow-lg shadow-emerald-500/25 cursor-pointer flex items-center justify-center gap-2"
+                    className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-700 to-teal-800 hover:from-emerald-800 text-white font-extrabold text-sm shadow-lg shadow-emerald-500/25 cursor-pointer flex items-center justify-center gap-2"
                   >
                     <CheckCircle className="w-4 h-4" />
                     <span>ยืนยันส่งมอบปิดโปรเจกต์ ({activeProject.id} • Completed)</span>
@@ -2761,9 +2871,9 @@ export const OnsiteView: React.FC = () => {
       {/* MODAL 4: CATALOG PICKER FOR ONSITE MATERIAL REQUEST (z-[10001])           */}
       {/* ========================================================================= */}
       {isReqCatalogOpen && createPortal(
-        <div
+        <ModalBackdrop
           className="fixed inset-0 z-[10001] flex items-center justify-center p-4 sm:p-6 bg-black/70 backdrop-blur-sm animate-fade-in overscroll-contain"
-          onClick={() => setIsReqCatalogOpen(false)}
+          onDismiss={() => setIsReqCatalogOpen(false)}
         >
           <div
             onClick={(e) => e.stopPropagation()}
@@ -2881,7 +2991,7 @@ export const OnsiteView: React.FC = () => {
               })()}
             </div>
           </div>
-        </div>,
+        </ModalBackdrop>,
         document.body
       )}
 
@@ -2905,6 +3015,15 @@ export const OnsiteView: React.FC = () => {
         readOnly
       />
 
+      {serviceSheetHistoryOpen && (
+        <ServiceSheetHistoryModal
+          onClose={() => setServiceSheetHistoryOpen(false)}
+          onToast={message => {
+            setToast(message);
+            setTimeout(() => setToast(''), 4000);
+          }}
+        />
+      )}
       <RepairIntakeModal
         open={repairIntakeOpen}
         onClose={() => setRepairIntakeOpen(false)}

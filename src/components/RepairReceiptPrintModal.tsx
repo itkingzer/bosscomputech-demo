@@ -1,3 +1,5 @@
+import { ModalBackdrop } from './ui/ModalBackdrop';
+import { PhoneInput, NumberInput, normalizePhone } from './ui/FormInputs';
 import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Printer, X, Copy } from 'lucide-react';
@@ -33,7 +35,7 @@ export const RepairReceiptPrintModal: React.FC<RepairReceiptPrintModalProps> = (
   useEffect(() => {
     if (!isOpen || !ticket) return;
     setCustomerName(ticket.customer_name || '');
-    setCustomerPhone(ticket.customer_phone || '');
+    setCustomerPhone(normalizePhone(ticket.customer_phone || ''));
     setDeviceModel(ticket.device_model || '');
     setSerialNo(ticket.walkin_sn || '');
     setAddress(ticket.delivery_location || ticket.district || '');
@@ -114,11 +116,11 @@ export const RepairReceiptPrintModal: React.FC<RepairReceiptPrintModalProps> = (
       : [{ key: 'single', label: undefined }];
 
   return createPortal(
-    <div
+    <ModalBackdrop
       className={`repair-receipt-print-portal ${
         allowMultipage ? 'allow-multipage ' : ''
       }fixed inset-0 z-[10000] bg-black/70 backdrop-blur-sm flex flex-col items-center justify-start overflow-y-auto overscroll-contain p-2 sm:p-5 animate-fade-in`}
-      onClick={onClose}
+      onDismiss={onClose}
     >
       {/* Top Interactive Controls (hidden during print) */}
       <div
@@ -186,12 +188,11 @@ export const RepairReceiptPrintModal: React.FC<RepairReceiptPrintModalProps> = (
             />
           </div>
           <div>
-            <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 mb-0.5">เบอร์ติดต่อ</label>
-            <input
-              type="text"
+            <label htmlFor="repair-receipt-phone" className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 mb-0.5">เบอร์ติดต่อ</label>
+            <PhoneInput
+              id="repair-receipt-phone"
               value={customerPhone}
               onChange={(e) => setCustomerPhone(e.target.value)}
-              placeholder="08x-xxx-xxxx"
               className="w-full rounded-lg px-2.5 py-1.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700"
             />
           </div>
@@ -255,8 +256,8 @@ export const RepairReceiptPrintModal: React.FC<RepairReceiptPrintModalProps> = (
           </div>
           <div>
             <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 mb-0.5">ประเมินค่าซ่อม (บาท)</label>
-            <input
-              type="number"
+            <NumberInput
+              step="0.01"
               value={repairCost}
               onChange={(e) => setRepairCost(e.target.value)}
               placeholder="0"
@@ -305,7 +306,7 @@ export const RepairReceiptPrintModal: React.FC<RepairReceiptPrintModalProps> = (
           </div>
         ))}
       </div>
-    </div>,
+    </ModalBackdrop>,
     document.body
   );
 };

@@ -1,3 +1,4 @@
+import { ModalBackdrop } from './ui/ModalBackdrop';
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { HelpCircle, X, Printer } from 'lucide-react';
@@ -25,9 +26,9 @@ export const PrintGuideButton: React.FC<PrintGuideButtonProps> = ({ docType }) =
 
       {open &&
         createPortal(
-          <div
+          <ModalBackdrop
             className="no-print fixed inset-0 z-[10010] bg-black/70 backdrop-blur-sm flex items-center justify-center p-3 sm:p-5 animate-fade-in"
-            onClick={() => setOpen(false)}
+            onDismiss={() => setOpen(false)}
           >
             <div
               onClick={(e) => e.stopPropagation()}
@@ -132,7 +133,7 @@ export const PrintGuideButton: React.FC<PrintGuideButtonProps> = ({ docType }) =
                 </button>
               </div>
             </div>
-          </div>,
+          </ModalBackdrop>,
           document.body
         )}
     </>

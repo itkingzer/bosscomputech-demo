@@ -1,3 +1,5 @@
+import { ModalBackdrop } from './ui/ModalBackdrop';
+import { PhoneInput, normalizePhone } from './ui/FormInputs';
 import React, { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from '../context/AppContext';
@@ -7,7 +9,9 @@ import {
 } from 'lucide-react';
 import { ActivityLog, UserAccount, UserRole, formatThaiDateTime } from '../types';
 import { ListControls, useListControls } from './ListControls';
-import { toTelHref } from '../utils/domainHelpers';
+import { formatEmploymentDate, getWorkPositions, toTelHref, worksInPosition } from '../utils/domainHelpers';
+import { StaffAvatar, StaffProfileFields } from './StaffProfile';
+import { Modal, modalInputClass, modalLabelClass } from './ui/Modal';
 
 const ROLE_OPTIONS: { value: UserRole; label: string; dept: string }[] = [
   { value: 'sales', label: 'ฝ่ายขาย (Sales)', dept: 'ฝ่ายขาย' },
@@ -39,6 +43,14 @@ export const HrDirectoryView: React.FC = () => {
   const [phone, setPhone] = useState('');
   const [badge, setBadge] = useState('');
   const [isActive, setIsActive] = useState(true);
+  const [avatar, setAvatar] = useState<string | null>(null);
+  const [details, setDetails] = useState('');
+  const [startDate, setStartDate] = useState('');
+  const [positions, setPositions] = useState<UserRole[]>([]);
+  const [imageBusy, setImageBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const busy = imageBusy || saving;
 
   const openAddModal = () => {
     setEditingUser(null);
@@ -50,6 +62,11 @@ export const HrDirectoryView: React.FC = () => {
     setPhone('');
     setBadge('');
     setIsActive(true);
+    setAvatar(null);
+    setDetails('');
+    setStartDate('');
+    setPositions(['sales']);
+    setSaveError('');
     setIsModalOpen(true);
   };
 
@@ -60,43 +77,59 @@ export const HrDirectoryView: React.FC = () => {
     setUsername(u.username);
     setRole(u.role);
     setDepartment(u.department || ROLE_OPTIONS.find(r => r.value === u.role)?.dept || '');
-    setPhone(u.phone || '');
+    setPhone(normalizePhone(u.phone || ''));
     setBadge(u.badge || '');
     setIsActive(u.is_active !== false);
+    setAvatar(u.avatar ?? null);
+    setDetails(u.profile_details ?? '');
+    setStartDate(u.employment_start_date ?? '');
+    setPositions(getWorkPositions(u));
+    setSaveError('');
     setIsModalOpen(true);
   };
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim() || !username.trim()) return;
-    if (editingUser) {
-      updateUser(editingUser.id, {
-        name: name.trim(),
-        nickname: nickname.trim() || undefined,
-        department: department.trim() || undefined,
-        role,
-        phone: phone.trim() || '-',
-        badge: badge.trim() || undefined,
-        is_active: isActive
-      });
-    } else {
-      if (users.some(u => u.username.toLowerCase() === username.trim().toLowerCase())) {
-        alert('Username นี้มีอยู่ในระบบแล้ว');
-        return;
-      }
-      addUser({
-        name: name.trim(),
-        nickname: nickname.trim() || undefined,
-        department: department.trim() || undefined,
-        username: username.trim().toLowerCase(),
-        password: 'password123',
-        role,
-        phone: phone.trim() || '-',
-        badge: badge.trim() || role.toUpperCase(),
-        is_active: isActive
-      });
+    if (busy) return;
+    const normalizedUsername = username.trim().toLowerCase();
+    if (!name.trim() || !normalizedUsername) {
+      setSaveError('กรุณากรอกชื่อและ Username');
+      return;
     }
-    setIsModalOpen(false);
+    if (!editingUser && users.some(u => u.username.toLowerCase() === normalizedUsername)) {
+      setSaveError('Username นี้มีอยู่ในระบบแล้ว');
+      return;
+    }
+    if (!positions.length) {
+      setSaveError('กรุณาเลือกอย่างน้อยหนึ่งตำแหน่งงาน');
+      return;
+    }
+    const profile = {
+      name: name.trim(),
+      nickname: nickname.trim(),
+      department: department.trim(),
+      role,
+      phone: phone.trim() || '-',
+      badge: badge.trim() || (editingUser ? '' : role.toUpperCase()),
+      is_active: isActive,
+      avatar,
+      profile_details: details.trim() || null,
+      employment_start_date: startDate || null,
+      work_positions: positions
+    };
+    setSaving(true);
+    setSaveError('');
+    try {
+      const saved = editingUser
+        ? await updateUser(editingUser.id, profile)
+        : await addUser({ ...profile, username: normalizedUsername, password: 'password123' });
+      if (saved) setIsModalOpen(false);
+      else setSaveError('บันทึกข้อมูลพนักงานไม่สำเร็จ กรุณาลองอีกครั้ง');
+    } catch {
+      setSaveError('บันทึกข้อมูลพนักงานไม่สำเร็จ กรุณาลองอีกครั้ง');
+    } finally {
+      setSaving(false);
+    }
   };
 
   // Aggregate workload & activity logs per staff
@@ -136,13 +169,14 @@ export const HrDirectoryView: React.FC = () => {
   const filteredUsers = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return users.filter(u => {
-      if (roleFilter !== 'all' && u.role !== roleFilter) return false;
+      if (roleFilter !== 'all' && !worksInPosition(u, roleFilter as UserRole)) return false;
       if (!q) return true;
       return (
         u.name.toLowerCase().includes(q) ||
         (u.nickname || '').toLowerCase().includes(q) ||
         u.username.toLowerCase().includes(q) ||
-        (u.department || '').toLowerCase().includes(q)
+        (u.department || '').toLowerCase().includes(q) ||
+        ROLE_OPTIONS.some(position => worksInPosition(u, position.value) && position.label.toLowerCase().includes(q))
       );
     });
   }, [users, searchQuery, roleFilter]);
@@ -197,18 +231,20 @@ export const HrDirectoryView: React.FC = () => {
             <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <input
               type="text"
+              aria-label="ค้นหาพนักงาน"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="ค้นหาชื่อ, ชื่อเล่น, แผนก..."
+              placeholder="ค้นหาชื่อ แผนก หรือตำแหน่ง"
               className="w-full rounded-xl pl-9 pr-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
             />
           </div>
           <select
+            aria-label="กรองตามตำแหน่งงาน"
             value={roleFilter}
             onChange={(e) => setRoleFilter(e.target.value)}
             className="rounded-xl px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
           >
-            <option value="all">ทุกแผนก / บทบาท</option>
+            <option value="all">ทุกตำแหน่งงาน</option>
             {ROLE_OPTIONS.map(r => (
               <option key={r.value} value={r.value}>{r.label}</option>
             ))}
@@ -248,15 +284,13 @@ export const HrDirectoryView: React.FC = () => {
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-10 h-10 rounded-xl bg-[#FF6B00]/15 border border-[#FF6B00]/30 flex items-center justify-center font-extrabold text-[#FF6B00] shrink-0">
-                    {(u.nickname || u.name).slice(0, 2)}
-                  </div>
+                  <StaffAvatar user={u} />
                   <div className="min-w-0">
                     <div className="font-bold text-sm text-slate-900 dark:text-white truncate">
                       {u.name} {u.nickname ? <span className="text-xs text-[#FF6B00]">({u.nickname})</span> : null}
                     </div>
                     <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
-                      {u.department || roleMeta?.dept || '-'} • {roleMeta?.label || u.role}
+                      {u.department || roleMeta?.dept || '-'}
                     </div>
                   </div>
                 </div>
@@ -268,7 +302,7 @@ export const HrDirectoryView: React.FC = () => {
                   title={active ? 'คลิกเพื่อพักงาน/ปิดใช้งานชั่วคราว' : 'คลิกเพื่อเปิดใช้งาน'}
                   className={`px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 shrink-0 cursor-pointer disabled:cursor-not-allowed ${
                     active
-                      ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300'
+                      ? 'bg-emerald-700 hover:bg-emerald-800 text-white'
                       : 'bg-rose-100 text-rose-800 dark:bg-rose-500/15 dark:text-rose-300'
                   }`}
                 >
@@ -276,6 +310,16 @@ export const HrDirectoryView: React.FC = () => {
                   <span>{active ? 'ทำงานอยู่' : 'พักงาน'}</span>
                 </button>
               </div>
+
+              <ul aria-label="ตำแหน่งงาน" className="flex flex-wrap gap-1.5">
+                {getWorkPositions(u).map(position => (
+                  <li key={position} className="rounded-lg bg-orange-50 px-2 py-1 text-xs font-semibold text-orange-900 dark:bg-[#FF6B00]/15 dark:text-orange-200">
+                    {ROLE_OPTIONS.find(option => option.value === position)?.label || position}
+                  </li>
+                ))}
+              </ul>
+              <p className="text-xs text-slate-600 dark:text-slate-300">วันเริ่มงาน {formatEmploymentDate(u.employment_start_date)}</p>
+              {u.profile_details && <p className="whitespace-pre-wrap break-words text-sm text-slate-700 dark:text-slate-300">{u.profile_details}</p>}
 
               <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-800/60 rounded-xl px-3 py-2">
                 {toTelHref(u.phone) ? (
@@ -342,33 +386,24 @@ export const HrDirectoryView: React.FC = () => {
       </div>
 
       {/* Add / Edit Staff Modal */}
-      {isModalOpen && createPortal(
-        <div
-          className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 animate-fade-in"
-          onClick={() => setIsModalOpen(false)}
+      {isModalOpen && (
+        <Modal
+          open
+          title={editingUser ? 'แก้ไขโปรไฟล์พนักงาน' : 'เพิ่มพนักงานใหม่'}
+          subtitle={editingUser?.name}
+          onClose={() => { if (!busy) setIsModalOpen(false); }}
         >
           <form
             onSubmit={handleSave}
-            onClick={(e) => e.stopPropagation()}
-            className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-700 rounded-3xl w-full max-w-lg p-5 shadow-2xl space-y-3.5 animate-modal-pop"
+            className="space-y-4"
           >
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-extrabold">
-                {editingUser ? `แก้ไขข้อมูลพนักงาน: ${editingUser.name}` : 'เพิ่มพนักงานใหม่ (HR Directory)'}
-              </h3>
-              <button
-                type="button"
-                onClick={() => setIsModalOpen(false)}
-                className="p-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
+            <fieldset disabled={saving} className="min-w-0 space-y-4">
+            <StaffProfileFields user={{ name, nickname, avatar }} details={details} onDetails={setDetails} onAvatar={setAvatar} onImageBusy={setImageBusy} />
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
               <div>
-                <label className="block font-bold mb-1">ชื่อ - นามสกุล *</label>
+                <label htmlFor="hr-name" className="block font-bold mb-1">ชื่อ - นามสกุล *</label>
                 <input
+                  id="hr-name"
                   type="text"
                   required
                   value={name}
@@ -377,8 +412,9 @@ export const HrDirectoryView: React.FC = () => {
                 />
               </div>
               <div>
-                <label className="block font-bold mb-1">ชื่อเล่น</label>
+                <label htmlFor="hr-nickname" className="block font-bold mb-1">ชื่อเล่น</label>
                 <input
+                  id="hr-nickname"
                   type="text"
                   value={nickname}
                   onChange={(e) => setNickname(e.target.value)}
@@ -386,8 +422,9 @@ export const HrDirectoryView: React.FC = () => {
                 />
               </div>
               <div>
-                <label className="block font-bold mb-1">Username *</label>
+                <label htmlFor="hr-username" className="block font-bold mb-1">Username *</label>
                 <input
+                  id="hr-username"
                   type="text"
                   required
                   disabled={!!editingUser}
@@ -397,20 +434,24 @@ export const HrDirectoryView: React.FC = () => {
                 />
               </div>
               <div>
-                <label className="block font-bold mb-1">เบอร์ติดต่อ</label>
-                <input
-                  type="text"
+                <label htmlFor="hr-contact-phone" className="block font-bold mb-1">เบอร์ติดต่อ</label>
+                <PhoneInput
+                  id="hr-contact-phone"
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
                   className="w-full rounded-xl px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700"
                 />
               </div>
               <div>
-                <label className="block font-bold mb-1">บทบาทในระบบ (Role)</label>
+                <label htmlFor="hr-role" className="block font-bold mb-1">สิทธิ์เข้าหน้าทำงาน</label>
                 <select
+                  id="hr-role"
                   value={role}
                   onChange={(e) => {
                     const nextRole = e.target.value as UserRole;
+                    if (positions.length === 1 && positions[0] === role && !editingUser?.work_positions) {
+                      setPositions([nextRole]);
+                    }
                     setRole(nextRole);
                     const found = ROLE_OPTIONS.find(r => r.value === nextRole);
                     if (found) setDepartment(found.dept);
@@ -423,15 +464,36 @@ export const HrDirectoryView: React.FC = () => {
                 </select>
               </div>
               <div>
-                <label className="block font-bold mb-1">แผนก</label>
+                <label htmlFor="hr-department" className="block font-bold mb-1">แผนก</label>
                 <input
+                  id="hr-department"
                   type="text"
                   value={department}
                   onChange={(e) => setDepartment(e.target.value)}
                   className="w-full rounded-xl px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700"
                 />
               </div>
-              <div className="sm:col-span-2 flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-slate-800/70">
+              <div>
+                <label htmlFor="hr-start-date" className={modalLabelClass}>วันเริ่มงาน</label>
+                <input id="hr-start-date" type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className={modalInputClass} />
+              </div>
+              <fieldset className="sm:col-span-2">
+                <legend className="font-bold">ตำแหน่งงาน (เลือกได้หลายตำแหน่ง)</legend>
+                <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                  {ROLE_OPTIONS.map(option => (
+                    <label key={option.value} className="flex min-h-11 cursor-pointer items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 has-checked:border-[#FF6B00] has-checked:bg-[#FF6B00]/10 dark:border-slate-700">
+                      <input type="checkbox" className="size-4 shrink-0 accent-[#FF6B00]" checked={positions.includes(option.value)}
+                        onChange={e => {
+                          const checked = e.target.checked;
+                          setPositions(previous => checked ? [...previous, option.value] : previous.filter(position => position !== option.value));
+                        }}
+                      />
+                      {option.label}
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+              <label className="sm:col-span-2 flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-slate-800/70">
                 <span className="font-bold">สถานะการทำงาน (แสดงใน Dropdown เลือกผู้รับผิดชอบ)</span>
                 <input
                   type="checkbox"
@@ -439,12 +501,15 @@ export const HrDirectoryView: React.FC = () => {
                   onChange={(e) => setIsActive(e.target.checked)}
                   className="w-4 h-4 accent-[#FF6B00] cursor-pointer"
                 />
-              </div>
+              </label>
             </div>
+            </fieldset>
 
+            {saveError && <p role="alert" className="text-rose-700 dark:text-rose-300">{saveError}</p>}
             <div className="flex items-center justify-end gap-2 pt-2">
               <button
                 type="button"
+                disabled={busy}
                 onClick={() => setIsModalOpen(false)}
                 className="px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-bold cursor-pointer"
               >
@@ -452,21 +517,21 @@ export const HrDirectoryView: React.FC = () => {
               </button>
               <button
                 type="submit"
-                className="px-5 py-2 rounded-xl bg-[#FF6B00] hover:bg-[#FF8A24] text-black text-xs font-extrabold cursor-pointer"
+                disabled={busy}
+                className="min-h-11 px-5 py-2 rounded-xl bg-[#FF6B00] hover:bg-[#FF8A24] text-black text-xs font-extrabold cursor-pointer disabled:opacity-50"
               >
-                บันทึกข้อมูลพนักงาน
+                {saving ? 'กำลังบันทึก…' : 'บันทึกข้อมูลพนักงาน'}
               </button>
             </div>
           </form>
-        </div>,
-        document.body
+        </Modal>
       )}
 
       {/* Staff Activity Log Modal */}
       {selectedStaffForLog && createPortal(
-        <div
+        <ModalBackdrop
           className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 animate-fade-in"
-          onClick={() => setSelectedStaffForLog(null)}
+          onDismiss={() => setSelectedStaffForLog(null)}
         >
           <div
             onClick={(e) => e.stopPropagation()}
@@ -506,7 +571,7 @@ export const HrDirectoryView: React.FC = () => {
               )}
             </div>
           </div>
-        </div>,
+        </ModalBackdrop>,
         document.body
       )}
     </div>

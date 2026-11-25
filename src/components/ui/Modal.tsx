@@ -1,3 +1,4 @@
+import { ModalBackdrop } from './ModalBackdrop';
 import React, { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
@@ -81,12 +82,12 @@ export const Modal: React.FC<ModalProps> = ({
     if (!open) return null;
 
     return createPortal(
-        <div
+        <ModalBackdrop
             className="fixed inset-0 z-[9999] flex items-center justify-center p-4 sm:p-6 bg-black/65 dark:bg-black/80 backdrop-blur-sm overflow-y-auto overscroll-contain animate-fade-in"
             role="dialog"
             aria-modal="true"
             aria-label={ariaLabel || (typeof title === 'string' ? title : undefined)}
-            onClick={closeOnBackdrop ? onClose : undefined}
+            onDismiss={closeOnBackdrop ? onClose : undefined}
         >
             <div
                 onClick={(e) => e.stopPropagation()}
@@ -140,7 +141,7 @@ export const Modal: React.FC<ModalProps> = ({
                     </div>
                 )}
             </div>
-        </div>,
+        </ModalBackdrop>,
         document.body
     );
 };

@@ -159,6 +159,9 @@ CREATE TABLE IF NOT EXISTS public.stock_pos (
 
 -- Migration: add GP analytics columns to existing deployments (safe to re-run)
 ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS salesperson TEXT;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS customer_type TEXT
+    CHECK (customer_type IN ('individual', 'organization'));
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS customer_contact_name TEXT;
 ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS extra_cost NUMERIC(12,2) DEFAULT 0;
 
 -- ==============================================================================
@@ -388,6 +391,7 @@ ALTER TABLE public.items ADD CONSTRAINT items_status_check CHECK (status IN (
 
 -- 3. Repair Tickets: Evidence Photos, Channel, Cost & Return tracking
 ALTER TABLE public.repair_tickets ADD COLUMN IF NOT EXISTS received_channel TEXT;
+ALTER TABLE public.repair_tickets ADD COLUMN IF NOT EXISTS service_sheet_withdrawn_at TIMESTAMPTZ;
 ALTER TABLE public.repair_tickets ADD COLUMN IF NOT EXISTS photo_urls JSONB DEFAULT '[]'::jsonb;
 ALTER TABLE public.repair_tickets ADD COLUMN IF NOT EXISTS repair_cost NUMERIC(12,2) DEFAULT 0;
 ALTER TABLE public.repair_tickets ADD COLUMN IF NOT EXISTS repaired_by TEXT;
@@ -448,8 +452,6 @@ ALTER TABLE public.projects ADD CONSTRAINT projects_status_check CHECK (
 );
 
 CREATE INDEX IF NOT EXISTS idx_projects_status ON public.projects(status);
-CREATE INDEX IF NOT EXISTS idx_users_username ON public.users(username);
-CREATE INDEX IF NOT EXISTS idx_users_role ON public.users(role);
 
 -- Migration: Government/Bidding payment term & Order deposit_amount (safe to re-run)
 ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS deposit_amount NUMERIC(12,2) DEFAULT 0;
@@ -474,6 +476,18 @@ CREATE TABLE IF NOT EXISTS public.users (
 
 ALTER TABLE public.projects DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.users DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.users
+    ADD COLUMN IF NOT EXISTS department TEXT,
+    ADD COLUMN IF NOT EXISTS phone TEXT,
+    ADD COLUMN IF NOT EXISTS email TEXT,
+    ADD COLUMN IF NOT EXISTS address TEXT,
+    ADD COLUMN IF NOT EXISTS badge TEXT,
+    ADD COLUMN IF NOT EXISTS avatar TEXT,
+    ADD COLUMN IF NOT EXISTS profile_details TEXT,
+    ADD COLUMN IF NOT EXISTS employment_start_date DATE,
+    ADD COLUMN IF NOT EXISTS work_positions TEXT[];
+CREATE INDEX IF NOT EXISTS idx_users_username ON public.users(username);
+CREATE INDEX IF NOT EXISTS idx_users_role ON public.users(role);
 
 DO $$
 BEGIN
