@@ -506,6 +506,200 @@ CREATE TRIGGER trg_projects_updated_at
 BEFORE UPDATE ON public.projects
 FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
+CREATE OR REPLACE FUNCTION public.release_project_stock(
+    project_id_input TEXT,
+    expected_updated_at TIMESTAMPTZ,
+    project_patch JSONB,
+    equipment_rows JSONB,
+    consumable_ids UUID[]
+)
+RETURNS TABLE(project JSONB, equipment JSONB)
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = ''
+AS $$
+DECLARE
+    saved_project public.projects;
+    saved_equipment JSONB;
+    deleted_count INTEGER;
+BEGIN
+    UPDATE public.projects p
+    SET status = project_patch->>'status',
+        items = project_patch->'items',
+        batches = project_patch->'batches',
+        site_visits = COALESCE(project_patch->'site_visits', p.site_visits),
+        activity_logs = COALESCE(project_patch->'activity_logs', p.activity_logs)
+    WHERE p.id = project_id_input
+      AND p.updated_at = expected_updated_at
+      AND p.status NOT IN ('completed', 'cancelled')
+    RETURNING p.* INTO saved_project;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'The project changed before stock could be released';
+    END IF;
+
+    WITH updated AS (
+        UPDATE public.items i
+        SET order_id = NULL,
+            project_id = project_id_input,
+            project_batch_no = patch.project_batch_no,
+            project_item_id = patch.project_item_id,
+            site_visit_id = patch.site_visit_id,
+            status = 'pending_prep',
+            prep_type = 'outbound_dispatch',
+            po_no = patch.po_no,
+            prep_note = patch.prep_note,
+            delivery_mode = 'project',
+            job_category = 'installation',
+            assigned_techs = patch.assigned_techs,
+            assigned_onsite_tech = patch.assigned_onsite_tech,
+            assigned_prep_tech = NULL,
+            prep_accepted_at = NULL,
+            logo_applied = patch.logo_applied,
+            warranty_years = patch.warranty_years,
+            notes = patch.notes,
+            activity_logs = patch.activity_logs
+        FROM jsonb_populate_recordset(NULL::public.items, equipment_rows) patch
+        WHERE i.id = patch.id
+          AND i.status IN ('in_stock', 'raw_stock')
+          AND i.updated_at = patch.updated_at
+        RETURNING i.*
+    )
+    SELECT COALESCE(jsonb_agg(to_jsonb(updated)), '[]'::jsonb)
+    INTO saved_equipment
+    FROM updated;
+
+    DELETE FROM public.items i
+    WHERE i.id = ANY(consumable_ids)
+      AND i.status IN ('in_stock', 'raw_stock');
+    GET DIAGNOSTICS deleted_count = ROW_COUNT;
+
+    IF jsonb_array_length(saved_equipment) <> jsonb_array_length(equipment_rows)
+       OR deleted_count <> cardinality(consumable_ids) THEN
+        RAISE EXCEPTION 'Warehouse stock changed before it could be released';
+    END IF;
+
+    RETURN QUERY SELECT to_jsonb(saved_project), saved_equipment;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.finish_project_stock_prep(
+    project_id_input TEXT,
+    expected_updated_at TIMESTAMPTZ,
+    project_patch JSONB,
+    item_patch JSONB
+)
+RETURNS TABLE(project JSONB, equipment JSONB)
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = ''
+AS $$
+DECLARE
+    saved_project public.projects;
+    saved_item public.items;
+BEGIN
+    UPDATE public.projects p
+    SET status = project_patch->>'status',
+        items = project_patch->'items',
+        site_visits = project_patch->'site_visits',
+        activity_logs = project_patch->'activity_logs'
+    WHERE p.id = project_id_input
+      AND p.updated_at = expected_updated_at
+      AND p.status NOT IN ('completed', 'cancelled')
+    RETURNING p.* INTO saved_project;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'The project changed before preparation could be saved';
+    END IF;
+
+    UPDATE public.items i
+    SET serial_number = patch.serial_number,
+        status = 'ready_for_dispatch',
+        logo_applied = TRUE,
+        void_date = patch.void_date,
+        prepped_at = patch.prepped_at,
+        warranty_applied_at = patch.warranty_applied_at,
+        warranty_void_date = patch.warranty_void_date,
+        warranty_expire_date = patch.warranty_expire_date,
+        assigned_techs = patch.assigned_techs,
+        assigned_onsite_tech = patch.assigned_onsite_tech,
+        assigned_at = patch.assigned_at,
+        dispatched_at = patch.dispatched_at,
+        notes = patch.notes,
+        activity_logs = patch.activity_logs
+    FROM jsonb_populate_record(NULL::public.items, item_patch) patch
+    WHERE i.id = patch.id
+      AND i.project_id = project_id_input
+      AND i.status = 'pending_prep'
+      AND i.updated_at = patch.updated_at
+    RETURNING i.* INTO saved_item;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'The equipment changed before preparation could be saved';
+    END IF;
+
+    RETURN QUERY SELECT to_jsonb(saved_project), to_jsonb(saved_item);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.finish_project_handover(
+    project_id_input TEXT,
+    expected_updated_at TIMESTAMPTZ,
+    project_patch JSONB
+)
+RETURNS TABLE(project JSONB, equipment JSONB)
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = ''
+AS $$
+DECLARE
+    saved_project public.projects;
+    saved_equipment JSONB;
+    handover_log JSONB;
+BEGIN
+    UPDATE public.projects p
+    SET status = 'completed',
+        completed_at = (project_patch->>'completed_at')::TIMESTAMPTZ,
+        handover_note = project_patch->>'handover_note',
+        handover_photo_urls = project_patch->'handover_photo_urls',
+        daily_logs = project_patch->'daily_logs',
+        activity_logs = project_patch->'activity_logs'
+    WHERE p.id = project_id_input
+      AND p.updated_at = expected_updated_at
+      AND p.status NOT IN ('completed', 'cancelled')
+      AND NOT EXISTS (
+          SELECT 1 FROM jsonb_array_elements(p.site_visits) visit
+          WHERE visit->>'visit_status' IS DISTINCT FROM 'completed'
+      )
+    RETURNING p.* INTO saved_project;
+
+    IF NOT FOUND OR EXISTS (
+        SELECT 1 FROM public.items i
+        WHERE i.project_id = project_id_input AND i.status IN ('pending_prep', 'raw_stock')
+    ) THEN
+        RAISE EXCEPTION 'The project has changed or still has unfinished site work';
+    END IF;
+
+    handover_log := saved_project.activity_logs->-1;
+    WITH updated AS (
+        UPDATE public.items i
+        SET status = 'delivered',
+            delivered_at = COALESCE(i.delivered_at, saved_project.completed_at),
+            photo_urls = CASE WHEN jsonb_array_length(saved_project.handover_photo_urls) > 0
+                THEN saved_project.handover_photo_urls ELSE i.photo_urls END,
+            activity_logs = i.activity_logs || jsonb_build_array(handover_log)
+        WHERE i.project_id = project_id_input
+          AND i.status IN ('ready_for_dispatch', 'assigned_onsite', 'delivered')
+        RETURNING i.*
+    )
+    SELECT COALESCE(jsonb_agg(to_jsonb(updated)), '[]'::jsonb)
+    INTO saved_equipment
+    FROM updated;
+
+    RETURN QUERY SELECT to_jsonb(saved_project), saved_equipment;
+END;
+$$;
+
 DROP TRIGGER IF EXISTS trg_users_updated_at ON public.users;
 CREATE TRIGGER trg_users_updated_at
 BEFORE UPDATE ON public.users

@@ -2,7 +2,7 @@ import { ModalBackdrop } from './ui/ModalBackdrop';
 import { PhoneInput, NumberInput, normalizePhone } from './ui/FormInputs';
 import React, { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useApp } from '../context/AppContext';
+import { canCompleteProjectHandover, canCompleteSiteVisit, useApp } from '../context/AppContext';
 import {
   MapPin, ShieldCheck, CheckCircle, Truck, Package,
   RotateCcw, Wrench, Printer,
@@ -209,6 +209,7 @@ export const OnsiteView: React.FC = () => {
   const [reqCatalogCategory, setReqCatalogCategory] = useState<'all' | ProductCategory>('all');
   const [handoverNoteInput, setHandoverNoteInput] = useState('');
   const [handoverPhotosInput, setHandoverPhotosInput] = useState<string[]>([]);
+  const [isSubmittingHandover, setIsSubmittingHandover] = useState(false);
   const [showMobileFilters, setShowMobileFilters] = useState(false);
 
   const activeProject = useMemo(
@@ -271,16 +272,27 @@ export const OnsiteView: React.FC = () => {
     setTimeout(() => setToast(''), 4500);
   };
 
-  const handleConfirmProjectHandover = (e: React.FormEvent) => {
+  const handleConfirmProjectHandover = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!activeProject) return;
-    completeProjectHandover(activeProject.id, {
-      note: handoverNoteInput.trim() || 'ติดตั้งระบบครบถ้วน ทดสอบสัญญาณผ่าน และส่งมอบลูกค้าเรียบร้อย 100%',
-      photo_urls: handoverPhotosInput
-    });
-    setToast(`ส่งมอบปิดโปรเจกต์ ${activeProject.id} (${activeProject.site_name}) สำเร็จเรียบร้อย!`);
-    setActiveProjectId(null);
-    setTimeout(() => setToast(''), 4500);
+    if (!activeProject || isSubmittingHandover) return;
+    setIsSubmittingHandover(true);
+    try {
+      const completed = await completeProjectHandover(activeProject.id, {
+        note: handoverNoteInput.trim() || 'ติดตั้งระบบครบถ้วน ทดสอบสัญญาณผ่าน และส่งมอบลูกค้าเรียบร้อย 100%',
+        photo_urls: handoverPhotosInput
+      });
+      if (!completed) {
+        setToast('กรุณาปิดรอบเข้าไซต์และเตรียมอุปกรณ์ให้ครบก่อนส่งมอบ');
+        return;
+      }
+      setToast(`ส่งมอบปิดโปรเจกต์ ${activeProject.id} (${activeProject.site_name}) เรียบร้อยแล้ว`);
+      setActiveProjectId(null);
+    } catch {
+      setToast('บันทึกการส่งมอบไม่สำเร็จ กรุณาตรวจสอบสถานะล่าสุดก่อนลองอีกครั้ง');
+    } finally {
+      setIsSubmittingHandover(false);
+      setTimeout(() => setToast(''), 4500);
+    }
   };
 
   // Modal State for Onsite Pickup / Service Sheet Form
@@ -399,16 +411,14 @@ export const OnsiteView: React.FC = () => {
   // 0. Active Multi-Day Projects (PRJ-2026-XXX) — ONLY visible to Onsite once Front-Desk has scheduled a Site Visit
   const assignedProjects = projects.filter(p => {
     if (p.status === 'completed') return false;
-    const hasScheduledVisit = (p.site_visits || []).some(
-      sv => sv.visit_status !== 'completed' && matchesDayFilter(sv.visit_date)
+    const visits = p.site_visits || [];
+    const awaitingHandover = visits.length > 0 && visits.every(visit => visit.visit_status === 'completed');
+    const matchesVisit = visits.some(visit =>
+      (visit.visit_status !== 'completed' || awaitingHandover)
+      && matchesDayFilter(visit.visit_date)
+      && (selectedTechNameFilter === 'all' || visit.assigned_techs.includes(selectedTechNameFilter))
     );
-    if (!hasScheduledVisit) return false;
-    if (selectedTechNameFilter !== 'all') {
-      const inVisitTechs = (p.site_visits || []).some(
-        sv => sv.visit_status !== 'completed' && matchesDayFilter(sv.visit_date) && sv.assigned_techs.includes(selectedTechNameFilter)
-      );
-      if (!inVisitTechs) return false;
-    }
+    if (!matchesVisit) return false;
     if (selectedRouteFilter !== 'all' && p.route_code && p.route_code !== selectedRouteFilter) {
       return false;
     }
@@ -1042,7 +1052,11 @@ export const OnsiteView: React.FC = () => {
                               <span className="px-2 py-0.5 rounded-md text-[10px] font-extrabold bg-[#FF6B00] text-black font-mono">
                                 นัดเข้าไซต์: {formatDateDMY(nextVisit.visit_date)} ({nextVisit.time_slot})
                               </span>
-                            ) : null;
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-md text-[10px] font-extrabold bg-emerald-500/20 text-emerald-300">
+                                รอส่งมอบโครงการ
+                              </span>
+                            );
                           })()}
                           <span className={`px-2 py-0.5 rounded-md text-[10px] font-extrabold border ${getProjectDeadlineRisk(prj.due_date, prj.status).badgeCls}`}>
                             {getProjectDeadlineRisk(prj.due_date, prj.status).label}
@@ -2453,19 +2467,31 @@ export const OnsiteView: React.FC = () => {
                             ทีมช่าง: <strong>{sv.assigned_techs.join(', ')}</strong>
                             {visitItems.length > 0 && ` • S/N ที่เบิก: ${visitItems.map(i => `${i.model_name} (${i.serial_number || 'รอ S/N'})`).join(', ')}`}
                           </div>
-                          {sv.visit_status !== 'completed' && (
+                          {sv.visit_status !== 'completed' && !canCompleteSiteVisit(sv) && (
+                            <div className="text-[11px] text-amber-700 dark:text-amber-300">
+                              {sv.prep_status === 'prepping' ? 'รอช่างเตรียมของให้ครบก่อนปิดรอบ' : 'รอจัดซื้อและสต๊อกปล่อยของก่อนปิดรอบ'}
+                            </div>
+                          )}
+                          {canCompleteSiteVisit(sv) && (
                             <div className="flex justify-end pt-1">
                               <button
                                 type="button"
-                                onClick={() => {
-                                  updateSiteVisit(activeProject.id, sv.id, {
-                                    visit_status: 'completed',
-                                    prep_status: sv.prep_status === 'ready_for_pickup' ? 'dispatched' : sv.prep_status,
-                                    progress_note: dailyNoteInput.trim() || `ปิดรอบเข้าไซต์ ${formatDateDMY(sv.visit_date)} เรียบร้อย`,
-                                    photo_urls: dailyPhotosInput
-                                  });
-                                  setToast(`ปิดรอบเข้าไซต์ ${sv.id} (${formatDateDMY(sv.visit_date)}) เรียบร้อยแล้ว`);
-                                  setTimeout(() => setToast(''), 4000);
+                                onClick={async () => {
+                                  try {
+                                    const completed = await updateSiteVisit(activeProject.id, sv.id, {
+                                      visit_status: 'completed',
+                                      prep_status: 'dispatched',
+                                      progress_note: dailyNoteInput.trim() || `ปิดรอบเข้าไซต์ ${formatDateDMY(sv.visit_date)} เรียบร้อย`,
+                                      photo_urls: dailyPhotosInput
+                                    });
+                                    setToast(completed
+                                      ? `ปิดรอบเข้าไซต์ ${sv.id} (${formatDateDMY(sv.visit_date)}) เรียบร้อยแล้ว`
+                                      : 'สถานะรอบเปลี่ยนแล้ว กรุณาตรวจสอบก่อนปิดรอบอีกครั้ง');
+                                  } catch {
+                                    setToast('บันทึกการปิดรอบไม่สำเร็จ กรุณาลองอีกครั้ง');
+                                  } finally {
+                                    setTimeout(() => setToast(''), 4000);
+                                  }
                                 }}
                                 className="px-3 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-[11px] cursor-pointer flex items-center gap-1"
                               >
@@ -2853,8 +2879,14 @@ export const OnsiteView: React.FC = () => {
                       className="w-full rounded-xl px-3 py-2 bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700"
                     />
                   </div>
+                  {!canCompleteProjectHandover(activeProject, items) && (
+                    <p className="text-[11px] text-amber-700 dark:text-amber-300">
+                      ปิดรอบเข้าไซต์และเตรียมอุปกรณ์ให้ครบก่อนส่งมอบโครงการ
+                    </p>
+                  )}
                   <button
                     type="submit"
+                    disabled={isSubmittingHandover || !canCompleteProjectHandover(activeProject, items)}
                     className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-700 to-teal-800 hover:from-emerald-800 text-white font-extrabold text-sm shadow-lg shadow-emerald-500/25 cursor-pointer flex items-center justify-center gap-2"
                   >
                     <CheckCircle className="w-4 h-4" />

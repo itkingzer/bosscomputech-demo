@@ -102,6 +102,8 @@ export const PurchasingStockView: React.FC = () => {
   const [actionProjectId, setActionProjectId] = useState<string | null>(null);
   const [batchReleaseQtyMap, setBatchReleaseQtyMap] = useState<Record<string, number>>({});
   const [batchReleaseNote, setBatchReleaseNote] = useState('');
+  const [isReleasingProjectStock, setIsReleasingProjectStock] = useState(false);
+  const releasingProjectStock = useRef(false);
   const actionProject = useMemo(
     () => (actionProjectId ? projects.find(p => p.id === actionProjectId) || null : null),
     [projects, actionProjectId]
@@ -302,6 +304,21 @@ export const PurchasingStockView: React.FC = () => {
     setIsStockPoModalOpen(true);
   };
 
+  const runProjectStockAction = async (action: () => Promise<string>) => {
+    if (releasingProjectStock.current) return;
+    releasingProjectStock.current = true;
+    setIsReleasingProjectStock(true);
+    try {
+      setToast(await action());
+    } catch {
+      setToast('บันทึกการเบิกไม่สำเร็จ กรุณาโหลดข้อมูลล่าสุดและตรวจสอบยอดก่อนลองอีกครั้ง');
+    } finally {
+      releasingProjectStock.current = false;
+      setIsReleasingProjectStock(false);
+      setTimeout(() => setToast(''), 5000);
+    }
+  };
+
   const handleReleaseProjectBatchSubmit = (project: Project) => {
     const itemsToRelease = (project.items || [])
       .map(it => ({
@@ -315,17 +332,17 @@ export const PurchasingStockView: React.FC = () => {
       return;
     }
 
-    const res = releaseProjectBatch(project.id, {
-      items: itemsToRelease,
-      note: batchReleaseNote.trim() || undefined
-    });
-    if (res) {
-      setToast(
-        `ปล่อยของ ${project.id} • งวดเบิกที่ ${res.batchNo} สำเร็จ! (อุปกรณ์หลักส่งช่าง Prep ${res.equipmentCount} ชิ้น | วัสดุสิ้นเปลืองส่งตรง Onsite ${res.consumableCount} รายการ)`
-      );
+    void runProjectStockAction(async () => {
+      const res = await releaseProjectBatch(project.id, {
+        items: itemsToRelease,
+        note: batchReleaseNote.trim() || undefined
+      });
+      if (!res) return 'ไม่มีสินค้าในคลังที่เบิกได้ กรุณาตรวจสอบรายการและยอดคงเหลือ';
+      const totalRequested = itemsToRelease.reduce((sum, item) => sum + item.qty, 0);
+      const released = res.equipmentCount + res.consumableCount;
       setActionProjectId(null);
-      setTimeout(() => setToast(''), 4500);
-    }
+      return `ปล่อยของ ${project.id} งวด ${res.batchNo} ได้ ${released}/${totalRequested} หน่วย (ส่ง Prep ${res.equipmentCount} | ส่ง Onsite ${res.consumableCount})`;
+    });
   };
 
   // จำนวนคงเหลือในสต๊อกต่อชื่อสินค้า (normalize ชื่อ) - ใช้แสดงในตัวเลือกแคตตาล็อก
@@ -1661,20 +1678,14 @@ export const PurchasingStockView: React.FC = () => {
                                 return (
                                   <button
                                     type="button"
-                                    onClick={() => {
-                                      const res = cutStockForSiteVisit(prj.id, visit.id);
-                                      if (res || !anyNeedsWarehouseCut) {
-                                        setToast(
-                                          anyNeedsWarehouseCut
-                                            ? `ตัดสต๊อกรอบเข้าไซต์ ${visit.id} (${prj.id}) เรียบร้อยแล้ว`
-                                            : `ยืนยันปล่อยรอบเข้าไซต์ ${visit.id} (${prj.id}) เรียบร้อยแล้ว`
-                                        );
-                                        setTimeout(() => setToast(''), 4000);
-                                      } else {
-                                        setToast('ของในคลังไม่ครบ กรุณาสั่ง PO ก่อนตัดสต๊อก');
-                                        setTimeout(() => setToast(''), 4000);
-                                      }
-                                    }}
+                                    disabled={isReleasingProjectStock}
+                                    onClick={() => void runProjectStockAction(async () => {
+                                      const res = await cutStockForSiteVisit(prj.id, visit.id);
+                                      if (!res) return 'ปล่อยรอบไม่ได้ กรุณาตรวจสอบสถานะรอบและยอดของในคลัง';
+                                      return anyNeedsWarehouseCut
+                                        ? `ตัดสต๊อกรอบเข้าไซต์ ${visit.id} (${prj.id}) เรียบร้อยแล้ว`
+                                        : `ยืนยันปล่อยรอบเข้าไซต์ ${visit.id} (${prj.id}) เรียบร้อยแล้ว`;
+                                    })}
                                     className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold text-[11px] cursor-pointer flex items-center gap-1 shadow-sm"
                                   >
                                     <CheckCircle className="w-3.5 h-3.5" />
@@ -3718,6 +3729,7 @@ export const PurchasingStockView: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => handleReleaseProjectBatchSubmit(actionProject)}
+                        disabled={isReleasingProjectStock}
                         className="flex-1 py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-700 to-teal-800 hover:from-emerald-800 text-white font-extrabold text-xs transition cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/25"
                       >
                         <Send className="w-4 h-4" />

@@ -69,6 +69,18 @@ function hasPendingSiteVisitPrep(
   });
 }
 
+export function canCompleteSiteVisit(visit: SiteVisit) {
+  return visit.visit_status !== 'completed'
+    && (visit.prep_status === 'ready_for_pickup' || visit.prep_status === 'dispatched');
+}
+
+export function canCompleteProjectHandover(project: Project, items: Item[]) {
+  return project.status !== 'completed'
+    && (project.site_visits || []).every(visit => visit.visit_status === 'completed')
+    && !items.some(item => item.project_id === project.id
+      && (item.status === 'pending_prep' || item.status === 'raw_stock'));
+}
+
 const recordPrepEvent = (
   entry: ActivityLog, kind: NonNullable<ActivityLog['prep_event']>['kind'], item: Item, serial = item.serial_number
 ) => {
@@ -178,7 +190,7 @@ interface AppContextType {
       note?: string;
       site_visit_id?: string;
     }
-  ) => { batchNo: number; equipmentCount: number; consumableCount: number } | null;
+  ) => Promise<{ batchNo: number; equipmentCount: number; consumableCount: number } | null>;
   removeProjectItem: (projectId: string, projectItemId: string) => void;
   scheduleSiteVisit: (
     projectId: string,
@@ -193,7 +205,7 @@ interface AppContextType {
   cutStockForSiteVisit: (
     projectId: string,
     visitId: string
-  ) => { batchNo: number; equipmentCount: number; consumableCount: number } | null;
+  ) => Promise<{ batchNo: number; equipmentCount: number; consumableCount: number } | null>;
   updateSiteVisit: (
     projectId: string,
     visitId: string,
@@ -207,7 +219,7 @@ interface AppContextType {
       time_slot?: string;
       visit_scope?: string;
     }
-  ) => void;
+  ) => Promise<boolean>;
   prepFinishProjectEquipment: (
     itemId: string,
     serialNumber: string,
@@ -245,7 +257,7 @@ interface AppContextType {
       note?: string;
       photo_urls?: string[];
     }
-  ) => void;
+  ) => Promise<boolean>;
 
   // Product Catalog CRUD (สินค้า/บริการที่ใช้ซ้ำได้)
   addProduct: (product: Omit<Product, 'id' | 'created_at' | 'updated_at'>) => void;
@@ -649,7 +661,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             if (data) setStockPOs(data as StockPO[]);
           } else if (table === 'projects') {
             const { data } = await client.from('projects').select('*').order('created_at', { ascending: false });
-            if (data && data.length > 0) setProjects(data as Project[]);
+            if (data) setProjects(data as Project[]);
           } else if (table === 'users') {
             const { data } = await client.from('users').select('*').order('created_at', { ascending: true });
             if (data && data.length > 0) {
@@ -879,7 +891,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       prev.map(p => {
         if (p.id !== projectId) return p;
         const updated = updater(p);
-        syncProjectRow(updated);
+        if (updated !== p) syncProjectRow(updated);
         return updated;
       })
     );
@@ -3789,16 +3801,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }));
   };
 
-  const releaseProjectBatch = (
+  const releaseProjectBatch = async (
     projectId: string,
     payload: {
       items: { project_item_id: string; qty: number }[];
       note?: string;
       site_visit_id?: string;
     }
-  ): { batchNo: number; equipmentCount: number; consumableCount: number } | null => {
+  ): Promise<{ batchNo: number; equipmentCount: number; consumableCount: number } | null> => {
     const targetProject = projects.find(p => p.id === projectId);
-    if (!targetProject) return null;
+    if (!targetProject || targetProject.status === 'completed') return null;
+    const visit = targetProject.site_visits?.find(v => v.id === payload.site_visit_id);
+    if (payload.site_visit_id && (!visit || visit.prep_status !== 'pending_stock' || visit.visit_status === 'completed')) return null;
 
     const requestedByItem = new Map<string, number>();
     for (const { project_item_id, qty } of payload.items) {
@@ -3879,46 +3893,42 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     });
 
-    if (batchLineRecords.length === 0) return null;
+    if (batchLineRecords.length === 0 && !visit) return null;
 
-    setItems(prev => {
-      return prev
-        .filter(it => !consumedConsumableIds.has(it.id))
-        .map(it => {
-          const match = consumedStockMap[it.id];
-          if (!match) return it;
-          const isFromReady = it.status === 'in_stock';
-          return {
-            ...it,
-            order_id: null,
-            project_id: projectId,
-            project_batch_no: nextBatchNo,
-            project_item_id: match.projectItem.id,
-            site_visit_id: payload.site_visit_id || null,
-            status: 'pending_prep' as const,
-            prep_type: 'outbound_dispatch' as const,
-            po_no: `${projectId} • งวดที่ ${nextBatchNo}`,
-            prep_note: `[โปรเจกต์] ${projectId} • งวดเบิกที่ ${nextBatchNo}${payload.note ? ` — ${payload.note}` : ''}`,
-            delivery_mode: 'project' as const,
-            job_category: 'installation' as const,
-            assigned_techs: targetProject.assigned_techs || [],
-            assigned_onsite_tech: targetProject.assigned_techs?.[0] || null,
-            assigned_prep_tech: null,
-            prep_accepted_at: null,
-            logo_applied: isFromReady ? true : Boolean(it.logo_applied),
-            warranty_years: match.projectItem.warranty_years ?? 1,
-            notes: `ตัดสต๊อกเข้าโปรเจกต์ ${projectId} (${targetProject.site_name}) งวดเบิกที่ ${nextBatchNo}`,
-            activity_logs: appendLog(
-              it.activity_logs,
-              makeLog(
-                `ปล่อยของงวดเบิกโปรเจกต์ (Batch #${nextBatchNo})`,
-                actorName,
-                actor?.role,
-                `โปรเจกต์ ${projectId} • งวดเบิกที่ ${nextBatchNo} ส่งให้ช่างเตรียม`
-              )
-            )
-          };
-        });
+    const updatedEquipment = items.flatMap<Item>(it => {
+      const match = consumedStockMap[it.id];
+      if (!match) return [];
+      const isFromReady = it.status === 'in_stock';
+      return {
+        ...it,
+        order_id: null,
+        project_id: projectId,
+        project_batch_no: nextBatchNo,
+        project_item_id: match.projectItem.id,
+        site_visit_id: payload.site_visit_id || null,
+        status: 'pending_prep' as const,
+        prep_type: 'outbound_dispatch' as const,
+        po_no: `${projectId} • งวดที่ ${nextBatchNo}`,
+        prep_note: `[โปรเจกต์] ${projectId} • งวดเบิกที่ ${nextBatchNo}${payload.note ? ` — ${payload.note}` : ''}`,
+        delivery_mode: 'project' as const,
+        job_category: 'installation' as const,
+        assigned_techs: visit?.assigned_techs ?? targetProject.assigned_techs ?? [],
+        assigned_onsite_tech: (visit?.assigned_techs ?? targetProject.assigned_techs)?.[0] || null,
+        assigned_prep_tech: null,
+        prep_accepted_at: null,
+        logo_applied: isFromReady ? true : Boolean(it.logo_applied),
+        warranty_years: match.projectItem.warranty_years ?? 1,
+        notes: `ตัดสต๊อกเข้าโปรเจกต์ ${projectId} (${targetProject.site_name}) งวดเบิกที่ ${nextBatchNo}`,
+        activity_logs: appendLog(
+          it.activity_logs,
+          makeLog(
+            `ปล่อยของงวดเบิกโปรเจกต์ (Batch #${nextBatchNo})`,
+            actorName,
+            actor?.role,
+            `โปรเจกต์ ${projectId} • งวดเบิกที่ ${nextBatchNo} ส่งให้ช่างเตรียม`
+          )
+        )
+      };
     });
 
     const batchLog = makeLog(
@@ -3928,40 +3938,63 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       `อุปกรณ์หลักส่งช่าง Prep ${equipmentCount} ชิ้น | วัสดุสิ้นเปลือง/ค่าแรงส่งตรง Onsite ${consumableCount} รายการ${payload.note ? ` | ${payload.note}` : ''}`
     );
 
-    updateProjectById(projectId, p => {
-      const nextItems = p.items.map(it => {
-        const rel = batchLineRecords.find(r => r.project_item_id === it.id);
-        if (!rel) return it;
-        const nextAlloc = it.qty_allocated + rel.qty;
-        const isDirectReady = rel.item_type === 'consumable';
-        const nextPrep = isDirectReady ? Math.min(it.qty_required, it.qty_prepared + rel.qty) : it.qty_prepared;
-        return {
-          ...it,
-          qty_allocated: nextAlloc,
-          qty_prepared: nextPrep
-        };
-      });
+    const p = targetProject;
+    const nextItems = p.items.map(it => {
+      const rel = batchLineRecords.find(r => r.project_item_id === it.id);
+      if (!rel) return it;
+      const nextAlloc = it.qty_allocated + rel.qty;
+      const isDirectReady = rel.item_type === 'consumable';
+      const nextPrep = isDirectReady ? Math.min(it.qty_required, it.qty_prepared + rel.qty) : it.qty_prepared;
       return {
-        ...p,
-        status: p.status === 'planning' ? 'in_progress' : p.status,
-        items: nextItems,
-        batches: [
-          ...(p.batches || []),
-          {
-            id: `batch-${Date.now()}`,
-            batch_no: nextBatchNo,
-            released_at: now,
-            released_by: actorName,
-            note: payload.note,
-            items: batchLineRecords
-          }
-        ],
-        updated_at: now,
-        activity_logs: appendLog(p.activity_logs, batchLog)
+        ...it,
+        qty_allocated: nextAlloc,
+        qty_prepared: nextPrep
       };
     });
+    const released = batchLineRecords.length > 0;
+    const nextPrepStatus = equipmentCount > 0 || (visit && hasPendingSiteVisitPrep(items, projectId, visit.items_to_take, visit.id))
+      ? 'prepping' as const
+      : 'ready_for_pickup' as const;
+    const nextProject: Project = {
+      ...p,
+      status: released && p.status === 'planning' ? 'in_progress' : p.status,
+      items: nextItems,
+      batches: released ? [
+        ...(p.batches || []),
+        {
+          id: newUuid(),
+          batch_no: nextBatchNo,
+          released_at: now,
+          released_by: actorName,
+          note: payload.note,
+          items: batchLineRecords
+        }
+      ] : p.batches,
+      site_visits: visit ? p.site_visits?.map(v => v.id === visit.id
+        ? { ...v, prep_status: nextPrepStatus, batch_no: released ? nextBatchNo : v.batch_no }
+        : v) : p.site_visits,
+      updated_at: now,
+      activity_logs: released ? appendLog(p.activity_logs, batchLog) : p.activity_logs
+    };
 
-    return { batchNo: nextBatchNo, equipmentCount, consumableCount };
+    let savedProject = nextProject;
+    let savedEquipment = updatedEquipment;
+    if (isSupabaseLive && supabaseClient) {
+      const { data, error } = await supabaseClient.rpc('release_project_stock', {
+        project_id_input: projectId,
+        expected_updated_at: targetProject.updated_at,
+        project_patch: nextProject,
+        equipment_rows: updatedEquipment,
+        consumable_ids: [...consumedConsumableIds]
+      }).single<{ project: Project; equipment: Item[] }>();
+      if (error || !data) throw error ?? new Error('Project stock update returned no data');
+      savedProject = data.project;
+      savedEquipment = data.equipment;
+    }
+    const equipmentById = new Map(savedEquipment.map(item => [item.id, item]));
+    setItems(prev => prev.filter(it => !consumedConsumableIds.has(it.id)).map(it => equipmentById.get(it.id) ?? it));
+    setProjects(prev => prev.map(project => project.id === projectId ? savedProject : project));
+    return { batchNo: released ? nextBatchNo : visit?.batch_no ?? 0, equipmentCount, consumableCount };
   };
 
   const prepFinishProjectEquipment = async (
@@ -3971,7 +4004,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     prepNote?: string
   ): Promise<boolean> => {
     const target = items.find(i => i.id === itemId);
-    if (!target || !target.project_id) return false;
+    if (!target?.project_id || target.status !== 'pending_prep') return false;
     const sn = (serialNumber || target.serial_number || '').trim();
     if (!sn) return false;
     const duplicate = items.find(
@@ -3983,6 +4016,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const actor = currentUserRef.current;
     const techName = actor?.name || target.assigned_prep_tech || 'ช่างเตรียมสินค้า';
     const parentProject = projects.find(p => p.id === target.project_id);
+    if (!parentProject || parentProject.status === 'completed') return false;
     const siteVisit = parentProject?.site_visits?.find(visit => visit.id === target.site_visit_id);
     const assignedTechs =
       siteVisit?.assigned_techs ?? (parentProject && parentProject.assigned_techs.length > 0
@@ -4014,24 +4048,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       notes: prepNote || `ติดวอยประกัน & ส่งเข้าไซต์งาน ${target.project_id} งวดที่ ${target.project_batch_no || 1}`,
       activity_logs: appendLog(target.activity_logs, itemLog)
     };
-    if (isSupabaseLive && supabaseClient) {
-      const { error } = await supabaseClient.from('items').update(changes).eq('id', itemId);
-      if (error) throw error;
-    }
-    setItems(prev => prev.map(item => item.id === itemId ? { ...item, ...changes } : item));
-
-    updateProjectById(target.project_id, p => {
+    const nextProject = (p: Project): Project => {
       const nextItems = p.items.map(pi => {
         const isMatched =
           (target.project_item_id && pi.id === target.project_item_id) ||
           (!target.project_item_id && pi.model_name === target.model_name && pi.item_type === 'equipment');
-        if (!isMatched) return pi;
+        if (!isMatched || pi.serial_numbers?.includes(sn)) return pi;
         const existingSns = pi.serial_numbers || [];
-        const nextSns = existingSns.includes(sn) ? existingSns : [...existingSns, sn];
         return {
           ...pi,
           qty_prepared: Math.min(pi.qty_required, pi.qty_prepared + 1),
-          serial_numbers: nextSns
+          serial_numbers: [...existingSns, sn]
         };
       });
       const nextSiteVisits = (p.site_visits || []).map(sv => {
@@ -4048,7 +4075,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updated_at: now,
         activity_logs: appendLog(p.activity_logs, itemLog)
       };
-    });
+    };
+
+    let savedItem: Item = { ...target, ...changes };
+    let savedProject = nextProject(parentProject);
+    if (isSupabaseLive && supabaseClient) {
+      const { data, error } = await supabaseClient.rpc('finish_project_stock_prep', {
+        project_id_input: parentProject.id,
+        expected_updated_at: parentProject.updated_at,
+        project_patch: savedProject,
+        item_patch: savedItem
+      }).single<{ project: Project; equipment: Item }>();
+      if (error || !data) throw error ?? new Error('Project preparation returned no data');
+      savedProject = data.project;
+      savedItem = data.equipment;
+    }
+    setItems(prev => prev.map(item => item.id === itemId ? savedItem : item));
+    setProjects(prev => prev.map(project => project.id === parentProject.id ? savedProject : project));
 
     return true;
   };
@@ -4142,10 +4185,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
   };
 
-  const cutStockForSiteVisit = (
+  const cutStockForSiteVisit = async (
     projectId: string,
     visitId: string
-  ): { batchNo: number; equipmentCount: number; consumableCount: number } | null => {
+  ): Promise<{ batchNo: number; equipmentCount: number; consumableCount: number } | null> => {
     const target = projects.find(p => p.id === projectId);
     if (!target) return null;
     const visit = (target.site_visits || []).find(v => v.id === visitId);
@@ -4178,48 +4221,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
     if (!hasAllStock) return null;
 
-    let result: { batchNo: number; equipmentCount: number; consumableCount: number } | null = null;
-    if (releaseItems.length > 0) {
-      result = releaseProjectBatch(projectId, {
-        items: releaseItems,
-        note: `ตัดสต๊อกรอบเข้าไซต์ ${visit.visit_date} (${visit.id})`,
-        site_visit_id: visit.id
-      });
-      if (!result) return null;
-    }
-
-    const hasEquipmentToPrep = Boolean(result?.equipmentCount)
-      || hasPendingSiteVisitPrep(items, projectId, visit.items_to_take, visit.id);
-
-    const now = new Date().toISOString();
-    const actor = currentUserRef.current;
-    const nextPrepStatus: SiteVisitPrepStatus = hasEquipmentToPrep ? 'prepping' : 'ready_for_pickup';
-    const cutVisitLog = makeLog(
-      `ตัดสต๊อกรอบเข้าไซต์ (${visit.id})`,
-      actor?.name || 'จัดซื้อ & สต๊อก',
-      actor?.role || 'accounting',
-      `เข้าไซต์วันที่ ${visit.visit_date} • สถานะเตรียม: ${nextPrepStatus === 'prepping' ? 'ส่งช่างเตรียมเทส/ติดวอย' : 'พร้อมเบิกหน้างาน'}`
-    );
-
-    updateProjectById(projectId, p => ({
-      ...p,
-      site_visits: (p.site_visits || []).map(v =>
-        v.id === visitId
-          ? {
-              ...v,
-              prep_status: nextPrepStatus,
-              batch_no: result?.batchNo ?? v.batch_no ?? null
-            }
-          : v
-      ),
-      updated_at: now,
-      activity_logs: appendLog(p.activity_logs, cutVisitLog)
-    }));
-
-    return result || { batchNo: visit.batch_no || 0, equipmentCount: 0, consumableCount: 0 };
+    return releaseProjectBatch(projectId, {
+      items: releaseItems,
+      note: `ตัดสต๊อกรอบเข้าไซต์ ${visit.visit_date} (${visit.id})`,
+      site_visit_id: visit.id
+    });
   };
 
-  const updateSiteVisit = (
+  const updateSiteVisit = async (
     projectId: string,
     visitId: string,
     patch: {
@@ -4233,43 +4242,58 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       visit_scope?: string;
     }
   ) => {
+    const p = projects.find(project => project.id === projectId);
+    const targetVisit = p?.site_visits?.find(v => v.id === visitId);
+    if (!p || !targetVisit || p.status === 'completed') return false;
+    if (patch.visit_status === 'completed' && !canCompleteSiteVisit(targetVisit)) return false;
     const now = new Date().toISOString();
     const actor = currentUserRef.current;
-    updateProjectById(projectId, p => {
-      const targetVisit = (p.site_visits || []).find(v => v.id === visitId);
-      const nextVisits = (p.site_visits || []).map(v => {
-        if (v.id !== visitId) return v;
-        return {
-          ...v,
-          ...patch,
-          completed_at: patch.visit_status === 'completed' ? (v.completed_at || now) : v.completed_at
-        };
-      });
-      const mergedTechs = patch.assigned_techs
-        ? Array.from(new Set([...(p.assigned_techs || []), ...patch.assigned_techs]))
-        : p.assigned_techs;
-      const logNote = [
-        targetVisit ? `รอบวันที่ ${patch.visit_date || targetVisit.visit_date}` : '',
-        patch.visit_status ? `สถานะงาน: ${patch.visit_status}` : '',
-        patch.prep_status ? `สถานะเตรียม: ${patch.prep_status}` : '',
-        patch.progress_note || ''
-      ]
-        .filter(Boolean)
-        .join(' | ');
-      const nextLog = makeLog(
-        patch.visit_status === 'completed' ? `ปิดรอบเข้าไซต์ (${visitId})` : `อัปเดตรอบเข้าไซต์ (${visitId})`,
-        actor?.name || 'ระบบ',
-        actor?.role,
-        logNote || undefined
-      );
+    const nextVisits = (p.site_visits || []).map(v => {
+      if (v.id !== visitId) return v;
       return {
-        ...p,
-        assigned_techs: mergedTechs,
-        site_visits: nextVisits,
-        updated_at: now,
-        activity_logs: appendLog(p.activity_logs, nextLog)
+        ...v,
+        ...patch,
+        completed_at: patch.visit_status === 'completed' ? (v.completed_at || now) : v.completed_at
       };
     });
+    const mergedTechs = patch.assigned_techs
+      ? Array.from(new Set([...(p.assigned_techs || []), ...patch.assigned_techs]))
+      : p.assigned_techs;
+    const logNote = [
+      `รอบวันที่ ${patch.visit_date || targetVisit.visit_date}`,
+      patch.visit_status ? `สถานะงาน: ${patch.visit_status}` : '',
+      patch.prep_status ? `สถานะเตรียม: ${patch.prep_status}` : '',
+      patch.progress_note || ''
+    ]
+      .filter(Boolean)
+      .join(' | ');
+    const nextLog = makeLog(
+      patch.visit_status === 'completed' ? `ปิดรอบเข้าไซต์ (${visitId})` : `อัปเดตรอบเข้าไซต์ (${visitId})`,
+      actor?.name || 'ระบบ',
+      actor?.role,
+      logNote || undefined
+    );
+    const changes = {
+      assigned_techs: mergedTechs,
+      site_visits: nextVisits,
+      updated_at: now,
+      activity_logs: appendLog(p.activity_logs, nextLog)
+    };
+    let savedProject: Project = { ...p, ...changes };
+    if (isSupabaseLive && supabaseClient) {
+      if (!p.updated_at) return false;
+      const { data, error } = await supabaseClient.from('projects')
+        .update(changes)
+        .eq('id', projectId)
+        .eq('updated_at', p.updated_at)
+        .select()
+        .maybeSingle<Project>();
+      if (error) throw error;
+      if (!data) return false;
+      savedProject = data;
+    }
+    setProjects(prev => prev.map(project => project.id === projectId ? savedProject : project));
+    return true;
   };
 
   const removeSiteVisit = (projectId: string, visitId: string) => {
@@ -4408,13 +4432,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }));
   };
 
-  const completeProjectHandover = (
+  const completeProjectHandover = async (
     projectId: string,
     payload: {
       note?: string;
       photo_urls?: string[];
     }
   ) => {
+    const project = projects.find(p => p.id === projectId);
+    if (!project || !canCompleteProjectHandover(project, items)) return false;
     const now = new Date().toISOString();
     const actor = currentUserRef.current;
     const techName = actor?.name || 'ช่าง Onsite';
@@ -4425,14 +4451,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       `${payload.note || 'ลูกค้าตรวจรับงานติดตั้งเรียบร้อย 100%'}${payload.photo_urls && payload.photo_urls.length > 0 ? ` | รูปส่งมอบ ${payload.photo_urls.length} รูป` : ''}`
     );
 
-    updateProjectById(projectId, p => ({
-      ...p,
+    let savedProject: Project = {
+      ...project,
       status: 'completed',
       completed_at: now,
       handover_note: payload.note?.trim() || 'ส่งมอบปิดโปรเจกต์เรียบร้อย',
       handover_photo_urls: payload.photo_urls || [],
       daily_logs: [
-        ...(p.daily_logs || []),
+        ...(project.daily_logs || []),
         {
           id: `dlog-handover-${Date.now()}`,
           date: now.split('T')[0],
@@ -4443,22 +4469,32 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
       ],
       updated_at: now,
-      activity_logs: appendLog(p.activity_logs, entry)
-    }));
+      activity_logs: appendLog(project.activity_logs, entry)
+    };
 
-    setItems(prev =>
-      prev.map(it =>
-        it.project_id === projectId && it.status !== 'pending_prep' && it.status !== 'raw_stock'
-          ? {
-              ...it,
-              status: 'delivered' as const,
-              delivered_at: it.delivered_at || now,
-              photo_urls: payload.photo_urls && payload.photo_urls.length > 0 ? payload.photo_urls : it.photo_urls,
-              activity_logs: appendLog(it.activity_logs, entry)
-            }
-          : it
-      )
-    );
+    let savedEquipment = items.filter(item => item.project_id === projectId
+      && (item.status === 'ready_for_dispatch' || item.status === 'assigned_onsite' || item.status === 'delivered')
+    ).map<Item>(it => ({
+      ...it,
+      status: 'delivered',
+      delivered_at: it.delivered_at || now,
+      photo_urls: payload.photo_urls?.length ? payload.photo_urls : it.photo_urls,
+      activity_logs: appendLog(it.activity_logs, entry)
+    }));
+    if (isSupabaseLive && supabaseClient) {
+      const { data, error } = await supabaseClient.rpc('finish_project_handover', {
+        project_id_input: projectId,
+        expected_updated_at: project.updated_at,
+        project_patch: savedProject
+      }).single<{ project: Project; equipment: Item[] }>();
+      if (error || !data) throw error ?? new Error('Project handover returned no data');
+      savedProject = data.project;
+      savedEquipment = data.equipment;
+    }
+    const equipmentById = new Map(savedEquipment.map(item => [item.id, item]));
+    setItems(prev => prev.map(item => equipmentById.get(item.id) ?? item));
+    setProjects(prev => prev.map(p => p.id === projectId ? savedProject : p));
+    return true;
   };
 
   return (
