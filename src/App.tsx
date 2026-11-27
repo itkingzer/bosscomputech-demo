@@ -41,6 +41,9 @@ export const App: React.FC = () => {
     theme, toggleTheme, printingRepairTicket
   } = useApp();
   const canResetDemo = !isSupabaseLive && !(supabaseUrl && supabaseKey);
+  const canConfigureSupabase = currentUser?.role === 'admin' && currentUser.is_superadmin === true;
+  const connectionStatus = canConfigureSupabase ? databaseStatusLabel : isSyncing ? 'กำลังตรวจสอบ' : isSupabaseLive ? 'ออนไลน์' : 'ออฟไลน์';
+  const ConnectionBadge = canConfigureSupabase ? 'button' : 'div';
 
   // Sync theme class & data-theme on <html> so all document.body Portal modals respond immediately
   useEffect(() => {
@@ -141,20 +144,12 @@ export const App: React.FC = () => {
 
   if (passwordRecovery) {
     return (
-      <>
         <PasswordRecoveryPage
-          onOpenSettings={() => setIsSettingsOpen(true)}
           onContinue={() => {
             closePasswordRecovery();
             setShowStaffLogin(true);
           }}
         />
-        {isSettingsOpen && (
-          <Suspense fallback={null}>
-            <SettingsModal isOpen onClose={() => setIsSettingsOpen(false)} />
-          </Suspense>
-        )}
-      </>
     );
   }
 
@@ -162,14 +157,7 @@ export const App: React.FC = () => {
   if (!currentUser) {
     if (showStaffLogin) {
       return (
-        <>
-          <LoginPage onBackToLanding={() => setShowStaffLogin(false)} onOpenSettings={() => setIsSettingsOpen(true)} />
-          {isSettingsOpen && (
-            <Suspense fallback={null}>
-              <SettingsModal isOpen onClose={() => setIsSettingsOpen(false)} />
-            </Suspense>
-          )}
-        </>
+        <LoginPage onBackToLanding={() => setShowStaffLogin(false)} />
       );
     }
     return (
@@ -397,18 +385,18 @@ export const App: React.FC = () => {
           <div className="p-3 border-t border-white/[0.06] space-y-2">
 
             {/* Live connection badge */}
-            <button
-              onClick={() => setIsSettingsOpen(true)}
-              className="w-full flex items-center justify-between px-3 py-2 rounded-xl bg-white/[0.03] hover:bg-white/[0.06] border border-white/[0.06] text-xs transition-all duration-150 active:scale-[0.97] cursor-pointer"
+            <ConnectionBadge
+              onClick={canConfigureSupabase ? () => setIsSettingsOpen(true) : undefined}
+              className={`w-full flex items-center justify-between px-3 py-2 rounded-xl bg-white/[0.03] border border-white/[0.06] text-xs ${canConfigureSupabase ? 'cursor-pointer hover:bg-white/[0.06]' : ''}`}
             >
               <div className="flex items-center gap-2">
                 <span className={`w-2 h-2 rounded-full ${isSupabaseLive ? 'bg-emerald-400' : 'bg-amber-400'} animate-pulse`}></span>
                 <span role="status" className={`text-[11px] font-medium ${isSupabaseLive ? 'text-emerald-400' : 'text-amber-400'}`}>
-                  {databaseStatusLabel}
+                  {connectionStatus}
                 </span>
               </div>
-              <Settings className={`w-3.5 h-3.5 text-slate-400 ${isSyncing ? 'animate-spin' : ''}`} />
-            </button>
+              {canConfigureSupabase && <Settings className={`w-3.5 h-3.5 text-slate-400 ${isSyncing ? 'animate-spin' : ''}`} />}
+            </ConnectionBadge>
 
             {/* Clear Demo Keep Stock (mobile drawer action) */}
             <button
@@ -501,17 +489,17 @@ export const App: React.FC = () => {
 
           <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
             {/* Demo / Live status badge (mobile / tablet only) */}
-            <button
-              onClick={() => setIsSettingsOpen(true)}
-              aria-label={`สถานะฐานข้อมูล ${databaseStatusLabel}`}
-              className={`lg:hidden flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-[10px] font-bold transition-all duration-150 active:scale-[0.97] cursor-pointer min-h-[36px] ${isSupabaseLive
+            <ConnectionBadge
+              onClick={canConfigureSupabase ? () => setIsSettingsOpen(true) : undefined}
+              aria-label={canConfigureSupabase ? 'ตั้งค่าการเชื่อมต่อ Supabase' : undefined}
+              className={`lg:hidden flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-[10px] font-bold min-h-[36px] ${canConfigureSupabase ? 'cursor-pointer' : ''} ${isSupabaseLive
                 ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
                 : 'bg-amber-500/15 text-amber-400 border-amber-500/30'
                 }`}
             >
               <span className={`w-1.5 h-1.5 rounded-full animate-pulse ${isSupabaseLive ? 'bg-emerald-400' : 'bg-amber-400'}`}></span>
-              <span role="status">{databaseStatusLabel}</span>
-            </button>
+              <span role="status">{connectionStatus}</span>
+            </ConnectionBadge>
             {/* Theme Toggle Button (Liquid Glass Dark / Light) */}
             <button
               onClick={toggleTheme}
@@ -550,14 +538,14 @@ export const App: React.FC = () => {
               </button>
             )}
 
-            <button
+            {canConfigureSupabase && <button
               onClick={() => setIsSettingsOpen(true)}
               title="ตั้งค่าระบบ"
               aria-label="ตั้งค่าระบบ"
               className="hidden lg:flex p-2 rounded-xl liquid-glass-card text-slate-400 hover:text-[#FF6B00] transition cursor-pointer min-w-[40px] min-h-[40px] items-center justify-center"
             >
               <Settings className="w-4 h-4" />
-            </button>
+            </button>}
           </div>
         </header>
 
@@ -609,7 +597,7 @@ export const App: React.FC = () => {
 
       {/* Settings Modal */}
       {isProfileOpen && <MyStaffProfile key={currentUser.id} user={currentUser} onClose={() => setIsProfileOpen(false)} />}
-      {isSettingsOpen && (
+      {canConfigureSupabase && isSettingsOpen && (
         <Suspense fallback={null}>
           <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
         </Suspense>

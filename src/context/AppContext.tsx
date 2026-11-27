@@ -3814,6 +3814,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const updateSupabaseConfig = (url: string, key: string) => {
+    if (currentUser?.role !== 'admin' || currentUser.is_superadmin !== true) return;
     if (url === supabaseUrl && key === supabaseKey) {
       if (authUser) setAuthUser({ ...authUser });
       return;
@@ -3829,7 +3830,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const disconnectSupabase = () => {
-    if (!usesSupabaseAuth) return;
+    if (!usesSupabaseAuth || currentUser?.role !== 'admin' || currentUser.is_superadmin !== true) return;
     updateSupabaseConfig('', '');
     setUsers(safeLoadJson('boss_users', INITIAL_USERS));
     setOrders(safeLoadJson('boss_orders', INITIAL_ORDERS));

@@ -5,7 +5,7 @@ import { UserRole } from '../types';
 import companyLogo from '../assets/BossCom.jpg';
 import loginBanner from '../assets/BossComBanner.png';
 
-export const LoginPage: React.FC<{ onBackToLanding?: () => void; onOpenSettings: () => void }> = ({ onBackToLanding, onOpenSettings }) => {
+export const LoginPage: React.FC<{ onBackToLanding?: () => void }> = ({ onBackToLanding }) => {
   const { login, requestPasswordReset, users, theme, toggleTheme, usesSupabaseAuth, isSyncing, databaseError, databaseStatusLabel } = useApp();
   const [selectedUsername, setSelectedUsername] = useState('admin');
   const [customUsername, setCustomUsername] = useState('');
@@ -156,9 +156,9 @@ export const LoginPage: React.FC<{ onBackToLanding?: () => void; onOpenSettings:
             </span>
           </div>
 
-          <button type="button" onClick={onOpenSettings} className="mb-4 self-start rounded-lg px-2 py-2 text-xs font-medium text-slate-700 dark:text-slate-200 hover:underline">
-            ตั้งค่าฐานข้อมูล · {databaseStatusLabel}
-          </button>
+          <p role="status" className="mb-4 px-2 py-2 text-xs font-medium text-slate-700 dark:text-slate-200">
+            {isSyncing ? 'กำลังตรวจสอบสถานะ' : databaseStatusLabel === 'Connected' ? 'ออนไลน์' : databaseStatusLabel === 'Sign in to connect' ? 'เข้าสู่ระบบเพื่อตรวจสอบสถานะ' : 'ออฟไลน์'}
+          </p>
 
           {(error || databaseError) && (
             <div role="alert" className="mb-4 p-3 rounded-2xl bg-rose-500/15 border border-rose-500/30 text-rose-800 dark:text-rose-300 text-xs flex items-center gap-2">

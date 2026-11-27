@@ -1,8 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { useApp } from '../context/AppContext';
 
-export function PasswordRecoveryPage({ onOpenSettings, onContinue }: {
-  onOpenSettings: () => void;
+export function PasswordRecoveryPage({ onContinue }: {
   onContinue: () => void;
 }) {
   const {
@@ -59,8 +58,7 @@ export function PasswordRecoveryPage({ onOpenSettings, onContinue }: {
         {passwordRecovery === 'checking' && (
           supabaseUrl && supabaseKey
             ? <p role="status">กำลังตรวจสอบลิงก์…</p>
-            : <><p>กรอก Supabase URL และ Publishable Key ของโปรเจกต์ที่ส่งอีเมลนี้ก่อน</p>
-                <button className={buttonClass} onClick={onOpenSettings}>ตั้งค่าฐานข้อมูล</button></>
+            : <p role="alert">ระบบออฟไลน์ กรุณาติดต่อผู้ดูแลระบบ</p>
         )}
         {passwordRecovery === 'invalid' && (
           <p role="alert">ลิงก์ตั้งรหัสผ่านใช้ไม่ได้หรือหมดอายุ กรุณาขอลิงก์ใหม่จากผู้ดูแลระบบ</p>
