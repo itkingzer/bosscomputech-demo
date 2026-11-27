@@ -85,7 +85,7 @@ function formatRemainingYearsDays(days: number | null): string {
 }
 
 export const CustomerLandingPage: React.FC<CustomerLandingPageProps> = ({ onOpenStaffLogin }) => {
-  const { repairTickets, lookupWarrantyBySerial, theme, toggleTheme } = useApp();
+  const { repairTickets, lookupWarrantyBySerial, theme, toggleTheme, usesSupabaseAuth } = useApp();
 
   const [mode, setMode] = useState<SearchMode>('repair');
   const [query, setQuery] = useState('');
@@ -122,7 +122,7 @@ export const CustomerLandingPage: React.FC<CustomerLandingPageProps> = ({ onOpen
   // Public front-desk repair lookup (NO internal logs, NO costs, NO tech names, NO supplier/RMA tracking)
   const matchedRepair = useMemo(() => {
     const q = submittedQuery.trim().toLowerCase();
-    if (mode !== 'repair' || !q) return null;
+    if (usesSupabaseAuth || mode !== 'repair' || !q) return null;
     return (
       repairTickets.find(
         (t) =>
@@ -131,15 +131,15 @@ export const CustomerLandingPage: React.FC<CustomerLandingPageProps> = ({ onOpen
           (t.replacement_sn || '').trim().toLowerCase() === q
       ) || null
     );
-  }, [mode, submittedQuery, repairTickets]);
+  }, [mode, submittedQuery, repairTickets, usesSupabaseAuth]);
 
   // Public warranty lookup by S/N (NO cost, NO GP, NO internal logs)
   const matchedWarranty = useMemo(() => {
     const q = submittedQuery.trim();
-    if (mode !== 'warranty' || !q) return null;
+    if (usesSupabaseAuth || mode !== 'warranty' || !q) return null;
     const res = lookupWarrantyBySerial(q);
     return res.found ? res : null;
-  }, [mode, submittedQuery, lookupWarrantyBySerial]);
+  }, [mode, submittedQuery, lookupWarrantyBySerial, usesSupabaseAuth]);
 
   const sampleTicketNo = repairTickets[0]?.ticket_no || 'REP-2569-101';
 
@@ -258,6 +258,11 @@ export const CustomerLandingPage: React.FC<CustomerLandingPageProps> = ({ onOpen
             </div>
 
             {/* Search Form */}
+            {usesSupabaseAuth ? (
+              <p className="text-sm text-slate-600 dark:text-slate-300">
+                กรุณาติดต่อเจ้าหน้าที่เพื่อตรวจสอบสถานะงานซ่อมหรือการรับประกัน
+              </p>
+            ) : (
             <form onSubmit={handleSubmit} className="space-y-3">
               <label
                 htmlFor="customer-lookup-input"
@@ -321,9 +326,10 @@ export const CustomerLandingPage: React.FC<CustomerLandingPageProps> = ({ onOpen
                 </button>
               </div>
             </form>
+            )}
 
             {/* RESULT AREA: REPAIR TRACKING (Public Front-Desk Data Only) */}
-            {submittedQuery && mode === 'repair' && (
+            {!usesSupabaseAuth && submittedQuery && mode === 'repair' && (
               <div className="pt-2 border-t border-slate-200 dark:border-white/10 animate-fade-in">
                 {!matchedRepair ? (
                   <div className="p-5 rounded-2xl bg-slate-50 dark:bg-white/[0.03] border border-slate-200 dark:border-white/10 text-center space-y-1.5">
@@ -450,7 +456,7 @@ export const CustomerLandingPage: React.FC<CustomerLandingPageProps> = ({ onOpen
             )}
 
             {/* RESULT AREA: WARRANTY CHECK BY S/N (Public Info Only) */}
-            {submittedQuery && mode === 'warranty' && (
+            {!usesSupabaseAuth && submittedQuery && mode === 'warranty' && (
               <div className="pt-2 border-t border-slate-200 dark:border-white/10 animate-fade-in">
                 {!matchedWarranty ? (
                   <div className="p-5 rounded-2xl bg-slate-50 dark:bg-white/[0.03] border border-slate-200 dark:border-white/10 text-center space-y-1.5">

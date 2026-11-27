@@ -6,7 +6,7 @@ import { Database, X } from 'lucide-react';
 
 export const SettingsModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpen, onClose }) => {
   const {
-    isSupabaseLive, isSyncing, databaseStatusLabel, supabaseUrl, supabaseKey,
+    isSupabaseLive, isSyncing, databaseStatusLabel, databaseError, supabaseUrl, supabaseKey,
     updateSupabaseConfig, disconnectSupabase
   } = useApp();
 
@@ -110,13 +110,13 @@ export const SettingsModal: React.FC<{ isOpen: boolean; onClose: () => void }> =
             <p className="text-slate-900 dark:text-slate-100 font-semibold mb-1">💡 โหมดการทำงาน:</p>
             <ul className="list-disc pl-4 space-y-1">
               <li>หากเว้นว่างไว้ ระบบจะทำงานใน <strong>Demo Mode</strong> บันทึกข้อมูลลงในเบราว์เซอร์</li>
-              <li>หากใส่ URL & Key ระบบจะเชื่อมต่อไปยังตาราง <code className="text-[#E65A00] dark:text-[#FF6B00]">orders</code>, <code className="text-[#E65A00] dark:text-[#FF6B00]">items</code>, <code className="text-[#E65A00] dark:text-[#FF6B00]">repair_tickets</code> ใน Supabase ทันที</li>
+              <li>เมื่อใส่ URL และ Publishable Key แล้ว ให้เข้าสู่ระบบด้วยบัญชีแอดมิน Supabase เพื่อโหลดข้อมูล</li>
             </ul>
           </div>
 
-          {databaseStatusLabel === 'Connection failed' && (
+          {databaseError && (
             <p role="alert" className="text-rose-700 dark:text-rose-400">
-              ตรวจสอบ URL, Publishable Key และสิทธิ์อ่านตาราง orders แล้วลองอีกครั้ง
+              {databaseError}
             </p>
           )}
 
@@ -126,7 +126,7 @@ export const SettingsModal: React.FC<{ isOpen: boolean; onClose: () => void }> =
               disabled={isSyncing}
               className="flex-1 px-5 py-3 bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] hover:to-[#FF6B00] hover:brightness-105 text-black font-extrabold rounded-2xl text-xs transition-all duration-150 active:scale-[0.97] cursor-pointer disabled:cursor-wait disabled:opacity-60 shadow-lg shadow-[#FF6B00]/25 border border-white/20"
             >
-              {isSyncing ? 'กำลังตรวจสอบฐานข้อมูล…' : 'บันทึกและตรวจสอบ'}
+              {isSyncing ? 'กำลังโหลดข้อมูล…' : 'บันทึกการตั้งค่า'}
             </button>
             {(supabaseUrl || supabaseKey) && (
               <button

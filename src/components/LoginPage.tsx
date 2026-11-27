@@ -5,21 +5,27 @@ import { UserRole } from '../types';
 import companyLogo from '../assets/BossCom.jpg';
 import loginBanner from '../assets/BossComBanner.png';
 
-export const LoginPage: React.FC<{ onBackToLanding?: () => void }> = ({ onBackToLanding }) => {
-  const { login, users, theme, toggleTheme } = useApp();
+export const LoginPage: React.FC<{ onBackToLanding?: () => void; onOpenSettings: () => void }> = ({ onBackToLanding, onOpenSettings }) => {
+  const { login, users, theme, toggleTheme, usesSupabaseAuth, isSyncing, databaseError, databaseStatusLabel } = useApp();
   const [selectedUsername, setSelectedUsername] = useState('admin');
   const [customUsername, setCustomUsername] = useState('');
-  const [password, setPassword] = useState('password123');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    const targetUser = customUsername ? customUsername.trim() : selectedUsername;
-    const success = login(targetUser);
-    if (!success) {
-      setError('ไม่พบชื่อผู้ใช้นี้ในระบบ กรุณาเลือกจากรายชื่อหรือติดต่อแอดมิน');
-    } else {
-      setError('');
+    setError('');
+    setSubmitting(true);
+    try {
+      const username = usesSupabaseAuth ? email.trim() : customUsername.trim() || selectedUsername;
+      const failure = await login(username, password);
+      if (failure) setError(usesSupabaseAuth ? failure : 'ไม่พบชื่อผู้ใช้นี้ในระบบ');
+    } catch {
+      setError('เข้าสู่ระบบไม่สำเร็จ กรุณาลองอีกครั้ง');
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -133,14 +139,28 @@ export const LoginPage: React.FC<{ onBackToLanding?: () => void }> = ({ onBackTo
             </span>
           </div>
 
-          {error && (
-            <div className="mb-4 p-3 rounded-2xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2">
+          <button type="button" onClick={onOpenSettings} className="mb-4 self-start rounded-lg px-2 py-2 text-xs font-medium text-slate-700 dark:text-slate-200 hover:underline">
+            ตั้งค่าฐานข้อมูล · {databaseStatusLabel}
+          </button>
+
+          {(error || databaseError) && (
+            <div role="alert" className="mb-4 p-3 rounded-2xl bg-rose-500/15 border border-rose-500/30 text-rose-800 dark:text-rose-300 text-xs flex items-center gap-2">
               <ShieldCheck className="w-4 h-4 flex-shrink-0 text-rose-400" />
-              <span>{error}</span>
+              <span>{error || databaseError}</span>
             </div>
           )}
 
           <form onSubmit={handleLogin} className="space-y-4">
+            {usesSupabaseAuth ? (
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                อีเมลบัญชี Supabase
+                <input type="email" autoComplete="username" required value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  className="mt-1 w-full liquid-glass-input rounded-2xl px-3.5 py-2.5 text-sm"
+                />
+              </label>
+            ) : (
+              <>
             {/* Quick Role Selection Cards */}
             <div>
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-2">
@@ -195,25 +215,33 @@ export const LoginPage: React.FC<{ onBackToLanding?: () => void }> = ({ onBackTo
                 <User className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
               </div>
             </div>
+              </>
+            )}
 
             {/* Password Input */}
+            {usesSupabaseAuth && (
             <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                รหัสผ่าน (Demo: password123):
+              <label htmlFor="staff-password" className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                รหัสผ่าน
               </label>
               <input
                 type="password"
+                id="staff-password"
+                autoComplete="current-password"
+                required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full liquid-glass-input rounded-2xl px-3.5 py-2.5 text-sm text-slate-900 dark:text-white focus:outline-none transition"
               />
             </div>
+            )}
 
             <button
               type="submit"
+              disabled={submitting || isSyncing}
               className="w-full py-3 px-4 bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] hover:to-[#FF6B00] active:scale-[0.99] text-black font-extrabold rounded-2xl text-sm transition-all duration-200 cursor-pointer flex items-center justify-center gap-2 shadow-xl shadow-[#FF6B00]/30 border border-white/20"
             >
-              <span>เข้าสู่ระบบ Boss Computech</span>
+              <span>{submitting || isSyncing ? 'กำลังเข้าสู่ระบบ…' : 'เข้าสู่ระบบ Boss Computech'}</span>
               <ArrowRight className="w-4 h-4" />
             </button>
           </form>

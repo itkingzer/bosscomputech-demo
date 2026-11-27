@@ -279,12 +279,12 @@ CREATE INDEX IF NOT EXISTS idx_items_stock_po_id ON public.items(stock_po_id);
 CREATE INDEX IF NOT EXISTS idx_stock_pos_status ON public.stock_pos(status);
 CREATE INDEX IF NOT EXISTS idx_stock_pos_po_number ON public.stock_pos(po_number);
 
--- Disable Row Level Security (RLS) for internal operations system deployment
-ALTER TABLE public.orders DISABLE ROW LEVEL SECURITY;
-ALTER TABLE public.items DISABLE ROW LEVEL SECURITY;
-ALTER TABLE public.repair_tickets DISABLE ROW LEVEL SECURITY;
-ALTER TABLE public.products DISABLE ROW LEVEL SECURITY;
-ALTER TABLE public.stock_pos DISABLE ROW LEVEL SECURITY;
+-- Keep data private until supabase-admin-access.sql configures access.
+ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.repair_tickets ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.products ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.stock_pos ENABLE ROW LEVEL SECURITY;
 
 -- Enable Realtime publication on all three core operational tables
 -- (wrapped in DO blocks so re-running this script does not error if already added)
@@ -482,8 +482,8 @@ CREATE TABLE IF NOT EXISTS public.users (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-ALTER TABLE public.projects DISABLE ROW LEVEL SECURITY;
-ALTER TABLE public.users DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.projects ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.users
     ADD COLUMN IF NOT EXISTS department TEXT,
     ADD COLUMN IF NOT EXISTS phone TEXT,
@@ -769,8 +769,8 @@ CREATE INDEX IF NOT EXISTS idx_contract_items_contract_id ON public.contract_ite
 CREATE INDEX IF NOT EXISTS idx_orders_contract_period ON public.orders(contract_id, billing_period);
 CREATE INDEX IF NOT EXISTS idx_orders_billing_type ON public.orders(billing_type);
 
-ALTER TABLE public.contracts DISABLE ROW LEVEL SECURITY;
-ALTER TABLE public.contract_items DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.contracts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.contract_items ENABLE ROW LEVEL SECURITY;
 
 DO $$
 BEGIN

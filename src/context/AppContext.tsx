@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { UserAccount, Order, Item, RepairTicket, RepairStatus, RepairLifecycleStatus, ServiceType, RouteCode, JobCategory, Product, StockPO, ProductCategory, getRouteByDistrict, ActivityLog, computeWarrantyExpire, REPAIR_LIFECYCLE_META, ReceivedChannel, ROUTE_DEFINITIONS, WarrantyLookupResult, lookupWarrantyBySerial as lookupWarrantyHelper, Project, ProjectItem, ProjectItemType, ProjectMaterialRequestStatus, Contract, ContractItem, BILLING_BADGE_META, getOrderBillingBadgeKey, SiteVisit, SiteVisitItemRef, SiteVisitPrepStatus, SiteVisitStatus } from '../types';
 import { INITIAL_USERS, INITIAL_ORDERS, INITIAL_ITEMS, INITIAL_REPAIR_TICKETS, INITIAL_PRODUCTS, INITIAL_STOCK_POS, INITIAL_PROJECTS, INITIAL_CONTRACTS } from '../data/initialData';
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient, type User } from '@supabase/supabase-js';
 import { newUuid, isSerialDuplicate, isNonPrepCableOrConsumable, isServiceItem, canChangeDraftOrder } from '../utils/domainHelpers';
 import type { OrderDraftEdit, OrderHeaderEdit } from '../types';
 
@@ -126,7 +126,9 @@ interface AppContextType {
   serviceSheetHistory: RepairTicket[];
   manageServiceSheet: (ticketId: string, action: ServiceSheetAction) => Promise<void>;
   currentUser: UserAccount | null;
-  login: (username: string, role?: string) => boolean;
+  login: (username: string, password: string) => Promise<string | null>;
+  usesSupabaseAuth: boolean;
+  databaseError: string | null;
   logout: () => void;
   users: UserAccount[];
   addUser: (user: Omit<UserAccount, 'id'>) => Promise<boolean>;
@@ -489,9 +491,24 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  // A saved empty value explicitly selects Demo Local, even on a configured deployment.
+  const [supabaseUrl, setSupabaseUrl] = useState(
+    () => (localStorage.getItem('boss_sb_url') ?? import.meta.env.VITE_SUPABASE_URL ?? '').trim()
+  );
+  const [supabaseKey, setSupabaseKey] = useState(
+    () => (localStorage.getItem('boss_sb_key') ?? import.meta.env.VITE_SUPABASE_ANON_KEY ?? '').trim()
+  );
+  const [isSupabaseLive, setIsSupabaseLive] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const usesSupabaseAuth = Boolean(supabaseUrl || supabaseKey);
+  const [authClient, setAuthClient] = useState<SupabaseClient | null>(null);
+  const [authUser, setAuthUser] = useState<User | null>(null);
+  const [databaseError, setDatabaseError] = useState<string | null>(null);
+  const [supabaseClient, setSupabaseClient] = useState<SupabaseClient | null>(null);
+
   // Auth state
   const [currentUser, setCurrentUser] = useState<UserAccount | null>(() =>
-    safeLoadJson<UserAccount | null>('boss_current_user', null)
+    usesSupabaseAuth ? null : safeLoadJson<UserAccount | null>('boss_current_user', null)
   );
 
   // Ref เก็บผู้ใช้ปัจจุบัน เพื่อให้ async action บันทึกชื่อผู้กระทำได้ถูกต้องเสมอ
@@ -502,53 +519,41 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Users state
   const [users, setUsers] = useState<UserAccount[]>(() =>
-    safeLoadJson<UserAccount[]>('boss_users', INITIAL_USERS)
+    usesSupabaseAuth ? [] : safeLoadJson<UserAccount[]>('boss_users', INITIAL_USERS)
   );
 
   // Data states
   const [orders, setOrders] = useState<Order[]>(() =>
-    safeLoadJson<Order[]>('boss_orders', INITIAL_ORDERS)
+    usesSupabaseAuth ? [] : safeLoadJson<Order[]>('boss_orders', INITIAL_ORDERS)
   );
 
   const [items, setItems] = useState<Item[]>(() =>
-    safeLoadJson<Item[]>('boss_items', INITIAL_ITEMS)
+    usesSupabaseAuth ? [] : safeLoadJson<Item[]>('boss_items', INITIAL_ITEMS)
   );
 
   const [repairTickets, setRepairTickets] = useState<RepairTicket[]>(() =>
-    safeLoadJson<RepairTicket[]>('boss_repair_tickets', INITIAL_REPAIR_TICKETS)
+    usesSupabaseAuth ? [] : safeLoadJson<RepairTicket[]>('boss_repair_tickets', INITIAL_REPAIR_TICKETS)
   );
 
   // Product Catalog (localStorage Demo Mode + Supabase `products` sync)
   const [products, setProducts] = useState<Product[]>(() =>
-    safeLoadJson<Product[]>('boss_products', INITIAL_PRODUCTS)
+    usesSupabaseAuth ? [] : safeLoadJson<Product[]>('boss_products', INITIAL_PRODUCTS)
   );
 
   // Stock POs (Proactive Stock Replenishment - localStorage Demo Mode + Supabase `stock_pos` sync)
   const [stockPOs, setStockPOs] = useState<StockPO[]>(() =>
-    safeLoadJson<StockPO[]>('boss_stock_pos', INITIAL_STOCK_POS)
+    usesSupabaseAuth ? [] : safeLoadJson<StockPO[]>('boss_stock_pos', INITIAL_STOCK_POS)
   );
 
   // Projects (Project & Site Installation Module PRJ-2026-XXX - localStorage Demo Mode)
   const [projects, setProjects] = useState<Project[]>(() =>
-    safeLoadJson<Project[]>('boss_projects', INITIAL_PROJECTS)
+    usesSupabaseAuth ? [] : safeLoadJson<Project[]>('boss_projects', INITIAL_PROJECTS)
   );
 
   // Contracts (Rental / MA Recurring Billing Contracts - localStorage Demo Mode + Supabase)
   const [contracts, setContracts] = useState<Contract[]>(() =>
-    safeLoadJson<Contract[]>('boss_contracts', INITIAL_CONTRACTS)
+    usesSupabaseAuth ? [] : safeLoadJson<Contract[]>('boss_contracts', INITIAL_CONTRACTS)
   );
-
-  // A saved empty value explicitly selects Demo Local, even on a configured deployment.
-  const [supabaseUrl, setSupabaseUrl] = useState(
-    () => (localStorage.getItem('boss_sb_url') ?? import.meta.env.VITE_SUPABASE_URL ?? '').trim()
-  );
-  const [supabaseKey, setSupabaseKey] = useState(
-    () => (localStorage.getItem('boss_sb_key') ?? import.meta.env.VITE_SUPABASE_ANON_KEY ?? '').trim()
-  );
-  const [isSupabaseLive, setIsSupabaseLive] = useState(false);
-  const [isSyncing, setIsSyncing] = useState(Boolean(supabaseUrl && supabaseKey));
-  const [connectionAttempt, setConnectionAttempt] = useState(0);
-  const [supabaseClient, setSupabaseClient] = useState<SupabaseClient | null>(null);
 
   // Theme state: dark / light
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
@@ -601,186 +606,235 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Sync to localStorage
   useEffect(() => {
+    if (usesSupabaseAuth) return;
     if (currentUser) {
       safeSaveJson('boss_current_user', currentUser);
     } else {
       localStorage.removeItem('boss_current_user');
     }
-  }, [currentUser]);
+  }, [currentUser, usesSupabaseAuth]);
 
   useEffect(() => {
+    if (usesSupabaseAuth) return;
     safeSaveJson('boss_users', users);
-  }, [users]);
+  }, [users, usesSupabaseAuth]);
 
   useEffect(() => {
+    if (usesSupabaseAuth) return;
     safeSaveJson('boss_orders', orders);
-  }, [orders]);
+  }, [orders, usesSupabaseAuth]);
 
   useEffect(() => {
+    if (usesSupabaseAuth) return;
     safeSaveJson('boss_items', items);
-  }, [items]);
+  }, [items, usesSupabaseAuth]);
 
   useEffect(() => {
+    if (usesSupabaseAuth) return;
     safeSaveJson('boss_repair_tickets', repairTickets);
-  }, [repairTickets]);
+  }, [repairTickets, usesSupabaseAuth]);
 
   useEffect(() => {
+    if (usesSupabaseAuth) return;
     safeSaveJson('boss_products', products);
-  }, [products]);
+  }, [products, usesSupabaseAuth]);
 
   useEffect(() => {
+    if (usesSupabaseAuth) return;
     safeSaveJson('boss_stock_pos', stockPOs);
-  }, [stockPOs]);
+  }, [stockPOs, usesSupabaseAuth]);
 
   useEffect(() => {
+    if (usesSupabaseAuth) return;
     safeSaveJson('boss_projects', projects);
-  }, [projects]);
+  }, [projects, usesSupabaseAuth]);
 
   useEffect(() => {
+    if (usesSupabaseAuth) return;
     safeSaveJson('boss_contracts', contracts);
-  }, [contracts]);
+  }, [contracts, usesSupabaseAuth]);
 
-  // Connect Supabase if configured
   useEffect(() => {
-    if (supabaseUrl && supabaseKey) {
-      try {
-        const client = createClient(supabaseUrl, supabaseKey);
-        const connection = new AbortController();
-        const { signal } = connection;
-        let channel: ReturnType<SupabaseClient['channel']> | undefined;
-        const refreshTimers: Record<string, number> = {};
+    if (!supabaseUrl || !supabaseKey) return;
 
-        const loadTable = async (table: 'orders' | 'items' | 'repair_tickets' | 'products' | 'stock_pos' | 'projects' | 'users' | 'contracts') => {
-          if (table === 'orders') {
-            const { data } = await client.from('orders').select('*').order('created_at', { ascending: false }).abortSignal(signal);
-            if (!signal.aborted && data) setOrders(data);
-          } else if (table === 'items') {
-            const { data } = await client.from('items').select('*').order('created_at', { ascending: false }).abortSignal(signal);
-            if (!signal.aborted && data) setItems(data);
-          } else if (table === 'repair_tickets') {
-            const { data } = await client.from('repair_tickets').select('*').order('created_at', { ascending: false }).abortSignal(signal);
-            if (!signal.aborted && data) setRepairTickets(data);
-          } else if (table === 'products') {
-            const { data } = await client.from('products').select('*').order('created_at', { ascending: false }).abortSignal(signal);
-            if (!signal.aborted && data) setProducts(data as Product[]);
-          } else if (table === 'stock_pos') {
-            const { data } = await client.from('stock_pos').select('*').order('created_at', { ascending: false }).abortSignal(signal);
-            if (!signal.aborted && data) setStockPOs(data as StockPO[]);
-          } else if (table === 'projects') {
-            const { data } = await client.from('projects').select('*').order('created_at', { ascending: false }).abortSignal(signal);
-            if (!signal.aborted && data) setProjects(data as Project[]);
-          } else if (table === 'users') {
-            const { data } = await client.from('users').select('*').order('created_at', { ascending: true }).abortSignal(signal);
-            if (!signal.aborted && data && data.length > 0) {
-              const refreshedUsers = data as UserAccount[];
-              setUsers(refreshedUsers);
-              setCurrentUser(previous => refreshedUsers.find(user => user.id === previous?.id) ?? previous);
-            }
-          } else if (table === 'contracts') {
-            const [{ data: cData }, { data: ciData }] = await Promise.all([
-              client.from('contracts').select('*').order('created_at', { ascending: false }).abortSignal(signal),
-              client.from('contract_items').select('*').abortSignal(signal)
-            ]);
-            if (!signal.aborted && cData && cData.length > 0) {
-              const itemsByContract = new Map<string, ContractItem[]>();
-              ((ciData || []) as ContractItem[]).forEach((ci) => {
-                const list = itemsByContract.get(ci.contract_id) || [];
-                list.push(ci);
-                itemsByContract.set(ci.contract_id, list);
-              });
-              setContracts(
-                (cData as Omit<Contract, 'items'>[]).map((c) => ({
-                  ...c,
-                  items: itemsByContract.get(c.id) || []
-                }))
-              );
-            }
+    try {
+      const client = createClient(supabaseUrl, supabaseKey);
+      setAuthClient(client);
+      const { data: { subscription } } = client.auth.onAuthStateChange((_event, session) => {
+        const user = session?.user ?? null;
+        setAuthUser(previous =>
+          previous?.id === user?.id && previous?.email === user?.email
+            && previous?.app_metadata.boss_role === user?.app_metadata.boss_role ? previous : user
+        );
+      });
+      return () => {
+        subscription.unsubscribe();
+        void client.auth.stopAutoRefresh();
+      };
+    } catch (error) {
+      console.error('Supabase setup error:', error);
+      setDatabaseError('Invalid Supabase configuration');
+    }
+  }, [supabaseUrl, supabaseKey]);
+
+  useEffect(() => {
+    if (authClient && authUser?.app_metadata.boss_role === 'admin') {
+      const client = authClient;
+      const connection = new AbortController();
+      const { signal } = connection;
+      let channel: ReturnType<SupabaseClient['channel']> | undefined;
+      const refreshTimers: Record<string, number> = {};
+
+      const loadTable = async (table: 'orders' | 'items' | 'repair_tickets' | 'products' | 'stock_pos' | 'projects' | 'users' | 'contracts') => {
+        if (table === 'orders') {
+          const { data } = await client.from('orders').select('*').order('created_at', { ascending: false }).abortSignal(signal).throwOnError();
+          if (!signal.aborted && data) setOrders(data);
+        } else if (table === 'items') {
+          const { data } = await client.from('items').select('*').order('created_at', { ascending: false }).abortSignal(signal).throwOnError();
+          if (!signal.aborted && data) setItems(data);
+        } else if (table === 'repair_tickets') {
+          const { data } = await client.from('repair_tickets').select('*').order('created_at', { ascending: false }).abortSignal(signal).throwOnError();
+          if (!signal.aborted && data) setRepairTickets(data);
+        } else if (table === 'products') {
+          const { data } = await client.from('products').select('*').order('created_at', { ascending: false }).abortSignal(signal).throwOnError();
+          if (!signal.aborted && data) setProducts(data as Product[]);
+        } else if (table === 'stock_pos') {
+          const { data } = await client.from('stock_pos').select('*').order('created_at', { ascending: false }).abortSignal(signal).throwOnError();
+          if (!signal.aborted && data) setStockPOs(data as StockPO[]);
+        } else if (table === 'projects') {
+          const { data } = await client.from('projects').select('*').order('created_at', { ascending: false }).abortSignal(signal).throwOnError();
+          if (!signal.aborted && data) setProjects(data as Project[]);
+        } else if (table === 'users') {
+          const { data } = await client.from('users').select('id,username,name,nickname,role,assigned_route,is_active,department,phone,email,address,badge,avatar,profile_details,employment_start_date,work_positions').order('created_at', { ascending: true }).abortSignal(signal).throwOnError();
+          if (!signal.aborted && data) {
+            const refreshedUsers = data as UserAccount[];
+            setUsers(refreshedUsers);
           }
-        };
-
-        const loadRemote = async () => {
-          setIsSyncing(true);
-          try {
-            const { error } = await client.from('orders').select('id', { head: true }).limit(1).abortSignal(signal);
-            if (signal.aborted) return;
-            if (error) throw error;
-
-            await Promise.all([
-              loadTable('orders'),
-              loadTable('items'),
-              loadTable('repair_tickets'),
-              loadTable('products'),
-              loadTable('stock_pos'),
-              loadTable('projects'),
-              loadTable('users'),
-              loadTable('contracts')
-            ]);
-            if (signal.aborted) return;
-            channel = subscribeToChanges();
-            setSupabaseClient(client);
-            setIsSupabaseLive(true);
-          } catch (error) {
-            if (!signal.aborted) console.error('Supabase connect error:', error);
-          } finally {
-            if (!signal.aborted) setIsSyncing(false);
+        } else if (table === 'contracts') {
+          const [{ data: cData }, { data: ciData }] = await Promise.all([
+            client.from('contracts').select('*').order('created_at', { ascending: false }).abortSignal(signal).throwOnError(),
+            client.from('contract_items').select('*').abortSignal(signal).throwOnError()
+          ]);
+          if (!signal.aborted && cData) {
+            const itemsByContract = new Map<string, ContractItem[]>();
+            ((ciData || []) as ContractItem[]).forEach((ci) => {
+              const list = itemsByContract.get(ci.contract_id) || [];
+              list.push(ci);
+              itemsByContract.set(ci.contract_id, list);
+            });
+            setContracts(
+              (cData as Omit<Contract, 'items'>[]).map((c) => ({
+                ...c,
+                items: itemsByContract.get(c.id) || []
+              }))
+            );
           }
-        };
+        }
+      };
 
-        // Debounced per-table refresh avoids refetching all tables on every single row change
-        const scheduleTableRefresh = (
-          table: 'orders' | 'items' | 'repair_tickets' | 'products' | 'stock_pos' | 'projects' | 'users' | 'contracts'
-        ) => {
-          if (refreshTimers[table]) {
-            window.clearTimeout(refreshTimers[table]);
-          }
-          refreshTimers[table] = window.setTimeout(() => {
-            delete refreshTimers[table];
-            void loadTable(table);
-          }, 350);
-        };
-
-        const subscribeToChanges = () => client.channel('schema-db-changes')
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => scheduleTableRefresh('orders'))
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'items' }, () => scheduleTableRefresh('items'))
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'repair_tickets' }, () => scheduleTableRefresh('repair_tickets'))
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => scheduleTableRefresh('products'))
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'stock_pos' }, () => scheduleTableRefresh('stock_pos'))
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'projects' }, () => scheduleTableRefresh('projects'))
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, () => scheduleTableRefresh('users'))
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'contracts' }, () => scheduleTableRefresh('contracts'))
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'contract_items' }, () => scheduleTableRefresh('contracts'))
-          .subscribe();
-
-        void loadRemote();
-        return () => {
-          connection.abort();
-          Object.values(refreshTimers).forEach((t) => window.clearTimeout(t));
-          if (channel) void client.removeChannel(channel);
-        };
-      } catch (e) {
-        console.error('Supabase connect error:', e);
+      const loadRemote = async () => {
+        setIsSyncing(true);
         setIsSupabaseLive(false);
-        setIsSyncing(false);
-      }
-    } else {
+        setSupabaseClient(null);
+        setDatabaseError(null);
+        try {
+          await Promise.all([
+            loadTable('orders'),
+            loadTable('items'),
+            loadTable('repair_tickets'),
+            loadTable('products'),
+            loadTable('stock_pos'),
+            loadTable('projects'),
+            loadTable('users'),
+            loadTable('contracts')
+          ]);
+          if (signal.aborted) return;
+          channel = subscribeToChanges();
+          setSupabaseClient(client);
+          setIsSupabaseLive(true);
+          setCurrentUser({
+            id: authUser.id,
+            username: authUser.email ?? authUser.id,
+            name: authUser.email ?? 'Admin',
+            role: 'admin',
+          });
+        } catch (error) {
+          if (!signal.aborted) {
+            console.error('Supabase data load error:', error);
+            const message = error && typeof error === 'object' && 'message' in error
+              ? String(error.message) : 'Unable to load Supabase data';
+            setDatabaseError(message);
+          }
+        } finally {
+          if (!signal.aborted) setIsSyncing(false);
+        }
+      };
+
+      // Debounced per-table refresh avoids refetching all tables on every single row change
+      const scheduleTableRefresh = (
+        table: 'orders' | 'items' | 'repair_tickets' | 'products' | 'stock_pos' | 'projects' | 'users' | 'contracts'
+      ) => {
+        if (refreshTimers[table]) {
+          window.clearTimeout(refreshTimers[table]);
+        }
+        refreshTimers[table] = window.setTimeout(() => {
+          delete refreshTimers[table];
+          void loadTable(table).catch(error => console.error('Supabase refresh error:', error));
+        }, 350);
+      };
+
+      const subscribeToChanges = () => client.channel('schema-db-changes')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => scheduleTableRefresh('orders'))
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'items' }, () => scheduleTableRefresh('items'))
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'repair_tickets' }, () => scheduleTableRefresh('repair_tickets'))
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => scheduleTableRefresh('products'))
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'stock_pos' }, () => scheduleTableRefresh('stock_pos'))
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'projects' }, () => scheduleTableRefresh('projects'))
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, () => scheduleTableRefresh('users'))
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'contracts' }, () => scheduleTableRefresh('contracts'))
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'contract_items' }, () => scheduleTableRefresh('contracts'))
+        .subscribe();
+
+      void loadRemote();
+      return () => {
+        connection.abort();
+        Object.values(refreshTimers).forEach((t) => window.clearTimeout(t));
+        if (channel) void client.removeChannel(channel);
+      };
+    } else if (usesSupabaseAuth) {
+      setCurrentUser(null);
+      setSupabaseClient(null);
       setIsSupabaseLive(false);
       setIsSyncing(false);
-      setSupabaseClient(null);
     }
-  }, [supabaseUrl, supabaseKey, connectionAttempt]);
+  }, [authClient, authUser, usesSupabaseAuth]);
 
-  // Auth functions
-  const login = (username: string) => {
-    const user = users.find(u => u.username.toLowerCase() === username.toLowerCase());
-    if (user) {
-      setCurrentUser(user);
-      return true;
+  const login = async (username: string, password: string) => {
+    if (usesSupabaseAuth) {
+      if (!authClient) return 'Supabase setup is incomplete or invalid';
+      const { data, error } = await authClient.auth.signInWithPassword({ email: username, password });
+      if (error) return error.message;
+      if (data.user?.app_metadata.boss_role !== 'admin') {
+        await authClient.auth.signOut({ scope: 'local' });
+        return 'This account does not have Boss Computech admin access';
+      }
+      setAuthUser(data.user);
+      return null;
     }
-    return false;
+
+    const user = users.find(u => u.username.toLowerCase() === username.toLowerCase());
+    if (!user) return 'Unknown demo username';
+    setCurrentUser(user);
+    return null;
   };
 
   const logout = () => {
     setCurrentUser(null);
+    if (!usesSupabaseAuth) return;
+    clearRemoteState();
+    if (authClient) void authClient.auth.signOut({ scope: 'local' }).then(({ error }) => {
+      if (error) console.error('Supabase sign-out error:', error);
+    });
   };
 
   const addUser = async (userData: Omit<UserAccount, 'id'>) => {
@@ -790,7 +844,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       id: 'u-' + Date.now()
     };
     if (isSupabaseLive && supabaseClient) {
-      const { error } = await supabaseClient.from('users').insert(newUser);
+      const { password: _password, ...profile } = newUser;
+      const { error } = await supabaseClient.from('users').insert(profile);
       if (error) {
         console.warn('Supabase users insert warning:', error.message);
         return false;
@@ -802,14 +857,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const updateUser = async (id: string, updates: Partial<UserAccount>) => {
     if (isSupabaseLive && supabaseClient) {
-      const { error } = await supabaseClient.from('users').update(updates).eq('id', id).select('id').single();
+      const { password: _password, ...profile } = updates;
+      const { error } = await supabaseClient.from('users').update(profile).eq('id', id).select('id').single();
       if (error) {
         console.warn('Supabase users update warning:', error.message);
         return false;
       }
     }
     setUsers(prev => prev.map(u => (u.id === id ? { ...u, ...updates } : u)));
-    setCurrentUser(previous => previous?.id === id ? { ...previous, ...updates } : previous);
+    if (!usesSupabaseAuth) {
+      setCurrentUser(previous => previous?.id === id ? { ...previous, ...updates } : previous);
+    }
     return true;
   };
 
@@ -1093,11 +1151,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const { _planned_model: _pm, _planned_quantity: _pq, ...dbOrder } = newOrder;
       void _pm;
       void _pq;
-      const { error } = await supabaseClient.from('orders').insert([dbOrder]);
+      const { data, error } = await supabaseClient.from('orders').insert([dbOrder]).select().single();
       if (error) {
         console.error('Failed to create order:', error);
         return false;
       }
+      setOrders(prev => prev.some(order => order.id === data.id) ? prev : [data as Order, ...prev]);
     } else {
       setOrders(prev => [newOrder, ...prev]);
     }
@@ -3597,25 +3656,48 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       : prev.map(row => row.id === ticketId ? { ...row, ...patch } : row));
   };
 
+  const clearRemoteState = () => {
+    setAuthUser(null);
+    setSupabaseClient(null);
+    setIsSupabaseLive(false);
+    setIsSyncing(false);
+    setDatabaseError(null);
+    setUsers([]);
+    setOrders([]);
+    setItems([]);
+    setRepairTickets([]);
+    setProducts([]);
+    setStockPOs([]);
+    setProjects([]);
+    setContracts([]);
+  };
+
   const updateSupabaseConfig = (url: string, key: string) => {
+    if (url === supabaseUrl && key === supabaseKey) {
+      if (authUser) setAuthUser({ ...authUser });
+      return;
+    }
+    if (authClient) void authClient.auth.signOut({ scope: 'local' });
+    setCurrentUser(null);
+    clearRemoteState();
+    setAuthClient(null);
     localStorage.setItem('boss_sb_url', url);
     localStorage.setItem('boss_sb_key', key);
     setSupabaseUrl(url);
     setSupabaseKey(key);
-    setSupabaseClient(null);
-    setIsSupabaseLive(false);
-    setIsSyncing(Boolean(url && key));
-    setConnectionAttempt(attempt => attempt + 1);
   };
 
   const disconnectSupabase = () => {
-    localStorage.setItem('boss_sb_url', '');
-    localStorage.setItem('boss_sb_key', '');
-    setSupabaseUrl('');
-    setSupabaseKey('');
-    setIsSupabaseLive(false);
-    setIsSyncing(false);
-    setSupabaseClient(null);
+    if (!usesSupabaseAuth) return;
+    updateSupabaseConfig('', '');
+    setUsers(safeLoadJson('boss_users', INITIAL_USERS));
+    setOrders(safeLoadJson('boss_orders', INITIAL_ORDERS));
+    setItems(safeLoadJson('boss_items', INITIAL_ITEMS));
+    setRepairTickets(safeLoadJson('boss_repair_tickets', INITIAL_REPAIR_TICKETS));
+    setProducts(safeLoadJson('boss_products', INITIAL_PRODUCTS));
+    setStockPOs(safeLoadJson('boss_stock_pos', INITIAL_STOCK_POS));
+    setProjects(safeLoadJson('boss_projects', INITIAL_PROJECTS));
+    setContracts(safeLoadJson('boss_contracts', INITIAL_CONTRACTS));
   };
 
   const resetAllDemoData = (options?: { preserveCatalog?: boolean }) => {
@@ -4530,7 +4612,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   return (
     <AppContext.Provider value={{
-      currentUser,
+      currentUser: usesSupabaseAuth && (
+        !isSupabaseLive || authUser?.app_metadata.boss_role !== 'admin' || currentUser?.id !== authUser.id
+      ) ? null : currentUser,
       login,
       logout,
       users,
@@ -4619,9 +4703,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       deleteRepairTicket,
       isSupabaseLive,
       isSyncing,
+      usesSupabaseAuth,
+      databaseError,
       databaseStatusLabel: isSyncing ? 'Checking…'
         : isSupabaseLive ? 'Connected'
-        : supabaseUrl && supabaseKey ? 'Connection failed'
+        : databaseError ? 'Connection failed'
+        : supabaseUrl && supabaseKey ? 'Sign in to connect'
         : supabaseUrl || supabaseKey ? 'Incomplete setup'
         : 'Demo Local',
       supabaseUrl,

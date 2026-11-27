@@ -139,7 +139,16 @@ export const App: React.FC = () => {
   // If not logged in, show Customer Landing Page by default (or Staff Login when toggled)
   if (!currentUser) {
     if (showStaffLogin) {
-      return <LoginPage onBackToLanding={() => setShowStaffLogin(false)} />;
+      return (
+        <>
+          <LoginPage onBackToLanding={() => setShowStaffLogin(false)} onOpenSettings={() => setIsSettingsOpen(true)} />
+          {isSettingsOpen && (
+            <Suspense fallback={null}>
+              <SettingsModal isOpen onClose={() => setIsSettingsOpen(false)} />
+            </Suspense>
+          )}
+        </>
+      );
     }
     return (
       <Suspense fallback={<div className="min-h-screen flex items-center justify-center bg-slate-950 text-slate-300 text-sm">กำลังโหลด...</div>}>
