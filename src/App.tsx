@@ -3,6 +3,7 @@ import React, { useState, useEffect, Suspense, lazy } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from './context/AppContext';
 import { LoginPage } from './components/LoginPage';
+import { PasswordRecoveryPage } from './components/PasswordRecoveryPage';
 import { RepairReceiptPrintDocument } from './components/RepairReceiptPrintDocument';
 import { MyStaffProfile, StaffAvatar } from './components/StaffProfile';
 
@@ -33,6 +34,7 @@ import companyLogo from './assets/BossCom.jpg';
 
 export const App: React.FC = () => {
   const {
+    passwordRecovery, closePasswordRecovery,
     currentUser, logout, isSupabaseLive, isSyncing, databaseStatusLabel, supabaseUrl, supabaseKey,
     orders, items, repairTickets, projects, resetAllDemoData, clearDemoKeepStock,
     theme, toggleTheme, printingRepairTicket
@@ -135,6 +137,25 @@ export const App: React.FC = () => {
       };
     }
   }, [isMobileSidebarOpen]);
+
+  if (passwordRecovery) {
+    return (
+      <>
+        <PasswordRecoveryPage
+          onOpenSettings={() => setIsSettingsOpen(true)}
+          onContinue={() => {
+            closePasswordRecovery();
+            setShowStaffLogin(true);
+          }}
+        />
+        {isSettingsOpen && (
+          <Suspense fallback={null}>
+            <SettingsModal isOpen onClose={() => setIsSettingsOpen(false)} />
+          </Suspense>
+        )}
+      </>
+    );
+  }
 
   // If not logged in, show Customer Landing Page by default (or Staff Login when toggled)
   if (!currentUser) {

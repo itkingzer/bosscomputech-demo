@@ -129,6 +129,9 @@ interface AppContextType {
   login: (username: string, password: string) => Promise<string | null>;
   usesSupabaseAuth: boolean;
   databaseError: string | null;
+  passwordRecovery: 'checking' | 'ready' | 'invalid' | 'complete' | null;
+  updateRecoveredPassword: (password: string) => Promise<string | null>;
+  closePasswordRecovery: () => void;
   logout: () => void;
   users: UserAccount[];
   addUser: (user: Omit<UserAccount, 'id'>) => Promise<boolean>;
@@ -502,6 +505,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [isSyncing, setIsSyncing] = useState(false);
   const usesSupabaseAuth = Boolean(supabaseUrl || supabaseKey);
   const [authClient, setAuthClient] = useState<SupabaseClient | null>(null);
+  const [passwordRecovery, setPasswordRecovery] = useState<AppContextType['passwordRecovery']>(() => {
+    const hash = new URLSearchParams(window.location.hash.slice(1));
+    const query = new URLSearchParams(window.location.search);
+    if (hash.has('error_code') || query.has('error_code')) return 'invalid';
+    if (hash.get('type') !== 'recovery' && query.get('type') !== 'recovery') return null;
+    return hash.has('access_token') || query.has('access_token') || query.has('code') ? 'checking' : 'invalid';
+  });
+  const recoveryPending = useRef(passwordRecovery === 'checking');
   const [authUser, setAuthUser] = useState<User | null>(null);
   const [databaseError, setDatabaseError] = useState<string | null>(null);
   const [supabaseClient, setSupabaseClient] = useState<SupabaseClient | null>(null);
@@ -657,28 +668,48 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => {
     if (!supabaseUrl || !supabaseKey) return;
 
-    try {
-      const client = createClient(supabaseUrl, supabaseKey);
-      setAuthClient(client);
-      const { data: { subscription } } = client.auth.onAuthStateChange((_event, session) => {
-        const user = session?.user ?? null;
-        setAuthUser(previous =>
-          previous?.id === user?.id && previous?.email === user?.email
-            && previous?.app_metadata.boss_role === user?.app_metadata.boss_role ? previous : user
-        );
-      });
-      return () => {
-        subscription.unsubscribe();
-        void client.auth.stopAutoRefresh();
-      };
-    } catch (error) {
-      console.error('Supabase setup error:', error);
-      setDatabaseError('Invalid Supabase configuration');
-    }
+    let active = true;
+    let cleanup: (() => void) | undefined;
+    // Defer client creation so Strict Mode's discarded effect cannot consume the recovery link.
+    queueMicrotask(() => {
+      if (!active) return;
+      try {
+        const client = createClient(supabaseUrl, supabaseKey);
+        setAuthClient(client);
+        const { data: { subscription } } = client.auth.onAuthStateChange((event, session) => {
+          if (event === 'PASSWORD_RECOVERY' && session && recoveryPending.current) {
+            setPasswordRecovery('ready');
+          }
+          if (event === 'SIGNED_OUT' && recoveryPending.current) setPasswordRecovery('invalid');
+          const user = session?.user ?? null;
+          setAuthUser(previous =>
+            previous?.id === user?.id && previous?.email === user?.email
+              && previous?.app_metadata.boss_role === user?.app_metadata.boss_role ? previous : user
+          );
+        });
+        if (recoveryPending.current) {
+          void client.auth.initialize().then(({ error }) => {
+            if (active && error) setPasswordRecovery('invalid');
+          });
+        }
+        cleanup = () => {
+          subscription.unsubscribe();
+          void client.auth.stopAutoRefresh();
+        };
+      } catch (error) {
+        console.error('Supabase setup error:', error);
+        setDatabaseError('Invalid Supabase configuration');
+        if (recoveryPending.current) setPasswordRecovery('invalid');
+      }
+    });
+    return () => {
+      active = false;
+      cleanup?.();
+    };
   }, [supabaseUrl, supabaseKey]);
 
   useEffect(() => {
-    if (authClient && authUser?.app_metadata.boss_role === 'admin') {
+    if (!passwordRecovery && authClient && authUser?.app_metadata.boss_role === 'admin') {
       const client = authClient;
       const connection = new AbortController();
       const { signal } = connection;
@@ -807,7 +838,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setIsSupabaseLive(false);
       setIsSyncing(false);
     }
-  }, [authClient, authUser, usesSupabaseAuth]);
+  }, [authClient, authUser, usesSupabaseAuth, passwordRecovery]);
+
+  const updateRecoveredPassword = async (password: string) => {
+    if (passwordRecovery !== 'ready' || !authClient) return 'ลิงก์ตั้งรหัสผ่านหมดอายุ กรุณาขอลิงก์ใหม่';
+    const { error } = await authClient.auth.updateUser({ password });
+    if (error) return error.message;
+    recoveryPending.current = false;
+    setPasswordRecovery('complete');
+    return null;
+  };
+
+  const closePasswordRecovery = () => {
+    recoveryPending.current = false;
+    const url = new URL(window.location.href);
+    url.hash = '';
+    for (const name of ['error', 'error_code', 'error_description', 'type', 'code']) url.searchParams.delete(name);
+    window.history.replaceState(window.history.state, '', url);
+    setPasswordRecovery(null);
+  };
 
   const login = async (username: string, password: string) => {
     if (usesSupabaseAuth) {
@@ -4616,6 +4665,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         !isSupabaseLive || authUser?.app_metadata.boss_role !== 'admin' || currentUser?.id !== authUser.id
       ) ? null : currentUser,
       login,
+      passwordRecovery,
+      updateRecoveredPassword,
+      closePasswordRecovery,
       logout,
       users,
       addUser,
