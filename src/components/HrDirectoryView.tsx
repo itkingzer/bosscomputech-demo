@@ -27,7 +27,7 @@ const ROLE_OPTIONS: { value: UserRole; label: string; dept: string }[] = [
 ];
 
 export const HrDirectoryView: React.FC = () => {
-  const { users, addUser, updateUser, orders, projects, stockPOs, repairTickets, usesSupabaseAuth, currentUser } = useApp();
+  const { users, addUser, updateUser, manageStaff, orders, projects, stockPOs, repairTickets, usesSupabaseAuth, currentUser } = useApp();
   const canManageProfiles = !usesSupabaseAuth;
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -104,26 +104,30 @@ export const HrDirectoryView: React.FC = () => {
       setSaveError('Username นี้มีอยู่ในระบบแล้ว');
       return;
     }
-    if (!positions.length) {
+    if (!usesSupabaseAuth && !positions.length) {
       setSaveError('กรุณาเลือกอย่างน้อยหนึ่งตำแหน่งงาน');
       return;
     }
-    const profile = {
+    const detailsProfile = {
       name: name.trim(),
       nickname: nickname.trim(),
       department: department.trim(),
-      role,
       phone: phone.trim() || '-',
       badge: badge.trim() || (editingUser ? '' : role.toUpperCase()),
-      is_active: isActive,
       avatar,
       profile_details: details.trim() || null,
       employment_start_date: startDate || null,
-      work_positions: positions
     };
+    const profile = { ...detailsProfile, role, is_active: isActive, work_positions: positions };
     setSaving(true);
     setSaveError('');
     try {
+      if (usesSupabaseAuth && editingUser) {
+        const error = await manageStaff({ action: 'update-profile', id: editingUser.id, profile: detailsProfile });
+        if (error) setSaveError(error);
+        else setIsModalOpen(false);
+        return;
+      }
       const saved = editingUser
         ? await updateUser(editingUser.id, profile)
         : await addUser({ ...profile, username: normalizedUsername, password: 'password123' });
@@ -381,7 +385,7 @@ export const HrDirectoryView: React.FC = () => {
                   <Activity className="w-3.5 h-3.5" />
                   <span>ดูประวัติการปฏิบัติงาน</span>
                 </button>
-                {canManageProfiles && u.id !== currentUser?.id && <button
+                {(usesSupabaseAuth ? u.role !== 'admin' : u.id !== currentUser?.id) && <button
                   type="button"
                   onClick={() => openEditModal(u)}
                   className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs font-bold cursor-pointer flex items-center gap-1"
@@ -452,7 +456,7 @@ export const HrDirectoryView: React.FC = () => {
                   className="w-full rounded-xl px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700"
                 />
               </div>
-              <div>
+              {!usesSupabaseAuth && <div>
                 <label htmlFor="hr-role" className="block font-bold mb-1">สิทธิ์เข้าหน้าทำงาน</label>
                 <select
                   id="hr-role"
@@ -472,7 +476,7 @@ export const HrDirectoryView: React.FC = () => {
                     <option key={r.value} value={r.value}>{r.label}</option>
                   ))}
                 </select>
-              </div>
+              </div>}
               <div>
                 <label htmlFor="hr-department" className="block font-bold mb-1">แผนก</label>
                 <input
@@ -487,7 +491,7 @@ export const HrDirectoryView: React.FC = () => {
                 <label htmlFor="hr-start-date" className={modalLabelClass}>วันเริ่มงาน</label>
                 <input id="hr-start-date" type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className={modalInputClass} />
               </div>
-              <fieldset className="sm:col-span-2">
+              {!usesSupabaseAuth && <fieldset className="sm:col-span-2">
                 <legend className="font-bold">ตำแหน่งงาน (เลือกได้หลายตำแหน่ง)</legend>
                 <div className="mt-2 grid gap-2 sm:grid-cols-2">
                   {ROLE_OPTIONS.map(option => (
@@ -502,8 +506,8 @@ export const HrDirectoryView: React.FC = () => {
                     </label>
                   ))}
                 </div>
-              </fieldset>
-              <label className="sm:col-span-2 flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-slate-800/70">
+              </fieldset>}
+              {!usesSupabaseAuth && <label className="sm:col-span-2 flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-slate-800/70">
                 <span className="font-bold">สถานะการทำงาน (แสดงใน Dropdown เลือกผู้รับผิดชอบ)</span>
                 <input
                   type="checkbox"
@@ -511,7 +515,7 @@ export const HrDirectoryView: React.FC = () => {
                   onChange={(e) => setIsActive(e.target.checked)}
                   className="w-4 h-4 accent-[#FF6B00] cursor-pointer"
                 />
-              </label>
+              </label>}
             </div>
             </fieldset>
 

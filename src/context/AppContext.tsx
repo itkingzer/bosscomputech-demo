@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
+import React, { createContext, useCallback, useContext, useState, useEffect, useRef } from 'react';
 import { UserAccount, Order, Item, RepairTicket, RepairStatus, RepairLifecycleStatus, ServiceType, RouteCode, JobCategory, Product, StockPO, ProductCategory, getRouteByDistrict, ActivityLog, computeWarrantyExpire, REPAIR_LIFECYCLE_META, ReceivedChannel, ROUTE_DEFINITIONS, WarrantyLookupResult, lookupWarrantyBySerial as lookupWarrantyHelper, Project, ProjectItem, ProjectItemType, ProjectMaterialRequestStatus, Contract, ContractItem, BILLING_BADGE_META, getOrderBillingBadgeKey, SiteVisit, SiteVisitItemRef, SiteVisitPrepStatus, SiteVisitStatus } from '../types';
 import { INITIAL_USERS, INITIAL_ORDERS, INITIAL_ITEMS, INITIAL_REPAIR_TICKETS, INITIAL_PRODUCTS, INITIAL_STOCK_POS, INITIAL_PROJECTS, INITIAL_CONTRACTS } from '../data/initialData';
 import { createClient, SupabaseClient, type User } from '@supabase/supabase-js';
@@ -131,7 +131,9 @@ interface AppContextType {
   databaseError: string | null;
   manageStaff: (input: { action: 'save' | 'invite-admin'; id?: string; name: string; username: string; password: string; role: UserAccount['role']; work_positions: UserAccount['role'][] }
     | { action: 'set-active'; id: string; active: boolean }
+    | { action: 'update-profile'; id: string; profile: Partial<UserAccount> }
     | { action: 'delete'; id: string }) => Promise<string | null>;
+  readDepartmentPage: (page: string, signal: AbortSignal) => Promise<{ reference: string; detail: string; status: string }[]>;
   requestPasswordReset: (email: string) => Promise<string | null>;
   passwordRecovery: 'checking' | 'ready' | 'invalid' | 'complete' | null;
   updateRecoveredPassword: (password: string) => Promise<string | null>;
@@ -958,6 +960,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (data) setUsers(data as UserAccount[]);
     return error;
   };
+
+  const readDepartmentPage: AppContextType['readDepartmentPage'] = useCallback(async (page, signal) => {
+    if (!supabaseClient) return [];
+    const { data } = await supabaseClient.rpc('boss_department_page', { page }).abortSignal(signal).throwOnError();
+    return data ?? [];
+  }, [supabaseClient]);
 
   const logout = () => {
     setCurrentUser(null);
@@ -4755,6 +4763,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ) ? null : currentUser,
       login,
       manageStaff,
+      readDepartmentPage,
       requestPasswordReset,
       passwordRecovery,
       updateRecoveredPassword,

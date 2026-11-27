@@ -69,6 +69,26 @@ Deno.serve(async request => {
       .eq('id', id).single();
     if (error || !data) return fail('Staff profile not found', 404);
     target = data;
+    if (input.action === 'update-profile') {
+      if (target.role === 'admin') return fail('This account is protected', 403);
+      if (target.auth_user_id) {
+        const { data: account, error: accountError } = await service.auth.admin.getUserById(target.auth_user_id);
+        if (accountError || !account.user || account.user.app_metadata.boss_role === 'admin'
+          || account.user.app_metadata.boss_superadmin === true) return fail('This account is protected', 403);
+      }
+      const changes = input.profile;
+      if (!changes || typeof changes !== 'object' || Array.isArray(changes)) return fail('Invalid profile');
+      const limits = { name: 150, nickname: 100, department: 150, phone: 50, badge: 80,
+        avatar: 2_000_000, profile_details: 20_000, employment_start_date: 10 };
+      if (typeof changes.name !== 'string' || !changes.name.trim()
+        || Object.entries(changes).some(([key, value]) => !Object.hasOwn(limits, key)
+          || (value !== null && (typeof value !== 'string' || value.length > limits[key as keyof typeof limits])))) {
+        return fail('Invalid profile details');
+      }
+      const { error: saveError } = await service.from('users').update(changes).eq('id', id)
+        .neq('role', 'admin').select('id').single();
+      return saveError ? fail('Could not save staff profile', 409) : reply({ ok: true });
+    }
     if (target.id === actor?.id || target.auth_user_id === actor?.auth_user_id || (!isSuperadmin && target.role === 'admin')
       || (!isAdmin && (target.role === 'hr' || target.work_positions?.includes('hr')))) {
       return fail('This account is protected', 403);

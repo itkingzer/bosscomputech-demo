@@ -6,6 +6,7 @@ import { LoginPage } from './components/LoginPage';
 import { PasswordRecoveryPage } from './components/PasswordRecoveryPage';
 import { RepairReceiptPrintDocument } from './components/RepairReceiptPrintDocument';
 import { MyStaffProfile, StaffAvatar } from './components/StaffProfile';
+import { DepartmentReadOnlyView } from './components/DepartmentReadOnlyView';
 
 const DashboardView = lazy(() => import('./components/DashboardView').then(m => ({ default: m.DashboardView })));
 const SettingsModal = lazy(() => import('./components/SettingsModal').then(m => ({ default: m.SettingsModal })));
@@ -35,7 +36,7 @@ import companyLogo from './assets/BossCom.jpg';
 export const App: React.FC = () => {
   const {
     passwordRecovery, closePasswordRecovery,
-    currentUser, logout, isSupabaseLive, isSyncing, databaseStatusLabel, supabaseUrl, supabaseKey,
+    currentUser, logout, usesSupabaseAuth, isSupabaseLive, isSyncing, databaseStatusLabel, supabaseUrl, supabaseKey,
     orders, items, repairTickets, projects, resetAllDemoData, clearDemoKeepStock,
     theme, toggleTheme, printingRepairTicket
   } = useApp();
@@ -211,22 +212,25 @@ export const App: React.FC = () => {
     { id: 'admin', role: 'admin', label: 'จัดการผู้ใช้ & สิทธิ์', icon: Shield, badge: null, desc: 'แอดมินระบบส่วนกลาง' },
   ];
 
-  const visibleNavItems = allNavItems.filter((nav) => {
+  const canWorkOnPage = (nav: typeof allNavItems[number]) => {
     if (currentUser.role === 'admin') return true;
     if (nav.role === 'all') return true;
     if (nav.id === 'profit' && (currentUser.role as string) === 'manager') return true;
     return nav.role === currentUser.role
       || (nav.role !== 'admin' && currentUser.work_positions?.some(position => position === nav.role));
-  });
-  const permittedTab = visibleNavItems.some(nav => nav.id === activeTab) ? activeTab : 'dashboard';
-  const workMenu = {
-    label: 'งานประจำ',
-    ids: ['sales', 'accounting', 'prep', 'frontdesk', 'onsite', 'repair', 'finance', 'hr']
   };
+  const visibleNavItems = allNavItems.filter(nav => canWorkOnPage(nav)
+    || (usesSupabaseAuth && nav.id !== 'admin' && nav.id !== 'profit'));
+  const permittedTab = visibleNavItems.some(nav => nav.id === activeTab) ? activeTab : 'dashboard';
+  const currentPage = visibleNavItems.find(nav => nav.id === permittedTab);
+  const readOnly = currentPage && !canWorkOnPage(currentPage);
   const overviewMenu = { label: 'ภาพรวม', ids: ['dashboard'] };
   const navGroups = [
-    ...(currentUser.role === 'admin' ? [overviewMenu, workMenu] : [workMenu, overviewMenu]),
-    { label: 'รายงานและประวัติ', ids: ['profit', 'completed-logs'] },
+    overviewMenu,
+    { label: 'ฝ่ายขาย', ids: ['sales', 'profit'] },
+    { label: 'ฝ่ายหลังบ้าน (Back Office)', ids: ['accounting', 'finance', 'hr'] },
+    { label: 'แผนกช่างและหน้าร้าน', ids: ['prep', 'frontdesk', 'onsite', 'repair'] },
+    { label: 'รายงานและประวัติ', ids: ['completed-logs'] },
     { label: 'ดูแลระบบ', ids: ['admin'] }
   ];
 
@@ -365,12 +369,12 @@ export const App: React.FC = () => {
                               {nav.label}
                             </div>
                             <div className={`text-[10px] truncate ${isActive ? 'text-black/80' : 'text-slate-500'}`}>
-                              {nav.desc}
+                              {canWorkOnPage(nav) ? nav.desc : 'ดูอย่างเดียว'}
                             </div>
                           </div>
                         </div>
 
-                        {nav.badge !== null && nav.badge > 0 && (
+                        {canWorkOnPage(nav) && nav.badge !== null && nav.badge > 0 && (
                           <span className={`
                             px-2 py-0.5 rounded-full text-[10px] font-bold ml-2 flex-shrink-0
                             ${isActive
@@ -569,6 +573,7 @@ export const App: React.FC = () => {
                 </div>
               }
             >
+              {readOnly ? <DepartmentReadOnlyView page={currentPage.id} title={currentPage.label} /> : <>
               {permittedTab === 'dashboard' && <DashboardView />}
               {permittedTab === 'sales' && <SalesView />}
               {permittedTab === 'profit' && <ProfitDashboardView />}
@@ -581,6 +586,7 @@ export const App: React.FC = () => {
               {permittedTab === 'hr' && <HrDirectoryView />}
               {permittedTab === 'completed-logs' && <CompletedLogsView />}
               {permittedTab === 'admin' && currentUser.role === 'admin' && <AdminUserManagement />}
+              </>}
             </Suspense>
           </div>
         </main>
