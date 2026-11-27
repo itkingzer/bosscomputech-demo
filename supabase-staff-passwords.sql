@@ -15,6 +15,11 @@ begin
   if profile_id is null then
     return new;
   end if;
+  if tg_op = 'UPDATE' then
+    if old.raw_app_meta_data ->> 'boss_staff_profile_id' is not distinct from profile_id then
+      return new;
+    end if;
+  end if;
 
   update public.users
   set auth_user_id = new.id, auth_invite_pending = false
@@ -29,8 +34,21 @@ end;
 $$;
 
 revoke all on function boss_private.bind_staff_password_account() from public, anon, authenticated;
-create or replace trigger boss_bind_staff_password_account after insert on auth.users
+create or replace trigger boss_bind_staff_password_account
+  after insert or update of raw_app_meta_data on auth.users
   for each row execute function boss_private.bind_staff_password_account();
+
+-- Repair confirmed password accounts created when the marker was added after
+-- the initial Auth insert. Require the server-written profile ID and email.
+update public.users u
+set auth_user_id = a.id, auth_invite_pending = false
+from auth.users a
+where u.auth_user_id is null and u.auth_invite_pending
+  and a.raw_app_meta_data ->> 'boss_staff_profile_id' = u.id
+  and lower(a.email) = lower(u.email)
+  and lower(a.email) = lower(u.username) || '@staff.bosscomputech.invalid'
+  and a.email_confirmed_at is not null and nullif(a.encrypted_password, '') is not null
+  and not exists (select from public.users linked where linked.auth_user_id = a.id);
 
 create or replace function boss_private.can_recover_admin(target_email text)
 returns boolean language sql stable security definer set search_path = ''

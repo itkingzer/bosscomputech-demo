@@ -135,19 +135,19 @@ Deno.serve(async request => {
     : await service.from('users').insert({ id: profileId, ...reservation, is_active: true });
   if (saved.error) return fail('Username is already in use or the profile could not be saved', 409);
 
-  if (inviteAdmin) {
-    const { data, error } = await service.auth.admin.inviteUserByEmail(email, { redirectTo: siteUrl });
-    if (error) return fail(error.message, 409);
-    const { data: linked, error: linkError } = await service.from('users').select('auth_user_id').eq('id', profileId).single();
-    if (linkError || !data.user || linked?.auth_user_id !== data.user.id) return fail('Invitation sent, but the administrator profile could not be linked', 409);
-    return reply({ ok: true });
+  const { data, error } = inviteAdmin
+    ? await service.auth.admin.inviteUserByEmail(email, { redirectTo: siteUrl })
+    : await service.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true,
+      app_metadata: { boss_staff_profile_id: profileId },
+    });
+  if (error) return fail(error.message, 409);
+  const { data: linked, error: linkError } = await service.from('users')
+    .select('auth_user_id').eq('id', profileId).single();
+  if (linkError || !data.user || linked?.auth_user_id !== data.user.id) {
+    return fail('ระบบยังผูกบัญชีเข้าสู่ระบบไม่สำเร็จ กรุณาติดต่อผู้ดูแล', 409);
   }
-
-  const { error } = await service.auth.admin.createUser({
-    email,
-    password,
-    email_confirm: true,
-    app_metadata: { boss_staff_profile_id: profileId },
-  });
-  return error ? fail(error.message, 409) : reply({ ok: true });
+  return reply({ ok: true });
 });
