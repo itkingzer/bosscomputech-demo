@@ -87,13 +87,19 @@ Deno.serve(async request => {
     const { error } = await service.from('users').update({ is_active: input.active }).eq('id', id);
     return error ? fail('Could not update account status', 409) : reply({ ok: true });
   }
-  if (input.action !== 'save') return fail('Invalid action');
+  const inviteAdmin = input.action === 'invite-admin';
+  if (input.action !== 'save' && !inviteAdmin) return fail('Invalid action');
+  if (inviteAdmin && (!isSuperadmin || input.role !== 'admin' || target?.auth_user_id)) {
+    return fail('Only a superadmin can invite a new administrator by email', 403);
+  }
   const name = typeof input.name === 'string' ? input.name.trim() : '';
   const username = typeof input.username === 'string' ? input.username.trim().toLowerCase() : '';
   const password = typeof input.password === 'string' ? input.password : '';
   const positions = input.work_positions;
   const adminAccount = input.role === 'admin';
-  const validLogin = adminAccount
+  const keepEmailLogin = adminAccount && Boolean(target?.auth_user_id && target.email?.toLowerCase() === username && !username.endsWith('@' + staffDomain));
+  const emailLogin = inviteAdmin || keepEmailLogin;
+  const validLogin = emailLogin
     ? username.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(username) && !username.endsWith('@' + staffDomain)
     : usernamePattern.test(username);
   if (!name || name.length > 150 || !validLogin || (!roles.includes(input.role) && !(adminAccount && isSuperadmin))
@@ -101,9 +107,9 @@ Deno.serve(async request => {
     return fail('Check name, username, and staff positions');
   }
   if (!isAdmin && (input.role === 'hr' || positions.includes('hr'))) return fail('Only an administrator can assign HR access', 403);
-  const email = adminAccount ? username : username + '@' + staffDomain;
+  const email = emailLogin ? username : username + '@' + staffDomain;
   const needsPassword = !target?.auth_user_id || target.email !== email;
-  if ((needsPassword || password) && (password.length < 8 || new TextEncoder().encode(password).length > 72)) {
+  if (!inviteAdmin && (needsPassword || password) && (password.length < 8 || new TextEncoder().encode(password).length > 72)) {
     return fail('Use a password with at least 8 characters and at most 72 bytes');
   }
   const profile = { name, username, role: input.role, work_positions: [...new Set(positions)] };
@@ -128,6 +134,14 @@ Deno.serve(async request => {
     ? await service.from('users').update(reservation).eq('id', id).is('auth_user_id', null).select('id').single()
     : await service.from('users').insert({ id: profileId, ...reservation, is_active: true });
   if (saved.error) return fail('Username is already in use or the profile could not be saved', 409);
+
+  if (inviteAdmin) {
+    const { data, error } = await service.auth.admin.inviteUserByEmail(email, { redirectTo: siteUrl });
+    if (error) return fail(error.message, 409);
+    const { data: linked, error: linkError } = await service.from('users').select('auth_user_id').eq('id', profileId).single();
+    if (linkError || !data.user || linked?.auth_user_id !== data.user.id) return fail('Invitation sent, but the administrator profile could not be linked', 409);
+    return reply({ ok: true });
+  }
 
   const { error } = await service.auth.admin.createUser({
     email,

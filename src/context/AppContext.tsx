@@ -129,7 +129,7 @@ interface AppContextType {
   login: (username: string, password: string) => Promise<string | null>;
   usesSupabaseAuth: boolean;
   databaseError: string | null;
-  manageStaff: (input: { action: 'save'; id?: string; name: string; username: string; password: string; role: UserAccount['role']; work_positions: UserAccount['role'][] }
+  manageStaff: (input: { action: 'save' | 'invite-admin'; id?: string; name: string; username: string; password: string; role: UserAccount['role']; work_positions: UserAccount['role'][] }
     | { action: 'set-active'; id: string; active: boolean }
     | { action: 'delete'; id: string }) => Promise<string | null>;
   requestPasswordReset: (email: string) => Promise<string | null>;
@@ -515,7 +515,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const hash = new URLSearchParams(window.location.hash.slice(1));
     const query = new URLSearchParams(window.location.search);
     if (hash.has('error_code') || query.has('error_code')) return 'invalid';
-    const passwordSetupTypes = ['recovery'];
+    const passwordSetupTypes = ['recovery', 'invite'];
     if (!passwordSetupTypes.some(type => hash.get('type') === type || query.get('type') === type)) return null;
     return hash.has('access_token') || query.has('access_token') || query.has('code') ? 'checking' : 'invalid';
   });

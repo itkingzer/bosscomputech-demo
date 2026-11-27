@@ -24,6 +24,7 @@ export function OnlineStaffManagement() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [role, setRole] = useState<UserRole>('sales');
+  const [inviteByEmail, setInviteByEmail] = useState(false);
   const [positions, setPositions] = useState<UserRole[]>([]);
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<{ text: string; error: boolean } | null>(null);
@@ -31,9 +32,11 @@ export function OnlineStaffManagement() {
   function selectProfile(user: UserAccount | null) {
     setEditing(user);
     setName(user?.name ?? '');
-    setUsername(user?.role === 'admin' ? user.email ?? user.username : user?.username.includes('@') ? '' : user?.username ?? '');
+    setUsername(user?.role === 'admin' && user.username.includes('@') ? user.email ?? user.username
+      : user?.username.includes('@') ? '' : user?.username ?? '');
     setPassword('');
     setRole(user?.role ?? 'sales');
+    setInviteByEmail(Boolean(user?.role === 'admin' && !user.auth_user_id && user.username.includes('@')));
     setPositions(user?.work_positions?.filter(position => position !== 'admin') ?? []);
     setFeedback(null);
     setFormOpen(true);
@@ -59,8 +62,8 @@ export function OnlineStaffManagement() {
     const profile = { name: name.trim(), role, work_positions: positions.filter(position => position !== role) };
     if (!profile.name) return;
     if (await perform(
-      () => manageStaff({ ...profile, action: 'save', id: editing?.id, username, password }),
-      editing ? 'บันทึกบัญชีพนักงานแล้ว' : 'สร้างบัญชีแล้ว พนักงานเข้า Staff Login ได้ทันที',
+      () => manageStaff({ ...profile, action: sendingInvite ? 'invite-admin' : 'save', id: editing?.id, username, password }),
+      sendingInvite ? 'ส่งคำเชิญแล้ว ให้ผู้รับเปิดอีเมลเพื่อตั้งรหัสผ่าน' : editing ? 'บันทึกบัญชีแล้ว' : 'สร้างบัญชีแล้ว เข้า Staff Login ได้ทันที',
     )) {
       setPassword('');
       setFormOpen(false);
@@ -69,8 +72,12 @@ export function OnlineStaffManagement() {
 
   const selected = users.find(user => user.id === editing?.id);
   const adminAccount = role === 'admin';
+  const existingEmailLogin = Boolean(adminAccount && selected?.auth_user_id && selected.email && !selected.email.endsWith('@staff.bosscomputech.invalid'));
+  const canInvite = isSuperadmin && adminAccount && !selected?.auth_user_id;
+  const sendingInvite = canInvite && inviteByEmail;
+  const emailLogin = sendingInvite || existingEmailLogin;
   const existingLogin = Boolean(selected?.auth_user_id && selected.email && (
-    adminAccount ? !selected.email.endsWith('@staff.bosscomputech.invalid') : selected.email.endsWith('@staff.bosscomputech.invalid')
+    existingEmailLogin || selected.email.endsWith('@staff.bosscomputech.invalid')
   ));
   const normalizedQuery = query.trim().toLowerCase();
   const visibleUsers = users.filter(user => (!roleFilter || user.role === roleFilter) &&
@@ -87,22 +94,39 @@ export function OnlineStaffManagement() {
           <label className="block text-sm">ชื่อพนักงาน
             <input type="text" className={inputClass} value={name} onChange={event => setName(event.target.value)} required maxLength={150} />
           </label>
-          <label className="block text-sm">{adminAccount ? 'อีเมลสำหรับเข้าสู่ระบบ' : 'ชื่อผู้ใช้'}
-            <input type={adminAccount ? 'email' : 'text'} className={inputClass} value={username} onChange={event => setUsername(event.target.value)}
-              required autoCapitalize="none" spellCheck={false} autoComplete="off"
-              pattern={adminAccount ? undefined : '[A-Za-z0-9][A-Za-z0-9._\\-]{2,39}'} maxLength={adminAccount ? 254 : 40} />
-          </label>
-          <label className="block text-sm">{existingLogin ? 'รหัสผ่านใหม่ (เว้นว่างเพื่อใช้รหัสเดิม)' : 'รหัสผ่าน'}
-            <input type="password" className={inputClass} value={password} onChange={event => setPassword(event.target.value)}
-              required={!existingLogin || username.trim().toLowerCase() !== (adminAccount ? selected?.email : selected?.username)?.toLowerCase()}
-              minLength={8} maxLength={72} autoComplete="new-password" />
-          </label>
           <label className="block text-sm">บทบาทหลัก
-            <select className={inputClass} value={role} onChange={event => setRole(event.target.value as UserRole)}>
+            <select className={inputClass} value={role} onChange={event => {
+              setRole(event.target.value as UserRole);
+              if (event.target.value !== 'admin') {
+                setInviteByEmail(false);
+                if (username.includes('@')) setUsername('');
+              }
+            }}>
               {allowedRoles.map(value => <option value={value} key={value}>{getRoleDisplayName(value)}</option>)}
               {isSuperadmin && <option value="admin">แอดมิน</option>}
             </select>
           </label>
+          {canInvite && <label className="block text-sm sm:col-span-2">วิธีสร้างบัญชีแอดมิน
+            <select className={inputClass} value={inviteByEmail ? 'email' : 'username'} onChange={event => {
+              setInviteByEmail(event.target.value === 'email');
+              setUsername('');
+              setPassword('');
+            }}>
+              <option value="username">ชื่อผู้ใช้และรหัสผ่าน</option>
+              <option value="email">ส่งคำเชิญทางอีเมล</option>
+            </select>
+          </label>}
+          <label className="block text-sm">{emailLogin ? 'อีเมลสำหรับเข้าสู่ระบบ' : 'ชื่อผู้ใช้'}
+            <input type={emailLogin ? 'email' : 'text'} className={inputClass} value={username} onChange={event => setUsername(event.target.value)}
+              required readOnly={existingEmailLogin} autoCapitalize="none" spellCheck={false} autoComplete="off"
+              pattern={emailLogin ? undefined : '[A-Za-z0-9][A-Za-z0-9._\\-]{2,39}'} maxLength={emailLogin ? 254 : 40} />
+          </label>
+          {sendingInvite ? <p className="self-center text-sm text-slate-600 dark:text-slate-300">ผู้รับเปิดคำเชิญเพื่อตั้งรหัสผ่านเอง</p>
+            : <label className="block text-sm">{existingLogin ? 'รหัสผ่านใหม่ (เว้นว่างเพื่อใช้รหัสเดิม)' : 'รหัสผ่าน'}
+              <input type="password" className={inputClass} value={password} onChange={event => setPassword(event.target.value)}
+                required={!existingLogin || username.trim().toLowerCase() !== (existingEmailLogin ? selected?.email : selected?.username)?.toLowerCase()}
+                minLength={8} maxLength={72} autoComplete="new-password" />
+            </label>}
           <fieldset className="space-y-2 sm:col-span-2">
             <legend className="text-sm">ตำแหน่งเพิ่มเติม</legend>
             <div className="flex flex-wrap gap-x-4 gap-y-1">
@@ -119,7 +143,7 @@ export function OnlineStaffManagement() {
         </fieldset>
         <div className="flex flex-wrap gap-2">
           <button type="submit" className={primaryClass} disabled={busy}>
-            {busy ? 'กำลังบันทึก…' : editing ? 'บันทึกบัญชี' : 'สร้างบัญชี'}
+            {busy ? 'กำลังบันทึก…' : sendingInvite ? 'ส่งคำเชิญ' : editing ? 'บันทึกบัญชี' : 'สร้างบัญชี'}
           </button>
         </div>
         {feedbackMessage}
