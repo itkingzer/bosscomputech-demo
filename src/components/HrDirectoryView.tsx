@@ -1,6 +1,6 @@
 import { ModalBackdrop } from './ui/ModalBackdrop';
 import { PhoneInput, normalizePhone } from './ui/FormInputs';
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from '../context/AppContext';
 import { OnlineStaffManagement } from './OnlineStaffManagement';
@@ -33,6 +33,8 @@ export const HrDirectoryView: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState<string>('all');
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [accountsOpen, setAccountsOpen] = useState(false);
+  const accountsButton = useRef<HTMLButtonElement>(null);
   const [editingUser, setEditingUser] = useState<UserAccount | null>(null);
   const [selectedStaffForLog, setSelectedStaffForLog] = useState<UserAccount | null>(null);
 
@@ -193,7 +195,6 @@ export const HrDirectoryView: React.FC = () => {
 
   return (
     <div className="space-y-5">
-      {usesSupabaseAuth && <OnlineStaffManagement />}
       {/* Header */}
       <div className="liquid-glass rounded-3xl p-5 sm:p-6 border border-white/[0.08] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
@@ -209,15 +210,21 @@ export const HrDirectoryView: React.FC = () => {
             </p>
           </div>
         </div>
-        {canManageProfiles && <button
+        <button
+          ref={accountsButton}
           type="button"
-          onClick={openAddModal}
-          className="px-4 py-2.5 rounded-2xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold text-xs shadow-lg shadow-[#FF6B00]/25 cursor-pointer flex items-center gap-2 self-start sm:self-auto"
+          aria-haspopup="dialog"
+          onClick={usesSupabaseAuth ? () => setAccountsOpen(true) : openAddModal}
+          className="min-h-11 shrink-0 rounded-2xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] px-4 py-2.5 text-xs font-extrabold text-black shadow-lg shadow-[#FF6B00]/25 hover:from-[#FF8A24] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF6B00] cursor-pointer flex items-center gap-2 self-start sm:self-auto"
         >
-          <UserPlus className="w-4 h-4" />
-          <span>เพิ่มพนักงานใหม่</span>
-        </button>}
+          <UserPlus className="w-4 h-4" aria-hidden="true" />
+          <span>{usesSupabaseAuth ? 'จัดการบัญชีพนักงาน' : 'เพิ่มพนักงานใหม่'}</span>
+        </button>
       </div>
+      {usesSupabaseAuth && accountsOpen && <OnlineStaffManagement onClose={() => {
+        setAccountsOpen(false);
+        accountsButton.current?.focus();
+      }} />}
 
       {/* Summary & Filters */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3">

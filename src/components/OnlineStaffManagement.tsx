@@ -8,9 +8,9 @@ import { Modal } from './ui/Modal';
 const roles: UserRole[] = ['sales', 'accounting', 'finance', 'prep', 'frontdesk', 'onsite', 'repair', 'hr'];
 const inputClass = 'w-full min-h-11 rounded-xl liquid-glass-input px-3 py-2';
 const buttonClass = 'min-h-11 rounded-xl border border-slate-300 dark:border-slate-600 px-3 py-2 text-sm font-semibold disabled:opacity-50';
-const primaryClass = 'inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-indigo-700 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-600 disabled:opacity-50';
+const primaryClass = 'inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] px-4 py-2 text-sm font-bold text-black shadow-md shadow-orange-500/20 hover:from-[#FF8A24] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FF6B00] disabled:opacity-50';
 
-export function OnlineStaffManagement() {
+export function OnlineStaffManagement({ onClose }: { onClose?: () => void }) {
   const { users, currentUser, manageStaff } = useApp();
   const isAdmin = currentUser?.role === 'admin';
   const isSuperadmin = isAdmin && currentUser?.is_superadmin === true;
@@ -85,14 +85,23 @@ export function OnlineStaffManagement() {
   const feedbackMessage = feedback && <p role={feedback.error ? 'alert' : 'status'}
     className={feedback.error ? 'text-rose-700 dark:text-rose-300' : 'text-emerald-700 dark:text-emerald-300'}>{feedback.text}</p>;
 
-  return (
-    <section className="space-y-5">
-      <Modal open={formOpen} onClose={() => { if (!busy) { setFormOpen(false); setPassword(''); } }}
-        title={editing ? 'แก้ไขบัญชี' : 'เพิ่มบัญชี'} maxWidthClass="max-w-2xl">
-      <form onSubmit={save} className="space-y-4 p-5">
+  const closeForm = () => {
+    if (busy) return;
+    setFormOpen(false);
+    setPassword('');
+    setFeedback(null);
+  };
+  const closeDelete = () => {
+    if (busy) return;
+    setDeleting(null);
+    setFeedback(null);
+  };
+  const formTitle = editing ? 'แก้ไขบัญชี' : 'เพิ่มบัญชี';
+  const form = (
+      <form onSubmit={save} className="space-y-5 p-2 sm:p-4">
         <fieldset disabled={busy} className="grid gap-3 sm:grid-cols-2">
           <label className="block text-sm">ชื่อพนักงาน
-            <input type="text" className={inputClass} value={name} onChange={event => setName(event.target.value)} required maxLength={150} />
+            <input autoFocus type="text" className={inputClass} value={name} onChange={event => setName(event.target.value)} required maxLength={150} />
           </label>
           <label className="block text-sm">บทบาทหลัก
             <select className={inputClass} value={role} onChange={event => {
@@ -141,30 +150,31 @@ export function OnlineStaffManagement() {
             </div>
           </fieldset>
         </fieldset>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap justify-end gap-2 border-t border-slate-200 pt-4 dark:border-slate-700">
+          <button type="button" className={buttonClass} disabled={busy} onClick={closeForm}>{onClose ? 'กลับไปที่รายชื่อ' : 'ยกเลิก'}</button>
           <button type="submit" className={primaryClass} disabled={busy}>
             {busy ? 'กำลังบันทึก…' : sendingInvite ? 'ส่งคำเชิญ' : editing ? 'บันทึกบัญชี' : 'สร้างบัญชี'}
           </button>
         </div>
         {feedbackMessage}
       </form>
-      </Modal>
+  );
 
+  const directory = (
       <div className="liquid-glass overflow-hidden rounded-2xl">
-        <header className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 p-5 dark:border-slate-700">
+        <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 p-3 dark:border-slate-700 sm:p-5">
           <div className="flex items-center gap-3">
-            <span className="rounded-xl bg-indigo-100 p-2.5 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-200"><Users aria-hidden="true" size={22} /></span>
             <div>
-              <h2 className="text-lg font-bold">จัดการบัญชีผู้ใช้</h2>
-              {isSuperadmin && <span className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-800 dark:text-indigo-300"><ShieldCheck aria-hidden="true" size={14} /> Superadmin</span>}
+              <h2 className="text-base font-bold">{onClose ? 'รายชื่อบัญชี' : 'จัดการบัญชีผู้ใช้'}</h2>
+              {isSuperadmin && <span className="inline-flex items-center gap-1 text-xs font-semibold text-orange-800 dark:text-orange-300"><ShieldCheck aria-hidden="true" size={14} /> Superadmin</span>}
             </div>
           </div>
           <button type="button" className={primaryClass} disabled={busy} onClick={() => selectProfile(null)}><Plus aria-hidden="true" size={18} /> เพิ่มบัญชี</button>
         </header>
-        <div className="grid gap-3 p-5 sm:grid-cols-[1fr_14rem]">
+        <div className="grid gap-3 p-3 sm:grid-cols-[1fr_14rem] sm:p-5">
           <label className="relative">
             <Search aria-hidden="true" size={18} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
-            <input type="search" className={inputClass + ' pl-10'} aria-label="ค้นหาบัญชี" placeholder="ค้นหาชื่อ ชื่อผู้ใช้ หรืออีเมล" value={query} onChange={event => setQuery(event.target.value)} />
+            <input autoFocus={Boolean(onClose)} type="search" className={inputClass + ' pl-10'} aria-label="ค้นหาบัญชี" placeholder="ค้นหาชื่อ ชื่อผู้ใช้ หรืออีเมล" value={query} onChange={event => setQuery(event.target.value)} />
           </label>
           <select className={inputClass} aria-label="กรองบทบาท" value={roleFilter} onChange={event => setRoleFilter(event.target.value)}>
             <option value="">ทุกบทบาท</option>
@@ -182,7 +192,7 @@ export function OnlineStaffManagement() {
             const status = user.is_active === false ? 'พักการใช้งาน'
               : user.auth_user_id ? 'ผูกบัญชีแล้ว' : 'ยังไม่ได้ตั้งรหัสผ่าน';
             return (
-              <li key={user.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
+              <li key={user.id} className="flex flex-wrap items-center justify-between gap-3 px-3 py-4 sm:px-5">
                 <div className="min-w-0">
                   <strong className="block break-words">{user.name}</strong>
                   <div className="break-all text-sm text-slate-600 dark:text-slate-300">{user.username}</div>
@@ -205,19 +215,39 @@ export function OnlineStaffManagement() {
           })}
         </ul>
       </div>
-      <Modal open={Boolean(deleting)} onClose={() => { if (!busy) setDeleting(null); }} title="ยืนยันการลบบัญชี">
-        {deleting && <div className="space-y-4 p-5">
+  );
+  const deleteTitle = 'ยืนยันการลบบัญชี';
+  const confirmation = deleting && (
+        <div className="space-y-4 p-5">
           <p>ลบบัญชี <strong>{deleting.name}</strong> ({deleting.username}) และสิทธิ์เข้าสู่ระบบอย่างถาวร</p>
           {feedbackMessage}
           <div className="flex flex-wrap justify-end gap-2">
-            <button type="button" className={buttonClass} disabled={busy} onClick={() => setDeleting(null)}>ยกเลิก</button>
+            <button autoFocus type="button" className={buttonClass} disabled={busy} onClick={closeDelete}>ยกเลิก</button>
             <button type="button" className="min-h-11 rounded-xl bg-rose-700 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-600 disabled:opacity-50"
               disabled={busy} onClick={async () => {
                 if (await perform(() => manageStaff({ action: 'delete', id: deleting.id }), 'ลบบัญชีแล้ว')) setDeleting(null);
               }}>{busy ? 'กำลังลบ…' : 'ลบบัญชีถาวร'}</button>
           </div>
-        </div>}
+        </div>
+  );
+
+  if (onClose) {
+    return (
+      <Modal open onClose={formOpen ? closeForm : deleting ? closeDelete : () => { if (!busy) onClose(); }}
+        title={formOpen ? formTitle : deleting ? deleteTitle : 'จัดการบัญชีพนักงาน'}
+        icon={deleting ? <Trash2 size={20} aria-hidden="true" /> : <Users size={20} aria-hidden="true" />}
+        maxWidthClass={deleting ? 'max-w-lg' : formOpen ? 'max-w-2xl' : 'max-w-3xl'}
+        closeOnBackdrop={!formOpen && !deleting && !busy}>
+        {formOpen ? form : deleting ? confirmation : directory}
       </Modal>
+    );
+  }
+
+  return (
+    <section className="space-y-5">
+      {directory}
+      <Modal open={formOpen} onClose={closeForm} title={formTitle} maxWidthClass="max-w-2xl">{form}</Modal>
+      <Modal open={Boolean(deleting)} onClose={closeDelete} title={deleteTitle}>{confirmation}</Modal>
     </section>
   );
 }
