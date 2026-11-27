@@ -106,6 +106,7 @@ CREATE TABLE IF NOT EXISTS public.repair_tickets (
     -- Repair lifecycle (7 states) — วงจรชีวิตงานซ่อม / ส่งเคลม
     repair_status TEXT NOT NULL DEFAULT 'pending_check' CHECK (repair_status IN (
         'pending_check',
+        'awaiting_quote',
         'repairing',
         'waiting_parts',
         'rma_sent',
@@ -199,6 +200,13 @@ ALTER TABLE public.repair_tickets ADD COLUMN IF NOT EXISTS delivered_at TIMESTAM
 
 -- Migration: Repair Lifecycle & RMA (Warranty Claim) tracking columns (safe to re-run)
 ALTER TABLE public.repair_tickets ADD COLUMN IF NOT EXISTS repair_status TEXT NOT NULL DEFAULT 'pending_check';
+ALTER TABLE public.repair_tickets ADD COLUMN IF NOT EXISTS repair_quotation JSONB;
+ALTER TABLE public.repair_tickets
+    DROP CONSTRAINT IF EXISTS repair_tickets_repair_status_check,
+    ADD CONSTRAINT repair_tickets_repair_status_check CHECK (repair_status IN (
+        'pending_check', 'awaiting_quote', 'repairing', 'waiting_parts',
+        'rma_sent', 'rma_returned', 'ready_pickup', 'completed'
+    ));
 ALTER TABLE public.repair_tickets ADD COLUMN IF NOT EXISTS service_type TEXT NOT NULL DEFAULT 'in_house_repair';
 ALTER TABLE public.repair_tickets ADD COLUMN IF NOT EXISTS included_accessories TEXT;
 ALTER TABLE public.repair_tickets ADD COLUMN IF NOT EXISTS rma_supplier TEXT;

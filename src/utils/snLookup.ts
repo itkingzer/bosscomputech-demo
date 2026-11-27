@@ -167,6 +167,7 @@ export function resolveRepairStatus(
     } else if (rs && REPAIR_LIFECYCLE_META[rs]) {
       const toneMap: Record<string, LiveStatusTone> = {
         pending_check: 'blue',
+        awaiting_quote: 'cyan',
         repairing: 'amber',
         waiting_parts: 'amber',
         rma_sent: 'violet',

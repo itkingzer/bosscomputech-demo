@@ -151,7 +151,7 @@ const DOA_DEFECT_CHIPS = [
 
 export const PrepView: React.FC = () => {
   const {
-    items, orders, projects, acceptPrepTask,
+    items, orders, projects, users, acceptPrepTask,
     prepFinishToStock, prepFinishAndDispatch, prepFinishLogoToStageB, prepFinishProjectEquipment, applyVoidAndDispatch, currentUser,
     movePrepStockToReady, reportItemDOA
   } = useApp();
@@ -1015,7 +1015,14 @@ export const PrepView: React.FC = () => {
       {/* ========================================================================= */}
       {/* TAB 4: ประวัติเครื่องที่เตรียมเข้าคลังแล้ว (in_stock — Read-Only + ค้นหา S/N) */}
       {/* ========================================================================= */}
-      {prepTab === 'history' && <PrepDailyHistory items={items} orders={orders} />}
+      {prepTab === 'history' && (
+        <PrepDailyHistory
+          items={items}
+          orders={orders}
+          technician={currentUser}
+          canMatchLegacyName={!users.some(user => user.id !== currentUser?.id && user.name === currentUser?.name)}
+        />
+      )}
       {prepTab === 'stock' && (
         <div className="liquid-glass rounded-3xl p-6 shadow-2xl border border-slate-200 dark:border-white/[0.08]">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">

@@ -18,7 +18,7 @@ export interface ActivityLog {
     source?: { kind: 'sales' | 'project'; reference: string } | { kind: 'stock' };
   };
   stock_po_receipt?: { deliveryNote?: string; taxInvoice?: string };
-  prep_event?: { kind: PrepActivityKind; model: string; serial?: string | null; reference?: string | null };
+  prep_event?: { kind: PrepActivityKind; model: string; serial?: string | null; reference?: string | null; actor_id?: string };
 }
 
 // แปลง ISO timestamp -> รูปแบบไทยสะอาดตา (พ.ศ. 2 หลัก / 24 ชม.) เช่น "20 พ.ย. 69 14:30"
@@ -984,6 +984,7 @@ export type ServiceType = 'in_house_repair' | 'rma_claim';
 
 export type RepairLifecycleStatus =
   | 'pending_check'   // รอตรวจเช็ก
+  | 'awaiting_quote'  // รอเสนอราคา
   | 'repairing'       // กำลังซ่อมหน้าร้าน
   | 'waiting_parts'   // รออะไหล่
   | 'rma_sent'        // ส่งเคลมศูนย์แล้ว
@@ -1013,6 +1014,11 @@ export const REPAIR_LIFECYCLE_META: Record<
     label: 'รอตรวจเช็ก',
     badge: 'bg-sky-500/15 text-sky-600 dark:text-sky-400 border-sky-500/30',
     dot: 'bg-sky-500'
+  },
+  awaiting_quote: {
+    label: 'รอเสนอราคา',
+    badge: 'bg-teal-500/15 text-teal-700 dark:text-teal-300 border-teal-500/30',
+    dot: 'bg-teal-500'
   },
   repairing: {
     label: 'กำลังซ่อมหน้าร้าน',
@@ -1048,6 +1054,7 @@ export const REPAIR_LIFECYCLE_META: Record<
 
 export const REPAIR_LIFECYCLE_ORDER: RepairLifecycleStatus[] = [
   'pending_check',
+  'awaiting_quote',
   'repairing',
   'waiting_parts',
   'rma_sent',
@@ -1060,6 +1067,7 @@ export const REPAIR_LIFECYCLE_ORDER: RepairLifecycleStatus[] = [
 // ready_pickup = จบงานฝั่งช่าง ส่งเครื่องคืนห้องหน้าร้าน
 export const REPAIR_TECH_LIFECYCLE_ORDER: RepairLifecycleStatus[] = [
   'pending_check',
+  'awaiting_quote',
   'repairing',
   'waiting_parts',
   'rma_sent',
@@ -1070,6 +1078,7 @@ export const REPAIR_TECH_LIFECYCLE_ORDER: RepairLifecycleStatus[] = [
 // สถานะที่ถือว่า "งานยังไม่จบฝั่งช่าง" (แสดงบนโต๊ะช่าง)
 export const REPAIR_TECH_ACTIVE_STATUSES: RepairLifecycleStatus[] = [
   'pending_check',
+  'awaiting_quote',
   'repairing',
   'waiting_parts',
   'rma_sent',
@@ -1166,6 +1175,7 @@ export interface RepairTicket {
   rma_returned_date?: string | null;       // ISO timestamp วันที่ได้รับของเคลมกลับจากศูนย์
   replacement_sn?: string | null;          // S/N ใหม่กรณีศูนย์เปลี่ยนตัวใหม่ (original เก็บใน walkin_sn)
   repair_status?: RepairLifecycleStatus;   // สถานะวงจรชีวิตงานซ่อม/RMA
+  repair_quotation?: { description: string; total: number; issued_at: string } | null;
   // --- Evidence Photos (Onsite Pickup / Service Sheet / Return Proof) ---
   photo_urls?: string[] | null;            // URLs (Supabase Storage) หรือ Data URLs (Demo) สูงสุด 3 รูป
   // --- Front-Desk 1-Day Advance Scheduling ---

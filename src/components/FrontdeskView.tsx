@@ -404,6 +404,7 @@ export const FrontdeskView: React.FC = () => {
 
   // ของพร้อมปล่อยจากห้องช่างเตรียม (รวมทั้งติดวอยพร้อมปล่อยแล้ว และเทสเสร็จรอช่างเตรียมแปะวอย)
   const [prepOverviewFilter, setPrepOverviewFilter] = useState<'all' | 'ready' | 'pending_void'>('all');
+  const [prepDetailKey, setPrepDetailKey] = useState<string | null>(null);
   const prepReadyOverviewItems = useMemo(
     () => items.filter(i => i.status === 'ready_for_dispatch' || i.status === 'prepped_in_stock'),
     [items]
@@ -2109,10 +2110,13 @@ export const FrontdeskView: React.FC = () => {
                       const addressText = [prj?.location || ord?.delivery_location, prj?.district || ord?.district].filter(Boolean).join(' · ');
                       const phone = prj?.phone || ord?.customer_phone;
                       const dueDate = prj?.due_date || ord?.delivery_date;
+                      const reference = item.project_id || ord?.bill_no || ord?.sales_ref || item.order_id || item.serial_number || item.id;
+                      const customer = prj?.customer_name || ord?.customer_name || 'สต๊อก / ไม่ระบุลูกค้า';
+                      const delivery = item.project_id ? 'งานโปรเจกต์' : isPickup ? 'รับเองหน้าร้าน' : 'จัดส่ง Onsite';
                       return (
                         <div
                           key={key}
-                          className={`rounded-2xl border p-4 flex flex-col gap-2.5 bg-white dark:bg-white/[0.04] shadow-sm ${
+                          className={`relative rounded-2xl border p-4 flex flex-col gap-2.5 bg-white dark:bg-white/[0.04] shadow-sm hover:shadow-md ${
                             pendingCount === 0
                               ? 'border-emerald-400 dark:border-emerald-500/40'
                               : 'border-amber-400 dark:border-amber-500/40'
@@ -2120,13 +2124,13 @@ export const FrontdeskView: React.FC = () => {
                         >
                           <div className="flex items-center justify-between gap-2">
                             <span className="text-xs font-mono font-extrabold px-2 py-0.5 rounded-lg bg-[#FF6B00] text-black truncate">
-                              {item.project_id || ord?.bill_no || ord?.sales_ref || item.order_id || item.serial_number || item.id}
+                              {reference}
                             </span>
                           </div>
 
                           <div className="min-w-0 space-y-1">
                             <div className="text-sm sm:text-base font-extrabold text-slate-900 dark:text-white leading-snug">
-                              {prj?.customer_name || ord?.customer_name || 'สต๊อก / ไม่ระบุลูกค้า'}
+                              {customer}
                             </div>
                             <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs font-bold">
                               {readyCount > 0 && (
@@ -2152,9 +2156,8 @@ export const FrontdeskView: React.FC = () => {
                                   toTelHref(phone) ? (
                                     <a
                                       href={toTelHref(phone)!}
-                                      onClick={(e) => e.stopPropagation()}
                                       title="กดเพื่อโทรออก"
-                                      className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-300 hover:underline cursor-pointer"
+                                      className="relative z-10 inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-300 hover:underline cursor-pointer"
                                     >
                                       <Phone className="w-3 h-3" />
                                       {phone}
@@ -2177,38 +2180,74 @@ export const FrontdeskView: React.FC = () => {
 
                           <div className="mt-auto pt-2 border-t border-slate-200 dark:border-white/[0.08] flex items-center justify-between gap-2 text-xs">
                             <span className="font-bold text-slate-700 dark:text-slate-200">
-                              {item.project_id ? 'งานโปรเจกต์' : isPickup ? 'รับเองหน้าร้าน' : 'จัดส่ง Onsite'}
+                              {delivery}
                               {dueDate ? ` · ส่ง ${formatDateDMY(dueDate)}` : ''}
                             </span>
                           </div>
 
-                          <details className="text-sm text-slate-700 dark:text-slate-200">
-                            <summary className="cursor-pointer py-2 font-semibold focus-visible:outline focus-visible:outline-2">
-                              สินค้า {members.length} ชิ้น
-                            </summary>
-                            <ul className="divide-y divide-slate-200 dark:divide-white/[0.08]">
-                              {members.map(member => (
-                                <li key={member.id} className="space-y-1.5 py-2">
-                                  <div className="font-bold break-words">{member.model_name}</div>
-                                  <div className="text-xs">
-                                    S/N: {member.serial_number || '-'}
-                                    {member.void_date && ` · วอย: ${member.void_date}`}
-                                  </div>
-                                  {member.status === 'ready_for_dispatch' ? (
-                                    <button
-                                      type="button"
-                                      onClick={() => (isPickup ? openPickup(member.id) : openDispatch(member.id))}
-                                      className="min-h-11 px-3 py-1.5 rounded-xl bg-[#FF6B00] hover:bg-[#FF8A24] text-black font-extrabold text-xs cursor-pointer shadow-sm"
-                                    >
-                                      {isPickup ? 'ยืนยันรับสินค้า' : 'มอบหมาย / วันส่ง'}
-                                    </button>
-                                  ) : (
-                                    <div className="text-xs font-semibold text-amber-800 dark:text-amber-300">รอช่างเตรียมแปะวอย</div>
-                                  )}
-                                </li>
-                              ))}
-                            </ul>
-                          </details>
+                          <button
+                            type="button"
+                            aria-haspopup="dialog"
+                            aria-label={`ดูรายละเอียดสินค้า ${reference}`}
+                            onClick={() => setPrepDetailKey(key)}
+                            className="flex min-h-11 cursor-pointer items-center justify-between gap-2 text-left text-sm font-bold text-sky-800 after:absolute after:inset-0 after:rounded-2xl after:content-[''] focus-visible:after:ring-2 focus-visible:after:ring-sky-500 dark:text-sky-300"
+                          >
+                            ดูรายละเอียดสินค้า {members.length} ชิ้น
+                            <ChevronRight className="size-4 shrink-0" aria-hidden="true" />
+                          </button>
+                          {prepDetailKey === key && (
+                            <Modal
+                              open
+                              onClose={() => setPrepDetailKey(null)}
+                              title={`รายละเอียดสินค้า · ${reference}`}
+                              subtitle={`${customer} · ${members.length} ชิ้น`}
+                              icon={<Package className="size-5" aria-hidden="true" />}
+                              maxWidthClass="max-w-2xl"
+                              footer={
+                                <div className="flex justify-end">
+                                  <button type="button" autoFocus onClick={() => setPrepDetailKey(null)} className={modalSecondaryBtnClass}>
+                                    ปิด
+                                  </button>
+                                </div>
+                              }
+                            >
+                              <div className="space-y-1 rounded-xl bg-slate-100 p-3 text-sm dark:bg-white/[0.05]">
+                                <p className="font-semibold">{delivery}{dueDate && ` · ส่ง ${formatDateDMY(dueDate)}`}</p>
+                                {addressText && <p className="break-words">{addressText}</p>}
+                                {rMeta && <p>{rMeta.shortName}</p>}
+                                {phone && <p>{toTelHref(phone) ? <a className="underline" href={toTelHref(phone)!}>{phone}</a> : phone}</p>}
+                              </div>
+                              <ul className="divide-y divide-slate-200 dark:divide-white/[0.08]">
+                                {members.map(member => (
+                                  <li key={member.id} className="space-y-1.5 py-3">
+                                    <div className="font-bold break-words">{member.model_name}</div>
+                                    <div className="break-words text-sm">
+                                      S/N: {member.serial_number || '-'}
+                                      {member.void_date && ` · วันที่ติดวอย ${formatDateDMY(member.void_date)}`}
+                                    </div>
+                                    {member.status === 'ready_for_dispatch' ? (
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-300">ติดวอยพร้อมปล่อย</span>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setPrepDetailKey(null);
+                                            if (isPickup) openPickup(member.id);
+                                            else openDispatch(member.id);
+                                          }}
+                                          className="min-h-11 px-3 py-1.5 rounded-xl bg-[#FF6B00] hover:bg-[#FF8A24] text-black font-extrabold text-xs cursor-pointer shadow-sm"
+                                        >
+                                          {isPickup ? 'ยืนยันรับสินค้า' : 'มอบหมาย / วันส่ง'}
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <div className="text-xs font-semibold text-amber-800 dark:text-amber-300">รอช่างเตรียมแปะวอย</div>
+                                    )}
+                                  </li>
+                                ))}
+                              </ul>
+                            </Modal>
+                          )}
                         </div>
                       );
                     })}

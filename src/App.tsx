@@ -196,6 +196,16 @@ export const App: React.FC = () => {
     if (nav.id === 'profit' && (currentUser.role as string) === 'manager') return true;
     return nav.role === currentUser.role;
   });
+  const workMenu = {
+    label: 'งานประจำ',
+    ids: ['sales', 'accounting', 'prep', 'frontdesk', 'onsite', 'repair', 'finance', 'hr']
+  };
+  const overviewMenu = { label: 'ภาพรวม', ids: ['dashboard'] };
+  const navGroups = [
+    ...(currentUser.role === 'admin' ? [overviewMenu, workMenu] : [workMenu, overviewMenu]),
+    { label: 'รายงานและประวัติ', ids: ['profit', 'completed-logs'] },
+    { label: 'ดูแลระบบ', ids: ['admin'] }
+  ];
 
   return (
     <div className="min-h-screen bg-[var(--bg-page)] text-[var(--text-primary)] flex relative overflow-x-hidden transition-colors duration-300">
@@ -288,67 +298,73 @@ export const App: React.FC = () => {
           </button>
 
           {/* Navigation Links (Filtered strictly to visible items only) */}
-          <div className="flex-1 px-3 py-2 space-y-1.5 overflow-y-auto">
-            <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest text-slate-500">
-              เมนูการทำงาน ({visibleNavItems.length})
-            </div>
-
-            {visibleNavItems.map((nav) => {
-              const isActive = activeTab === nav.id;
-              const Icon = nav.icon;
-
+          <nav aria-label="เมนูการทำงาน" className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-2">
+            {navGroups.map(({ label, ids }) => {
+              const entries = ids.flatMap(id => visibleNavItems.filter(nav => nav.id === id));
+              if (!entries.length) return null;
               return (
-                <button
-                  key={nav.id}
-                  onClick={() => {
-                    setActiveTab(nav.id);
-                    setIsMobileSidebarOpen(false);
-                  }}
-                  aria-current={isActive ? 'page' : undefined}
-                  className={`
-                    w-full flex items-center justify-between p-3 min-h-[52px] rounded-2xl transition-all duration-200 ease-out cursor-pointer group text-left
-                    active:scale-[0.97] hover:brightness-105
-                    ${isActive
-                      ? 'liquid-glass-active font-bold shadow-lg shadow-[#FF6B00]/25'
-                      : 'text-slate-300 hover:text-white hover:bg-white/[0.05] border border-transparent hover:border-white/[0.06]'
-                    }
-                  `}
-                >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className={`
-                      p-2 rounded-xl transition-all
-                      ${isActive
-                        ? 'bg-black/20 text-black'
-                        : 'bg-white/[0.05] text-[#FF6B00] group-hover:bg-[#FF6B00]/15'
-                      }
-                    `}>
-                      <Icon className="w-4 h-4" />
-                    </div>
-                    <div className="truncate">
-                      <div className={`text-xs ${isActive ? 'text-black font-extrabold' : 'text-slate-200 group-hover:text-white font-medium'}`}>
-                        {nav.label}
-                      </div>
-                      <div className={`text-[10px] truncate ${isActive ? 'text-black/80' : 'text-slate-500'}`}>
-                        {nav.desc}
-                      </div>
-                    </div>
-                  </div>
+                <div key={label} role="group" aria-label={label} className="space-y-1">
+                  <div className="px-3 py-1 text-xs font-semibold text-slate-400">{label}</div>
+                  {entries.map((nav) => {
+                    const isActive = activeTab === nav.id;
+                    const Icon = nav.icon;
 
-                  {nav.badge !== null && nav.badge > 0 && (
-                    <span className={`
-                      px-2 py-0.5 rounded-full text-[10px] font-bold ml-2 flex-shrink-0
-                      ${isActive
-                        ? 'bg-black text-[#FF6B00]'
-                        : 'bg-[#FF6B00]/20 text-[#FF6B00] border border-[#FF6B00]/40 shadow-sm shadow-[#FF6B00]/20'
-                      }
-                    `}>
-                      {nav.badge}
-                    </span>
-                  )}
-                </button>
+                    return (
+                      <button
+                        key={nav.id}
+                        type="button"
+                        onClick={() => {
+                          setActiveTab(nav.id);
+                          setIsMobileSidebarOpen(false);
+                        }}
+                        aria-current={isActive ? 'page' : undefined}
+                        className={`
+                          w-full flex items-center justify-between p-3 min-h-[52px] rounded-2xl transition-all duration-200 ease-out cursor-pointer group text-left
+                          active:scale-[0.97] hover:brightness-105 focus-visible:outline-2 focus-visible:outline-orange-400
+                          ${isActive
+                            ? 'liquid-glass-active font-bold shadow-lg shadow-[#FF6B00]/25'
+                            : 'text-slate-300 hover:text-white hover:bg-white/[0.05] border border-transparent hover:border-white/[0.06]'
+                          }
+                        `}
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className={`
+                            p-2 rounded-xl transition-all
+                            ${isActive
+                              ? 'bg-black/20 text-black'
+                              : 'bg-white/[0.05] text-[#FF6B00] group-hover:bg-[#FF6B00]/15'
+                            }
+                          `}>
+                            <Icon className="w-4 h-4" />
+                          </div>
+                          <div className="truncate">
+                            <div className={`text-xs ${isActive ? 'text-black font-extrabold' : 'text-slate-200 group-hover:text-white font-medium'}`}>
+                              {nav.label}
+                            </div>
+                            <div className={`text-[10px] truncate ${isActive ? 'text-black/80' : 'text-slate-500'}`}>
+                              {nav.desc}
+                            </div>
+                          </div>
+                        </div>
+
+                        {nav.badge !== null && nav.badge > 0 && (
+                          <span className={`
+                            px-2 py-0.5 rounded-full text-[10px] font-bold ml-2 flex-shrink-0
+                            ${isActive
+                              ? 'bg-black text-[#FF6B00]'
+                              : 'bg-[#FF6B00]/20 text-[#FF6B00] border border-[#FF6B00]/40 shadow-sm shadow-[#FF6B00]/20'
+                            }
+                          `}>
+                            {nav.badge}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
               );
             })}
-          </div>
+          </nav>
 
           {/* Bottom Actions & DB Mode */}
           <div className="p-3 border-t border-white/[0.06] space-y-2">

@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react';
-import { History } from 'lucide-react';
-import { type ActivityLog, type Item, type Order, type PrepActivityKind } from '../types';
+import { createPortal, flushSync } from 'react-dom';
+import { History, Printer } from 'lucide-react';
+import { formatDateDMY, type ActivityLog, type Item, type Order, type PrepActivityKind, type UserAccount } from '../types';
 import { ListControls, useListControls } from './ListControls';
-import { Modal, modalInputClass } from './ui/Modal';
+import { Modal, modalInputClass, modalPrimaryBtnClass } from './ui/Modal';
+import { COMPANY_NAME } from './RepairReceiptPrintDocument';
 
 const labels: Record<PrepActivityKind, string> = {
   accept: 'รับงาน', stock: 'เข้าคลังพร้อมขาย', hold: 'เก็บรอส่งมอบ',
@@ -29,17 +31,24 @@ const legacyKind = (log: ActivityLog, item: Item): PrepActivityKind | undefined 
   if (action === 'แปะวอยประกัน' && (role === 'prep' || (!role && log.actor === item.assigned_prep_tech))) return 'dispatch';
 };
 
-export function PrepDailyHistory({ items, orders }: { items: Item[]; orders: Order[] }) {
+export function PrepDailyHistory({ items, orders, technician, canMatchLegacyName }: {
+  items: Item[];
+  orders: Order[];
+  technician: Pick<UserAccount, 'id' | 'name'> | null;
+  canMatchLegacyName: boolean;
+}) {
   const [date, setDate] = useState(() => bangkokDay(new Date()));
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [printing, setPrinting] = useState(false);
   const events = useMemo(() => items.flatMap(item => {
     const rows = (item.activity_logs || []).flatMap((log, index) => {
       const kind = log.prep_event?.kind ?? legacyKind(log, item);
       if (!kind) return [];
       return [{
         key: `${item.id}:${index}`, itemId: item.id, kind, timestamp: log.timestamp, actor: log.actor,
+        actorId: log.prep_event?.actor_id,
         model: log.prep_event?.model ?? item.model_name,
         serial: log.prep_event ? log.prep_event.serial : log.note?.match(/S\/N:\s*([^|]+)/)?.[1].trim() ?? item.serial_number,
         reference: log.prep_event ? log.prep_event.reference : item.project_id || item.order_id || item.po_no,
@@ -48,7 +57,7 @@ export function PrepDailyHistory({ items, orders }: { items: Item[]; orders: Ord
     if (!rows.some(row => row.kind === 'accept') && item.prep_accepted_at && item.assigned_prep_tech) {
       rows.push({
         key: `${item.id}:accepted`, itemId: item.id, kind: 'accept', timestamp: item.prep_accepted_at,
-        actor: item.assigned_prep_tech, model: item.model_name, serial: null,
+        actor: item.assigned_prep_tech, actorId: undefined, model: item.model_name, serial: null,
         reference: item.project_id || item.order_id || item.po_no,
       });
     }
@@ -57,7 +66,7 @@ export function PrepDailyHistory({ items, orders }: { items: Item[]; orders: Ord
     if (storedKind && item.moved_to_ready_at && !rows.some(row => row.kind === storedKind)) {
       rows.push({
         key: `${item.id}:stored`, itemId: item.id, kind: storedKind, timestamp: item.moved_to_ready_at,
-        actor: item.assigned_prep_tech || 'ไม่ระบุช่าง', model: item.model_name,
+        actor: item.assigned_prep_tech || 'ไม่ระบุช่าง', actorId: undefined, model: item.model_name,
         serial: item.serial_number, reference: item.project_id || item.order_id || item.po_no,
       });
     }
@@ -66,6 +75,16 @@ export function PrepDailyHistory({ items, orders }: { items: Item[]; orders: Ord
 
   const query = search.trim().toLowerCase();
   const dailyRows = date ? events.filter(row => bangkokDay(new Date(row.timestamp)) === date) : [];
+  const personalRows = technician ? dailyRows
+    .filter(row => row.actorId ? row.actorId === technician.id : canMatchLegacyName && row.actor === technician.name)
+    .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp)) : [];
+  const printGroups = new Map<string, typeof personalRows>();
+  for (const row of personalRows) {
+    const key = JSON.stringify([row.model.trim().toLowerCase(), row.kind, row.reference || null]);
+    const group = printGroups.get(key);
+    if (group) group.push(row);
+    else printGroups.set(key, [row]);
+  }
   const selectedGroup = groups.find(group => group.key === filter);
   const ordersById = useMemo(() => new Map(orders.map(order => [order.id, order])), [orders]);
   const reportGroups = new Map<string, { key: string; title: string; caption?: string; rows: typeof dailyRows }>();
@@ -100,6 +119,15 @@ export function PrepDailyHistory({ items, orders }: { items: Item[]; orders: Ord
   const list = useListControls(summaries, { getDate: group => group.latest, initialSort: 'newest' });
   const selected = summaries.find(group => group.key === selectedKey);
 
+  const printPersonalReport = () => {
+    flushSync(() => setPrinting(true));
+    try {
+      window.print();
+    } finally {
+      setPrinting(false);
+    }
+  };
+
   return (
     <section className="liquid-glass space-y-4 rounded-3xl border border-slate-200 p-4 text-slate-900 shadow-2xl dark:border-white/[0.08] dark:text-white sm:p-6">
       <h3 className="flex items-center gap-2 text-base font-bold">
@@ -117,6 +145,22 @@ export function PrepDailyHistory({ items, orders }: { items: Item[]; orders: Ord
             placeholder="ชื่อสินค้า, S/N, ชื่อช่าง หรือเลขอ้างอิง" className={modalInputClass + ' min-h-11'} />
         </label>
       </div>
+      {technician && (
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={printPersonalReport}
+            disabled={personalRows.length === 0}
+            className={modalPrimaryBtnClass + ' min-h-11 inline-flex items-center justify-center gap-2 sm:w-auto disabled:cursor-not-allowed disabled:opacity-50'}
+          >
+            <Printer className="size-4" aria-hidden="true" />
+            พิมพ์รายงานของฉัน
+          </button>
+          <p className="text-sm text-slate-600 dark:text-slate-300">
+            {personalRows.length > 0 ? `${personalRows.length} กิจกรรมของฉันในวันที่เลือก` : 'ไม่พบกิจกรรมของฉันในวันที่เลือก'}
+          </p>
+        </div>
+      )}
       <div className="flex flex-wrap gap-2" aria-label="กรองประเภทกิจกรรม">
         {[{ key: 'all', label: 'ทั้งหมด', kinds: [] }, ...groups].map(group => (
           <button key={group.key} type="button" aria-pressed={filter === group.key}
@@ -177,6 +221,65 @@ export function PrepDailyHistory({ items, orders }: { items: Item[]; orders: Ord
           </ul>
         )}
       </Modal>
+      {printing && technician && createPortal(
+        <article id="prep-daily-report-print" className="hidden text-slate-900 print:block">
+          <header className="mb-5 break-inside-avoid border-t-4 border-orange-600 pt-4">
+            <p className="text-sm font-semibold text-slate-600">{COMPANY_NAME}</p>
+            <h1 className="mt-1 text-2xl font-extrabold leading-snug">รายงานประจำวันช่างเตรียมสินค้า</h1>
+            <dl className="mt-4 grid grid-cols-[1.5fr_1fr_auto_auto] gap-3 rounded-lg border border-slate-300 bg-slate-50 px-3 py-3 text-sm">
+              <div className="min-w-0">
+                <dt className="text-slate-600">ช่างเตรียมสินค้า</dt>
+                <dd className="mt-1 break-words font-bold">{technician.name}</dd>
+              </div>
+              <div>
+                <dt className="text-slate-600">วันที่ (เวลาไทย)</dt>
+                <dd className="mt-1 font-bold tabular-nums">{formatDateDMY(date)}</dd>
+              </div>
+              <div className="border-l border-slate-300 pl-3 text-right">
+                <dt className="text-slate-600">กิจกรรม</dt>
+                <dd className="mt-1 font-bold tabular-nums">{personalRows.length.toLocaleString('th-TH')}</dd>
+              </div>
+              <div className="border-l border-slate-300 pl-3 text-right">
+                <dt className="text-slate-600">สินค้ารวม (ชิ้น)</dt>
+                <dd className="mt-1 font-bold tabular-nums">{new Set(personalRows.map(row => row.itemId)).size.toLocaleString('th-TH')}</dd>
+              </div>
+            </dl>
+          </header>
+          <table className="w-full table-fixed border-collapse text-left text-sm leading-relaxed [&_td]:px-3 [&_td]:py-2 [&_th]:px-3 [&_th]:py-2">
+            <thead className="table-header-group border-y-2 border-slate-400 bg-slate-100">
+              <tr>
+                <th scope="col" className="w-[13%]">เวลา</th>
+                <th scope="col" className="w-[22%]">กิจกรรม</th>
+                <th scope="col">สินค้า / S/N</th>
+                <th scope="col" className="w-[11%] text-right">ชิ้น</th>
+                <th scope="col" className="w-[21%]">เลขอ้างอิง</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[...printGroups.values()].map(group => {
+                const [row] = group;
+                const order = row.reference ? ordersById.get(row.reference) : undefined;
+                const firstTime = timeFormat.format(new Date(row.timestamp));
+                const lastTime = timeFormat.format(new Date(group[group.length - 1].timestamp));
+                const serials = [...new Set(group.flatMap(entry => entry.serial ? [entry.serial] : []))];
+                return (
+                  <tr key={row.key} className="break-inside-avoid border-b border-slate-300 align-top even:bg-slate-50">
+                    <td className="tabular-nums">{firstTime}{lastTime !== firstTime && <div>ถึง {lastTime}</div>}</td>
+                    <td>{labels[row.kind]}</td>
+                    <td className="break-words">
+                      <div className="font-semibold">{row.model}</div>
+                      {serials.length > 0 && <div className="mt-0.5 text-xs text-slate-600">S/N <span className="font-mono">{serials.join(', ')}</span></div>}
+                    </td>
+                    <td className="text-right font-bold tabular-nums">{new Set(group.map(entry => entry.itemId)).size.toLocaleString('th-TH')}</td>
+                    <td className="break-words text-slate-700">{order?.bill_no || order?.sales_ref || row.reference || '—'}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </article>,
+        document.body
+      )}
     </section>
   );
 }

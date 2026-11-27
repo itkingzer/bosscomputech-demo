@@ -1,7 +1,7 @@
 import { ModalBackdrop } from './ui/ModalBackdrop';
 import { NumberInput, PhoneInput, normalizePhone } from './ui/FormInputs';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { createPortal, flushSync } from 'react-dom';
 import { useApp } from '../context/AppContext';
 import { ToastBanner } from './ui/ToastBanner';
 import {
@@ -44,24 +44,21 @@ const DISTRICT_OPTIONS = [
   'เวียงสระ', 'พระแสง', 'กาญจนดิษฐ์', 'ดอนสัก', 'ขนอม', 'ต่างจังหวัด / งานเหมาพิเศษ'
 ];
 
-type FilterTab = 'all' | 'in_house' | 'rma' | 'ready_pickup';
+type FilterTab = 'all' | 'in_house' | 'awaiting_quote' | 'rma' | 'ready_pickup';
 
 const FILTER_TABS: { id: FilterTab; label: string }[] = [
   { id: 'all', label: 'งานค้างในมือช่าง' },
   { id: 'in_house', label: 'ซ่อมหน้าร้าน' },
+  { id: 'awaiting_quote', label: 'รอเสนอราคา' },
   { id: 'rma', label: 'กำลังส่งเคลม (RMA)' },
   { id: 'ready_pickup', label: 'ส่งคืนหน้าร้านแล้ว (จบงานช่าง)' }
 ];
 
 // สถานะที่ถือว่า "งานยังไม่ปิด" (แสดงบนโต๊ะช่าง)
-const OPEN_LIFECYCLE: RepairLifecycleStatus[] = [
-  'pending_check', 'repairing', 'waiting_parts', 'rma_sent', 'rma_returned', 'ready_pickup'
-];
-
 const isTicketOpen = (t: RepairTicket): boolean => {
   if (t.status === 'returned_closed' || t.delivered_at) return false;
   const lifecycle = t.repair_status || 'pending_check';
-  return OPEN_LIFECYCLE.includes(lifecycle);
+  return REPAIR_TECH_LIFECYCLE_ORDER.includes(lifecycle);
 };
 
 // งานที่ยัง "ค้างอยู่ในมือช่าง" — ตัด ready_pickup (ส่งคืนหน้าร้านแล้ว) และ completed ออก
@@ -314,6 +311,11 @@ export const RepairView: React.FC = () => {
   const [draftRepairDetail, setDraftRepairDetail] = useState('');
   const [draftPartsUsed, setDraftPartsUsed] = useState('');
   const [draftCost, setDraftCost] = useState('');
+  const [quoteDescription, setQuoteDescription] = useState('');
+  const [quoteTotal, setQuoteTotal] = useState('');
+  const [saveError, setSaveError] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
+  const [quoteToPrint, setQuoteToPrint] = useState<RepairTicket | null>(null);
 
   const openTickets = useMemo(() => repairTickets.filter(isTicketOpen), [repairTickets]);
 
@@ -335,6 +337,8 @@ export const RepairView: React.FC = () => {
     switch (activeTab) {
       case 'in_house':
         return techActiveTickets.filter(t => getServiceType(t) === 'in_house_repair');
+      case 'awaiting_quote':
+        return techActiveTickets.filter(t => getLifecycle(t) === 'awaiting_quote');
       case 'rma':
         return techActiveTickets.filter(t => getServiceType(t) === 'rma_claim');
       case 'ready_pickup':
@@ -353,6 +357,8 @@ export const RepairView: React.FC = () => {
     switch (tab) {
       case 'in_house':
         return techActiveTickets.filter(t => getServiceType(t) === 'in_house_repair').length;
+      case 'awaiting_quote':
+        return techActiveTickets.filter(t => getLifecycle(t) === 'awaiting_quote').length;
       case 'rma':
         return rmaCount;
       case 'ready_pickup':
@@ -456,10 +462,14 @@ export const RepairView: React.FC = () => {
     setDraftRepairDetail(ticket.repair_detail || '');
     setDraftPartsUsed(ticket.parts_used || '');
     setDraftCost(ticket.repair_cost != null ? String(ticket.repair_cost) : '');
+    setQuoteDescription(ticket.repair_quotation?.description || '');
+    setQuoteTotal(ticket.repair_quotation ? String(ticket.repair_quotation.total) : '');
+    setSaveError('');
     setIsStatusPickerOpen(false);
   };
 
   const closeTicketModal = () => {
+    if (isSaving) return;
     setActiveTicketId(null);
     setIsStatusPickerOpen(false);
   };
@@ -473,28 +483,65 @@ export const RepairView: React.FC = () => {
   // Apply the chosen status back into the main modal draft (does NOT close the main modal)
   const confirmStatusPick = () => {
     setDraftStatus(pendingStatus);
+    setSaveError('');
     setIsStatusPickerOpen(false);
   };
 
   // Unified save: all edited fields + selected status in one shot, one activity log
-  const handleSaveAll = (ticket: RepairTicket) => {
+  const hasQuoteChanges = (ticket: RepairTicket) =>
+    quoteDescription.trim() !== (ticket.repair_quotation?.description || '') ||
+    quoteTotal.trim() !== (ticket.repair_quotation ? String(ticket.repair_quotation.total) : '');
+
+  const handleSaveAll = async (ticket: RepairTicket, requireQuotation = false) => {
+    if (isSaving) return;
+    let quotation: RepairTicket['repair_quotation'];
+    if (draftStatus === 'awaiting_quote' && (hasQuoteChanges(ticket) || (requireQuotation && !ticket.repair_quotation))) {
+      const total = Number(quoteTotal);
+      if (!quoteDescription.trim() || !/^\d+(\.\d{1,2})?$/.test(quoteTotal.trim()) || !Number.isSafeInteger(Math.round(total * 100))) {
+        setSaveError('ระบุรายการที่เสนอราคาและยอดเงินให้ครบ โดยใช้ทศนิยมได้ไม่เกิน 2 ตำแหน่ง');
+        return;
+      }
+      quotation = { description: quoteDescription.trim(), total, issued_at: new Date().toISOString() };
+    }
+    setSaveError('');
+    setIsSaving(true);
     const costNum = draftCost.trim() === '' ? null : Number(draftCost);
-    saveRepairTicket(ticket.id, {
-      service_type: draftServiceType,
-      included_accessories: draftIncludedAccessories.trim() || null,
-      rma_supplier: draftServiceType === 'rma_claim' ? (draftRmaSupplier || null) : null,
-      rma_tracking_no: draftServiceType === 'rma_claim' ? (draftRmaTrackingNo.trim() || null) : null,
-      rma_sent_date: draftServiceType === 'rma_claim' ? fromDateInputValue(draftRmaSentDate) : null,
-      rma_returned_date: draftServiceType === 'rma_claim' ? fromDateInputValue(draftRmaReturnedDate) : null,
-      replacement_sn: draftReplacementSn.trim() || null,
-      repair_status: draftStatus,
-      repair_detail: draftRepairDetail.trim() || null,
-      parts_used: draftPartsUsed.trim() || null,
-      repair_cost: costNum != null && !isNaN(costNum) ? costNum : null
-    });
-    setToast(`บันทึกข้อมูลและสถานะ ${ticket.ticket_no} เรียบร้อย (${REPAIR_LIFECYCLE_META[draftStatus].label})`);
-    setTimeout(() => setToast(''), 4000);
-    closeTicketModal();
+    try {
+      const saved = await saveRepairTicket(ticket.id, {
+        service_type: draftServiceType,
+        included_accessories: draftIncludedAccessories.trim() || null,
+        rma_supplier: draftServiceType === 'rma_claim' ? (draftRmaSupplier || null) : null,
+        rma_tracking_no: draftServiceType === 'rma_claim' ? (draftRmaTrackingNo.trim() || null) : null,
+        rma_sent_date: draftServiceType === 'rma_claim' ? fromDateInputValue(draftRmaSentDate) : null,
+        rma_returned_date: draftServiceType === 'rma_claim' ? fromDateInputValue(draftRmaReturnedDate) : null,
+        replacement_sn: draftReplacementSn.trim() || null,
+        repair_status: draftStatus,
+        repair_detail: draftRepairDetail.trim() || null,
+        parts_used: draftPartsUsed.trim() || null,
+        repair_cost: costNum != null && !isNaN(costNum) ? costNum : null,
+        ...(quotation && { repair_quotation: quotation })
+      });
+      if (!saved) throw new Error('Repair ticket save failed');
+      setToast(quotation
+        ? `บันทึกใบเสนอราคาซ่อม ${ticket.ticket_no} แล้ว`
+        : `บันทึกข้อมูลและสถานะ ${ticket.ticket_no} เรียบร้อย (${REPAIR_LIFECYCLE_META[draftStatus].label})`);
+      setTimeout(() => setToast(''), 4000);
+      if (draftStatus !== 'awaiting_quote') closeTicketModal();
+      if (quotation) setQuoteTotal(String(quotation.total));
+    } catch {
+      setSaveError('บันทึกงานซ่อมไม่สำเร็จ กรุณาลองอีกครั้ง');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const printQuotation = (ticket: RepairTicket) => {
+    flushSync(() => setQuoteToPrint(ticket));
+    try {
+      window.print();
+    } finally {
+      setQuoteToPrint(null);
+    }
   };
 
   // Quick-complete: ช่างกดจบงานทันที -> ready_pickup (ส่งคืนหน้าร้าน) พร้อมบันทึกข้อมูล draft ปัจจุบัน
@@ -853,7 +900,9 @@ export const RepairView: React.FC = () => {
                           className="flex-1 py-2.5 bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] hover:brightness-105 text-black font-extrabold rounded-xl text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-[#FF6B00]/25 border border-white/20 active:scale-[0.97]"
                         >
                           <ClipboardList className="w-4 h-4" />
-                          <span>เปิดจัดการ / อัปเดตสถานะ</span>
+                          <span>{lifecycle === 'awaiting_quote'
+                            ? ticket.repair_quotation ? 'จัดการใบเสนอราคา' : 'ทำใบเสนอราคา'
+                            : 'เปิดจัดการ / อัปเดตสถานะ'}</span>
                           <ArrowRight className="w-3.5 h-3.5" />
                         </button>
                         <button
@@ -913,7 +962,7 @@ export const RepairView: React.FC = () => {
                   </button>
                 </div>
                 <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-                  {draftStatus !== 'ready_pickup' && (
+                  {draftStatus !== 'ready_pickup' && draftStatus !== 'awaiting_quote' && (
                     <button
                       onClick={() => handleQuickHandoff(ticket)}
                       className="w-full sm:w-auto min-h-[44px] py-2.5 px-4 rounded-xl font-extrabold text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-1.5 bg-gradient-to-r from-sky-500 to-cyan-600 hover:from-sky-400 hover:to-cyan-500 hover:brightness-105 text-white shadow-lg shadow-sky-500/25 border border-white/20 active:scale-[0.97]"
@@ -925,10 +974,11 @@ export const RepairView: React.FC = () => {
                   )}
                   <button
                     onClick={() => handleSaveAll(ticket)}
+                    disabled={isSaving}
                     className="w-full sm:w-auto min-h-[44px] py-2.5 px-5 rounded-xl font-extrabold text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-1.5 bg-gradient-to-r from-emerald-700 to-emerald-800 hover:from-emerald-800 hover:to-emerald-900 text-white shadow-lg shadow-emerald-500/25 border border-white/20 active:scale-[0.97]"
                   >
                     <Save className="w-4 h-4" />
-                    <span>บันทึกข้อมูลและสถานะ (Save Changes)</span>
+                    <span>{isSaving ? 'กำลังบันทึก…' : 'บันทึกข้อมูลและสถานะ (Save Changes)'}</span>
                   </button>
                 </div>
               </div>
@@ -964,6 +1014,7 @@ export const RepairView: React.FC = () => {
                   <button
                     type="button"
                     onClick={openStatusPicker}
+                    disabled={isSaving}
                     className="px-4 py-3 rounded-xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] hover:to-[#FF6B00] text-black text-sm font-extrabold cursor-pointer flex items-center justify-center gap-2 transition active:scale-[0.97] flex-shrink-0 shadow-lg shadow-[#FF6B00]/25 border border-white/20"
                   >
                     <RefreshCw className="w-4 h-4" />
@@ -971,6 +1022,44 @@ export const RepairView: React.FC = () => {
                   </button>
                 </div>
               </div>
+
+              {draftStatus === 'awaiting_quote' && (
+                <fieldset disabled={isSaving} className="space-y-3 rounded-xl border border-slate-200 p-4 dark:border-white/10">
+                  <legend className="px-1 font-bold">ใบเสนอราคาซ่อม</legend>
+                  <div>
+                    <label htmlFor="repair-quote-description" className={modalLabelClass}>รายการซ่อมและอะไหล่ที่เสนอ</label>
+                    <textarea
+                      id="repair-quote-description"
+                      rows={3}
+                      maxLength={1000}
+                      className={modalInputClass}
+                      value={quoteDescription}
+                      onChange={e => setQuoteDescription(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="repair-quote-total" className={modalLabelClass}>ยอดเสนอราคารวม (บาท)</label>
+                    <input
+                      id="repair-quote-total"
+                      inputMode="decimal"
+                      className={modalInputClass}
+                      value={quoteTotal}
+                      onChange={e => setQuoteTotal(e.target.value)}
+                    />
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" className={modalPrimaryBtnClass} onClick={() => handleSaveAll(ticket, true)}>
+                      {isSaving ? 'กำลังบันทึก…' : 'บันทึกใบเสนอราคา'}
+                    </button>
+                    {ticket.repair_quotation && !statusChanged && !hasQuoteChanges(ticket) && (
+                      <button type="button" className={modalSecondaryBtnClass} onClick={() => printQuotation(ticket)}>
+                        พิมพ์ใบเสนอราคา
+                      </button>
+                    )}
+                  </div>
+                </fieldset>
+              )}
+              {saveError && <p role="alert" className="text-sm font-semibold text-rose-700 dark:text-rose-300">{saveError}</p>}
 
               {/* Customer info */}
               <div className="p-3 rounded-xl bg-slate-100 dark:bg-white/[0.04] border border-slate-200 dark:border-white/[0.08] text-xs">
@@ -1221,6 +1310,30 @@ export const RepairView: React.FC = () => {
           </Modal>
         );
       })()}
+
+      {quoteToPrint?.repair_quotation && createPortal(
+        <article id="repair-quotation-print" className="hidden print:block p-4 text-black">
+          <header className="border-b border-slate-400 pb-3">
+            <h1 className="text-xl font-bold">ใบเสนอราคาซ่อม</h1>
+            <p className="font-bold">{COMPANY_NAME}</p>
+            <p>{COMPANY_ADDRESS} · โทร. 077-286999</p>
+          </header>
+          <dl className="my-4 grid grid-cols-2 gap-2">
+            <div><dt className="font-semibold">อ้างอิงใบรับซ่อม</dt><dd>{quoteToPrint.ticket_no}</dd></div>
+            <div><dt className="font-semibold">วันที่เสนอราคา</dt><dd>{formatDateDMY(quoteToPrint.repair_quotation.issued_at)}</dd></div>
+            <div><dt className="font-semibold">ลูกค้า</dt><dd>{quoteToPrint.customer_name}</dd></div>
+            <div><dt className="font-semibold">อุปกรณ์ / S/N</dt><dd>{[quoteToPrint.device_model, quoteToPrint.walkin_sn].filter(Boolean).join(' / ') || '—'}</dd></div>
+          </dl>
+          <section className="border-y border-slate-400 py-3">
+            <h2 className="font-bold">รายการซ่อมและอะไหล่ที่เสนอ</h2>
+            <p className="whitespace-pre-wrap break-words">{quoteToPrint.repair_quotation.description}</p>
+          </section>
+          <p className="mt-3 text-right font-bold">
+            ยอดเสนอราคารวม {quoteToPrint.repair_quotation.total.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท
+          </p>
+        </article>,
+        document.body
+      )}
 
       {/* ========================================================================= */}
       {/* NESTED MODAL: STATUS PICKER (stacked above Repair Detail Modal) */}

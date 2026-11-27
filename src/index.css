@@ -985,8 +985,28 @@ html.light ::-webkit-scrollbar-thumb {
   /* Hide everything by default for legacy inline repair receipts.
      Exclude ORDER FORM 2026, #repair-print-root, and .repair-receipt-print-portal
      which each have their own dedicated print layout rules below. */
-  body:not(:has(.stock-po-print-dialog[open])):not(:has(#order-form-2026-print)):not(:has(#onsite-daily-report-print, #onsite-dispatch-roster-print)):not(:has(#repair-print-root #repair-receipt-print)):not(:has(.repair-receipt-print-portal #repair-receipt-print)) * {
+  body:not(:has(.stock-po-print-dialog[open])):not(:has(#order-form-2026-print)):not(:has(#onsite-daily-report-print, #onsite-dispatch-roster-print)):not(:has(#repair-print-root #repair-receipt-print)):not(:has(.repair-receipt-print-portal #repair-receipt-print)):not(:has(#repair-quotation-print, #prep-daily-report-print)) * {
     display: none !important;
+  }
+
+  body:has(#repair-quotation-print, #prep-daily-report-print) > :not(#repair-quotation-print, #prep-daily-report-print) {
+    display: none !important;
+  }
+
+  @page a4-document {
+    size: A4 portrait;
+    margin: 12mm;
+  }
+
+  #repair-quotation-print,
+  #prep-daily-report-print {
+    page: a4-document;
+  }
+
+  html:has(#repair-quotation-print, #prep-daily-report-print),
+  body:has(#repair-quotation-print, #prep-daily-report-print) {
+    max-height: none !important;
+    overflow: visible !important;
   }
 
   /* Dedicated portal container outside #root (#repair-print-root) */

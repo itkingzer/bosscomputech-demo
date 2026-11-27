@@ -82,11 +82,13 @@ export function canCompleteProjectHandover(project: Project, items: Item[]) {
 }
 
 const recordPrepEvent = (
-  entry: ActivityLog, kind: NonNullable<ActivityLog['prep_event']>['kind'], item: Item, serial = item.serial_number
+  entry: ActivityLog, kind: NonNullable<ActivityLog['prep_event']>['kind'], item: Item,
+  actorId: string | undefined, serial = item.serial_number
 ) => {
   entry.prep_event = {
     kind,
     model: item.model_name,
+    actor_id: actorId,
     serial,
     reference: item.project_id || item.order_id || item.po_no
   };
@@ -435,9 +437,10 @@ interface AppContextType {
       repair_detail?: string | null;
       parts_used?: string | null;
       repair_cost?: number | null;
+      repair_quotation?: RepairTicket['repair_quotation'];
       repaired_by?: string | null;
     }
-  ) => void;
+  ) => Promise<boolean>;
   /**
    * แก้ไขข้อมูลใบรับซ่อมเบื้องต้น (ลูกค้า / อุปกรณ์ / S/N / อาการเสีย / อุปกรณ์ที่ติดมา)
    * พร้อมบันทึก activity log "แก้ไขข้อมูลใบรับซ่อม"
@@ -1747,7 +1750,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!target) return false;
     const entry = makeLog('ติดโลโก้ & สแกน S/N', actor?.name || 'ระบบ', actor?.role, `S/N: ${sn} | เก็บเข้าคลังพร้อมขาย`);
     const finalNotes = notes || 'ตรวจเช็ก/ติดโลโก้/ยิง S/N ผ่าน เก็บเข้าสต๊อกพร้อมขาย (ยังไม่ติดวอย)';
-    recordPrepEvent(entry, 'stock', target, sn);
+    recordPrepEvent(entry, 'stock', target, actor?.id, sn);
     if (isSupabaseLive && supabaseClient) {
       const { error } = await supabaseClient.from('items').update({
         serial_number: sn,
@@ -1795,7 +1798,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       `S/N: ${sn} | ส่งต่อ Stage B เพื่อติดวอยประกัน`
     );
 
-    recordPrepEvent(entry, 'stageB', target, sn);
+    recordPrepEvent(entry, 'stageB', target, actor?.id, sn);
     if (isSupabaseLive && supabaseClient) {
       const { error } = await supabaseClient.from('items').update({
         serial_number: sn,
@@ -1844,7 +1847,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     ].filter(Boolean);
     const entry = makeLog(actionText, techName, actor?.role, detailParts.join(' | ') || undefined);
 
-    recordPrepEvent(entry, 'doa', target, cleanSn);
+    recordPrepEvent(entry, 'doa', target, actor?.id, cleanSn);
     if (isSupabaseLive && supabaseClient) {
       const { error } = await supabaseClient.from('items').update({
         status: 'doa_reported',
@@ -2110,7 +2113,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const acceptedAt = new Date().toISOString();
     const actor = currentUserRef.current;
     const entry = makeLog('ช่างกดรับงาน', actor?.name || techName || 'ระบบ', actor?.role, `ช่างผู้รับงาน: ${techName}`);
-    recordPrepEvent(entry, 'accept', target);
+    recordPrepEvent(entry, 'accept', target, actor?.id);
     if (isSupabaseLive && supabaseClient) {
       const { error } = await supabaseClient.from('items').update({
         assigned_prep_tech: techName,
@@ -2149,7 +2152,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       `S/N: ${sn} | เก็บรอวันส่งมอบ (ยังไม่ติดวอย)`
     );
     const finalNotes = prepNote || 'เก็บรอวันส่งมอบตามออเดอร์ (ยังไม่ติดวอยประกัน)';
-    recordPrepEvent(entry, 'hold', target, sn);
+    recordPrepEvent(entry, 'hold', target, actor?.id, sn);
     if (isSupabaseLive && supabaseClient) {
       const { error } = await supabaseClient.from('items').update({
         serial_number: sn,
@@ -2231,7 +2234,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const warrantyExpire = computeWarrantyExpire(preppedAt, target?.warranty_years, target?.warranty_months);
     const entry = makeLog('แปะวอยประกัน', actor?.name || 'ระบบ', actor?.role, `S/N: ${sn} | วอยประกัน: ${voidDate}`);
     const finalNotes = prepNote || 'ติดวอยประกัน & พร้อมส่งออกเลย (ส่งตรงหน้าร้านจัดสายรถ)';
-    recordPrepEvent(entry, 'dispatch', target, sn);
+    recordPrepEvent(entry, 'dispatch', target, actor?.id, sn);
     if (isSupabaseLive && supabaseClient) {
       const { error } = await supabaseClient.from('items').update({
         serial_number: sn,
@@ -2274,7 +2277,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // เริ่มนับประกันตั้งแต่วันแปะวอย (timestamp จริง) + คำนวณวันหมดประกัน
     const warrantyExpire = computeWarrantyExpire(now, target?.warranty_years, target?.warranty_months);
     const entry = makeLog('แปะวอยประกัน', actor?.name || 'ระบบ', actor?.role, `วอยประกัน: ${voidDate}`);
-    recordPrepEvent(entry, 'dispatch', target);
+    recordPrepEvent(entry, 'dispatch', target, actor?.id);
     if (isSupabaseLive && supabaseClient) {
       const { error } = await supabaseClient.from('items').update({
         status: 'ready_for_dispatch',
@@ -3362,12 +3365,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       repair_detail?: string | null;
       parts_used?: string | null;
       repair_cost?: number | null;
+      repair_quotation?: RepairTicket['repair_quotation'];
       repaired_by?: string | null;
     }
   ) => {
     const actor = currentUserRef.current;
     const now = new Date().toISOString();
     const target = repairTickets.find(t => t.id === ticketId);
+    if (!target) return false;
 
     // กำหนดช่างผู้ซ่อม: ใช้ค่าที่ส่งมา ถ้าไม่มีให้ใช้ผู้ใช้ปัจจุบัน (ช่างที่กดบันทึก)
     const repairedByName =
@@ -3408,6 +3413,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (patch.repair_cost !== undefined && patch.repair_cost !== target?.repair_cost) {
       changes.push(`ค่าใช้จ่าย: ${patch.repair_cost ?? 0} บาท`);
     }
+    if (patch.repair_quotation) {
+      changes.push(`บันทึกใบเสนอราคาซ่อม ${patch.repair_quotation.total} บาท`);
+    }
 
     // ถ้ามีการรับช่วงซ่อม (ยังไม่มีช่างผู้ซ่อมเดิม หรือเปลี่ยนช่าง) ให้ log ชัดเจนว่า "รับช่วงซ่อม"
     const isTakeover = !target?.repaired_by || (patch.repaired_by !== undefined && patch.repaired_by !== target?.repaired_by);
@@ -3438,7 +3446,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       legacyPatch.status = 'returned_closed';
       legacyPatch.delivered_at = now;
       legacyPatch.finished_at = target?.finished_at || now;
-    } else if (rs === 'repairing' || rs === 'waiting_parts') {
+    } else if (rs === 'repairing' || rs === 'waiting_parts' || rs === 'awaiting_quote') {
       legacyPatch.status = 'in_progress';
     } else if (rs === 'pending_check') {
       legacyPatch.status = 'open';
@@ -3447,10 +3455,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const fullPatch = { ...patch, ...legacyPatch, repaired_by: repairedByName, updated_at: now };
 
     if (isSupabaseLive && supabaseClient) {
-      await supabaseClient.from('repair_tickets').update({
+      const { data, error } = await supabaseClient.from('repair_tickets').update({
         ...fullPatch,
-        activity_logs: appendLog(target?.activity_logs, entry)
-      }).eq('id', ticketId);
+        activity_logs: appendLog(target.activity_logs, entry)
+      }).eq('id', ticketId).select().single();
+      if (error || !data) return false;
+      setRepairTickets(prev => prev.map(t => t.id === ticketId ? data as RepairTicket : t));
     } else {
       setRepairTickets(prev => prev.map(t => t.id === ticketId ? {
         ...t,
@@ -3458,6 +3468,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         activity_logs: appendLog(t.activity_logs, entry)
       } : t));
     }
+    return true;
   };
 
   // แก้ไขข้อมูลใบรับซ่อมเบื้องต้น (ลูกค้า / อุปกรณ์ / S/N / อาการเสีย / อุปกรณ์ที่ติดมา)
@@ -4030,7 +4041,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       actor?.role || 'prep',
       `S/N: ${sn} | วอยประกัน: ${voidDate} | โปรเจกต์ ${target.project_id} • งวดที่ ${target.project_batch_no || 1}`
     );
-    recordPrepEvent(itemLog, 'project', target, sn);
+    recordPrepEvent(itemLog, 'project', target, actor?.id, sn);
 
     const changes = {
       serial_number: sn,
