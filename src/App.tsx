@@ -33,7 +33,7 @@ import companyLogo from './assets/BossCom.jpg';
 
 export const App: React.FC = () => {
   const {
-    currentUser, logout, isSupabaseLive, isSyncing, supabaseUrl, supabaseKey,
+    currentUser, logout, isSupabaseLive, isSyncing, databaseStatusLabel, supabaseUrl, supabaseKey,
     orders, items, repairTickets, projects, resetAllDemoData, clearDemoKeepStock,
     theme, toggleTheme, printingRepairTicket
   } = useApp();
@@ -376,8 +376,8 @@ export const App: React.FC = () => {
             >
               <div className="flex items-center gap-2">
                 <span className={`w-2 h-2 rounded-full ${isSupabaseLive ? 'bg-emerald-400' : 'bg-amber-400'} animate-pulse`}></span>
-                <span className={`text-[11px] font-medium ${isSupabaseLive ? 'text-emerald-400' : 'text-amber-400'}`}>
-                  {isSyncing ? 'กำลังซิงค์ข้อมูล...' : isSupabaseLive ? 'Supabase Live' : 'Demo Local Mode'}
+                <span role="status" className={`text-[11px] font-medium ${isSupabaseLive ? 'text-emerald-400' : 'text-amber-400'}`}>
+                  {databaseStatusLabel}
                 </span>
               </div>
               <Settings className={`w-3.5 h-3.5 text-slate-400 ${isSyncing ? 'animate-spin' : ''}`} />
@@ -476,14 +476,14 @@ export const App: React.FC = () => {
             {/* Demo / Live status badge (mobile / tablet only) */}
             <button
               onClick={() => setIsSettingsOpen(true)}
-              aria-label={isSupabaseLive ? 'สถานะ: Supabase Live' : 'สถานะ: Demo Local Mode'}
+              aria-label={`สถานะฐานข้อมูล ${databaseStatusLabel}`}
               className={`lg:hidden flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-[10px] font-bold transition-all duration-150 active:scale-[0.97] cursor-pointer min-h-[36px] ${isSupabaseLive
                 ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
                 : 'bg-amber-500/15 text-amber-400 border-amber-500/30'
                 }`}
             >
               <span className={`w-1.5 h-1.5 rounded-full animate-pulse ${isSupabaseLive ? 'bg-emerald-400' : 'bg-amber-400'}`}></span>
-              <span className="hidden xs:inline sm:inline">{isSyncing ? 'SYNC' : isSupabaseLive ? 'LIVE' : 'DEMO'}</span>
+              <span role="status">{databaseStatusLabel}</span>
             </button>
             {/* Theme Toggle Button (Liquid Glass Dark / Light) */}
             <button

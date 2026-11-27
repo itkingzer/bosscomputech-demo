@@ -465,6 +465,7 @@ interface AppContextType {
   isSupabaseLive: boolean;
   /** True while remote Supabase data is being fetched/refreshed (drives skeleton UI) */
   isSyncing: boolean;
+  databaseStatusLabel: string;
   supabaseUrl: string;
   supabaseKey: string;
   updateSupabaseConfig: (url: string, key: string) => void;
@@ -537,15 +538,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     safeLoadJson<Contract[]>('boss_contracts', INITIAL_CONTRACTS)
   );
 
-  // Supabase state (matches imageStorageService env fallback)
+  // A saved empty value explicitly selects Demo Local, even on a configured deployment.
   const [supabaseUrl, setSupabaseUrl] = useState(
-    () => localStorage.getItem('boss_sb_url') || (import.meta.env.VITE_SUPABASE_URL as string | undefined) || ''
+    () => (localStorage.getItem('boss_sb_url') ?? import.meta.env.VITE_SUPABASE_URL ?? '').trim()
   );
   const [supabaseKey, setSupabaseKey] = useState(
-    () => localStorage.getItem('boss_sb_key') || (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined) || ''
+    () => (localStorage.getItem('boss_sb_key') ?? import.meta.env.VITE_SUPABASE_ANON_KEY ?? '').trim()
   );
   const [isSupabaseLive, setIsSupabaseLive] = useState(false);
-  const [isSyncing, setIsSyncing] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(Boolean(supabaseUrl && supabaseKey));
+  const [connectionAttempt, setConnectionAttempt] = useState(0);
   const [supabaseClient, setSupabaseClient] = useState<SupabaseClient | null>(null);
 
   // Theme state: dark / light
@@ -643,41 +645,43 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (supabaseUrl && supabaseKey) {
       try {
         const client = createClient(supabaseUrl, supabaseKey);
-        setSupabaseClient(client);
-        setIsSupabaseLive(true);
+        const connection = new AbortController();
+        const { signal } = connection;
+        let channel: ReturnType<SupabaseClient['channel']> | undefined;
+        const refreshTimers: Record<string, number> = {};
 
         const loadTable = async (table: 'orders' | 'items' | 'repair_tickets' | 'products' | 'stock_pos' | 'projects' | 'users' | 'contracts') => {
           if (table === 'orders') {
-            const { data } = await client.from('orders').select('*').order('created_at', { ascending: false });
-            if (data) setOrders(data);
+            const { data } = await client.from('orders').select('*').order('created_at', { ascending: false }).abortSignal(signal);
+            if (!signal.aborted && data) setOrders(data);
           } else if (table === 'items') {
-            const { data } = await client.from('items').select('*').order('created_at', { ascending: false });
-            if (data) setItems(data);
+            const { data } = await client.from('items').select('*').order('created_at', { ascending: false }).abortSignal(signal);
+            if (!signal.aborted && data) setItems(data);
           } else if (table === 'repair_tickets') {
-            const { data } = await client.from('repair_tickets').select('*').order('created_at', { ascending: false });
-            if (data) setRepairTickets(data);
+            const { data } = await client.from('repair_tickets').select('*').order('created_at', { ascending: false }).abortSignal(signal);
+            if (!signal.aborted && data) setRepairTickets(data);
           } else if (table === 'products') {
-            const { data } = await client.from('products').select('*').order('created_at', { ascending: false });
-            if (data) setProducts(data as Product[]);
+            const { data } = await client.from('products').select('*').order('created_at', { ascending: false }).abortSignal(signal);
+            if (!signal.aborted && data) setProducts(data as Product[]);
           } else if (table === 'stock_pos') {
-            const { data } = await client.from('stock_pos').select('*').order('created_at', { ascending: false });
-            if (data) setStockPOs(data as StockPO[]);
+            const { data } = await client.from('stock_pos').select('*').order('created_at', { ascending: false }).abortSignal(signal);
+            if (!signal.aborted && data) setStockPOs(data as StockPO[]);
           } else if (table === 'projects') {
-            const { data } = await client.from('projects').select('*').order('created_at', { ascending: false });
-            if (data) setProjects(data as Project[]);
+            const { data } = await client.from('projects').select('*').order('created_at', { ascending: false }).abortSignal(signal);
+            if (!signal.aborted && data) setProjects(data as Project[]);
           } else if (table === 'users') {
-            const { data } = await client.from('users').select('*').order('created_at', { ascending: true });
-            if (data && data.length > 0) {
+            const { data } = await client.from('users').select('*').order('created_at', { ascending: true }).abortSignal(signal);
+            if (!signal.aborted && data && data.length > 0) {
               const refreshedUsers = data as UserAccount[];
               setUsers(refreshedUsers);
               setCurrentUser(previous => refreshedUsers.find(user => user.id === previous?.id) ?? previous);
             }
           } else if (table === 'contracts') {
             const [{ data: cData }, { data: ciData }] = await Promise.all([
-              client.from('contracts').select('*').order('created_at', { ascending: false }),
-              client.from('contract_items').select('*')
+              client.from('contracts').select('*').order('created_at', { ascending: false }).abortSignal(signal),
+              client.from('contract_items').select('*').abortSignal(signal)
             ]);
-            if (cData && cData.length > 0) {
+            if (!signal.aborted && cData && cData.length > 0) {
               const itemsByContract = new Map<string, ContractItem[]>();
               ((ciData || []) as ContractItem[]).forEach((ci) => {
                 const list = itemsByContract.get(ci.contract_id) || [];
@@ -697,6 +701,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const loadRemote = async () => {
           setIsSyncing(true);
           try {
+            const { error } = await client.from('orders').select('id', { head: true }).limit(1).abortSignal(signal);
+            if (signal.aborted) return;
+            if (error) throw error;
+
             await Promise.all([
               loadTable('orders'),
               loadTable('items'),
@@ -707,14 +715,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               loadTable('users'),
               loadTable('contracts')
             ]);
+            if (signal.aborted) return;
+            channel = subscribeToChanges();
+            setSupabaseClient(client);
+            setIsSupabaseLive(true);
+          } catch (error) {
+            if (!signal.aborted) console.error('Supabase connect error:', error);
           } finally {
-            setIsSyncing(false);
+            if (!signal.aborted) setIsSyncing(false);
           }
         };
-        loadRemote();
 
         // Debounced per-table refresh avoids refetching all tables on every single row change
-        const refreshTimers: Record<string, number> = {};
         const scheduleTableRefresh = (
           table: 'orders' | 'items' | 'repair_tickets' | 'products' | 'stock_pos' | 'projects' | 'users' | 'contracts'
         ) => {
@@ -727,7 +739,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }, 350);
         };
 
-        const channel = client.channel('schema-db-changes')
+        const subscribeToChanges = () => client.channel('schema-db-changes')
           .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => scheduleTableRefresh('orders'))
           .on('postgres_changes', { event: '*', schema: 'public', table: 'items' }, () => scheduleTableRefresh('items'))
           .on('postgres_changes', { event: '*', schema: 'public', table: 'repair_tickets' }, () => scheduleTableRefresh('repair_tickets'))
@@ -739,20 +751,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           .on('postgres_changes', { event: '*', schema: 'public', table: 'contract_items' }, () => scheduleTableRefresh('contracts'))
           .subscribe();
 
+        void loadRemote();
         return () => {
+          connection.abort();
           Object.values(refreshTimers).forEach((t) => window.clearTimeout(t));
-          client.removeChannel(channel);
+          if (channel) void client.removeChannel(channel);
         };
       } catch (e) {
         console.error('Supabase connect error:', e);
         setIsSupabaseLive(false);
+        setIsSyncing(false);
       }
     } else {
       setIsSupabaseLive(false);
       setIsSyncing(false);
       setSupabaseClient(null);
     }
-  }, [supabaseUrl, supabaseKey]);
+  }, [supabaseUrl, supabaseKey, connectionAttempt]);
 
   // Auth functions
   const login = (username: string) => {
@@ -3587,14 +3602,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.setItem('boss_sb_key', key);
     setSupabaseUrl(url);
     setSupabaseKey(key);
+    setSupabaseClient(null);
+    setIsSupabaseLive(false);
+    setIsSyncing(Boolean(url && key));
+    setConnectionAttempt(attempt => attempt + 1);
   };
 
   const disconnectSupabase = () => {
-    localStorage.removeItem('boss_sb_url');
-    localStorage.removeItem('boss_sb_key');
+    localStorage.setItem('boss_sb_url', '');
+    localStorage.setItem('boss_sb_key', '');
     setSupabaseUrl('');
     setSupabaseKey('');
     setIsSupabaseLive(false);
+    setIsSyncing(false);
     setSupabaseClient(null);
   };
 
@@ -4599,6 +4619,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       deleteRepairTicket,
       isSupabaseLive,
       isSyncing,
+      databaseStatusLabel: isSyncing ? 'Checking…'
+        : isSupabaseLive ? 'Connected'
+        : supabaseUrl && supabaseKey ? 'Connection failed'
+        : supabaseUrl || supabaseKey ? 'Incomplete setup'
+        : 'Demo Local',
       supabaseUrl,
       supabaseKey,
       updateSupabaseConfig,

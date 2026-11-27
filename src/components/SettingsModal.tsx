@@ -6,7 +6,7 @@ import { Database, X } from 'lucide-react';
 
 export const SettingsModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpen, onClose }) => {
   const {
-    isSupabaseLive, supabaseUrl, supabaseKey,
+    isSupabaseLive, isSyncing, databaseStatusLabel, supabaseUrl, supabaseKey,
     updateSupabaseConfig, disconnectSupabase
   } = useApp();
 
@@ -44,10 +44,8 @@ export const SettingsModal: React.FC<{ isOpen: boolean; onClose: () => void }> =
     const cleanKey = key.trim();
     if (!cleanUrl && !cleanKey) {
       disconnectSupabase();
-      onClose();
     } else if (cleanUrl && cleanKey) {
       updateSupabaseConfig(cleanUrl, cleanKey);
-      onClose();
     } else {
       alert('กรุณากรอกทั้ง Supabase URL และ Key (หรือเว้นว่างทั้งสองช่องเพื่อใช้ Demo Mode)');
     }
@@ -79,7 +77,9 @@ export const SettingsModal: React.FC<{ isOpen: boolean; onClose: () => void }> =
           </div>
           <div>
             <h3 className="text-base font-bold text-slate-900 dark:text-white">ตั้งค่าการเชื่อมต่อ Supabase</h3>
-            <p className="text-xs text-slate-500 dark:text-slate-400">สลับระหว่างโหมดทดลองในเครื่อง กับฐานข้อมูลจริง Realtime</p>
+            <p role="status" className={`text-xs font-medium ${isSupabaseLive ? 'text-emerald-700 dark:text-emerald-400' : 'text-slate-600 dark:text-slate-300'}`}>
+              {databaseStatusLabel}
+            </p>
           </div>
         </div>
 
@@ -114,25 +114,31 @@ export const SettingsModal: React.FC<{ isOpen: boolean; onClose: () => void }> =
             </ul>
           </div>
 
+          {databaseStatusLabel === 'Connection failed' && (
+            <p role="alert" className="text-rose-700 dark:text-rose-400">
+              ตรวจสอบ URL, Publishable Key และสิทธิ์อ่านตาราง orders แล้วลองอีกครั้ง
+            </p>
+          )}
+
           <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center gap-2 pt-2">
             <button
               type="submit"
-              className="flex-1 px-5 py-3 bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] hover:to-[#FF6B00] hover:brightness-105 text-black font-extrabold rounded-2xl text-xs transition-all duration-150 active:scale-[0.97] cursor-pointer shadow-lg shadow-[#FF6B00]/25 border border-white/20"
+              disabled={isSyncing}
+              className="flex-1 px-5 py-3 bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] hover:to-[#FF6B00] hover:brightness-105 text-black font-extrabold rounded-2xl text-xs transition-all duration-150 active:scale-[0.97] cursor-pointer disabled:cursor-wait disabled:opacity-60 shadow-lg shadow-[#FF6B00]/25 border border-white/20"
             >
-              บันทึกการเชื่อมต่อ
+              {isSyncing ? 'กำลังตรวจสอบฐานข้อมูล…' : 'บันทึกและตรวจสอบ'}
             </button>
-            {isSupabaseLive && (
+            {(supabaseUrl || supabaseKey) && (
               <button
                 type="button"
                 onClick={() => {
                   disconnectSupabase();
                   setUrl('');
                   setKey('');
-                  onClose();
                 }}
                 className="px-3.5 py-3 rounded-2xl border border-slate-300 dark:border-slate-700 hover:border-rose-500/50 hover:text-rose-600 dark:hover:text-rose-400 text-slate-700 dark:text-slate-300 transition-all duration-150 active:scale-[0.97] cursor-pointer"
               >
-                ตัดการเชื่อมต่อ
+                ใช้ Demo Local
               </button>
             )}
           </div>

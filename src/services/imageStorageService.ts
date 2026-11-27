@@ -11,24 +11,15 @@ let cachedClient: SupabaseClient | null = null;
 let cachedConfigKey = '';
 
 /**
- * Resolve Supabase credentials from Vite env vars first, then runtime SettingsModal config.
+ * Use the same saved settings and deployment defaults as the database.
  */
 function getSupabaseConfig(): { url: string; key: string } | null {
   const envUrl = (import.meta.env.VITE_SUPABASE_URL as string | undefined)?.trim() || '';
   const envKey = (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined)?.trim() || '';
-  if (envUrl && envKey) {
-    return { url: envUrl, key: envKey };
-  }
-
-  if (typeof window !== 'undefined') {
-    const lsUrl = (localStorage.getItem('boss_sb_url') || '').trim();
-    const lsKey = (localStorage.getItem('boss_sb_key') || '').trim();
-    if (lsUrl && lsKey) {
-      return { url: lsUrl, key: lsKey };
-    }
-  }
-
-  return null;
+  const settings = typeof window === 'undefined' ? undefined : window.localStorage;
+  const url = (settings?.getItem('boss_sb_url') ?? envUrl).trim();
+  const key = (settings?.getItem('boss_sb_key') ?? envKey).trim();
+  return url && key ? { url, key } : null;
 }
 
 /**
