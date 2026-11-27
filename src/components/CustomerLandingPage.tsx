@@ -1,11 +1,12 @@
 import React, { useMemo, useState, useEffect } from 'react';
+import { createClient } from '@supabase/supabase-js';
 import {
   Search, ShieldCheck, Wrench, CheckCircle2, Clock, PackageCheck,
   Truck, Camera, LogIn, Sun, Moon, Phone, MapPin, AlertCircle,
   Sparkles, X, ShieldAlert, ShieldOff
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { RepairLifecycleStatus, formatDateDMY, formatWarrantyDuration } from '../types';
+import { RepairLifecycleStatus, computeWarrantyExpire, formatDateDMY, formatWarrantyDuration } from '../types';
 import { BarcodeScannerModal } from './BarcodeScannerModal';
 import companyLogo from '../assets/BossCom.jpg';
 
@@ -14,6 +15,20 @@ interface CustomerLandingPageProps {
 }
 
 type SearchMode = 'repair' | 'warranty';
+type PublicRepair = { ticket_no: string; repair_status?: RepairLifecycleStatus; status: string; received_at: string };
+type PublicWarranty = {
+  serialNumber: string; modelName: string; warrantyYears: number; warrantyMonths: number;
+  voidDate: string | null; expireDate: string | null;
+};
+
+function describeWarranty(record: PublicWarranty) {
+  const warrantyYears = record.voidDate && record.warrantyYears <= 0 && record.warrantyMonths <= 0 ? 1 : record.warrantyYears;
+  const expireDate = record.expireDate || computeWarrantyExpire(record.voidDate, warrantyYears, record.warrantyMonths);
+  const remainingDays = expireDate ? Math.max(0, Math.ceil((Date.parse(expireDate) - Date.now()) / 86_400_000)) : null;
+  const state = remainingDays !== null ? remainingDays > 0 ? 'active' : 'expired'
+    : warrantyYears > 0 || record.warrantyMonths > 0 ? 'waiting' : 'none';
+  return { ...record, warrantyYears, expireDate, remainingDays, state };
+}
 
 interface PublicRepairStep {
   key: string;
@@ -52,19 +67,6 @@ function mapRepairStepIndex(
   return 0;
 }
 
-/** Mask customer name partially for public privacy (e.g. "สมชาย ใจดี" -> "สม*** ใจ***") */
-function maskCustomerName(name?: string | null): string {
-  if (!name) return '-';
-  return name
-    .trim()
-    .split(/\s+/)
-    .map((part) => {
-      if (part.length <= 2) return part[0] + '*';
-      return part.slice(0, 2) + '***';
-    })
-    .join(' ');
-}
-
 function formatRemainingYearsDays(days: number | null): string {
   if (days === null || days <= 0) return 'หมดประกันแล้ว';
   if (days >= 365) {
@@ -85,12 +87,40 @@ function formatRemainingYearsDays(days: number | null): string {
 }
 
 export const CustomerLandingPage: React.FC<CustomerLandingPageProps> = ({ onOpenStaffLogin }) => {
-  const { repairTickets, lookupWarrantyBySerial, theme, toggleTheme, usesSupabaseAuth } = useApp();
+  const { repairTickets, lookupWarrantyBySerial, theme, toggleTheme, usesSupabaseAuth, supabaseUrl, supabaseKey } = useApp();
 
   const [mode, setMode] = useState<SearchMode>('repair');
   const [query, setQuery] = useState('');
   const [submittedQuery, setSubmittedQuery] = useState('');
   const [scannerOpen, setScannerOpen] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const [remote, setRemote] = useState<{ request: string; data: PublicRepair | PublicWarranty | null; failed: boolean } | null>(null);
+  const request = JSON.stringify([mode, submittedQuery, attempt, supabaseUrl, supabaseKey]);
+  const publicClient = useMemo(() => {
+    try {
+      return supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey, {
+        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+      }) : null;
+    } catch {
+      return null;
+    }
+  }, [supabaseUrl, supabaseKey]);
+
+  useEffect(() => {
+    if (!usesSupabaseAuth || !submittedQuery) return;
+    if (!publicClient) {
+      setRemote({ request, data: null, failed: true });
+      return;
+    }
+    const controller = new AbortController();
+    void publicClient.rpc('boss_customer_lookup', { lookup_mode: mode, lookup_code: submittedQuery })
+      .abortSignal(controller.signal).then(({ data, error }) => {
+        if (!controller.signal.aborted) setRemote({ request, data, failed: Boolean(error) });
+      }, () => {
+        if (!controller.signal.aborted) setRemote({ request, data: null, failed: true });
+      });
+    return () => controller.abort();
+  }, [mode, publicClient, request, submittedQuery, usesSupabaseAuth]);
 
   // Support deep-linking via ?track=REP-... or ?sn=...
   useEffect(() => {
@@ -111,6 +141,7 @@ export const CustomerLandingPage: React.FC<CustomerLandingPageProps> = ({ onOpen
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setSubmittedQuery(query.trim());
+    setAttempt(value => value + 1);
   };
 
   const handleModeChange = (nextMode: SearchMode) => {
@@ -120,28 +151,31 @@ export const CustomerLandingPage: React.FC<CustomerLandingPageProps> = ({ onOpen
   };
 
   // Public front-desk repair lookup (NO internal logs, NO costs, NO tech names, NO supplier/RMA tracking)
-  const matchedRepair = useMemo(() => {
+  const localRepair = useMemo(() => {
     const q = submittedQuery.trim().toLowerCase();
     if (usesSupabaseAuth || mode !== 'repair' || !q) return null;
     return (
       repairTickets.find(
         (t) =>
-          (t.ticket_no || '').trim().toLowerCase() === q ||
-          (t.walkin_sn || '').trim().toLowerCase() === q ||
-          (t.replacement_sn || '').trim().toLowerCase() === q
+          (t.ticket_no || '').trim().toLowerCase() === q
       ) || null
     );
   }, [mode, submittedQuery, repairTickets, usesSupabaseAuth]);
 
   // Public warranty lookup by S/N (NO cost, NO GP, NO internal logs)
-  const matchedWarranty = useMemo(() => {
+  const localWarranty = useMemo(() => {
     const q = submittedQuery.trim();
     if (usesSupabaseAuth || mode !== 'warranty' || !q) return null;
     const res = lookupWarrantyBySerial(q);
     return res.found ? res : null;
   }, [mode, submittedQuery, lookupWarrantyBySerial, usesSupabaseAuth]);
 
-  const sampleTicketNo = repairTickets[0]?.ticket_no || 'REP-2569-101';
+  const completed = usesSupabaseAuth && remote?.request === request ? remote : null;
+  const pending = usesSupabaseAuth && Boolean(submittedQuery) && !completed;
+  const result = completed?.data;
+  const matchedRepair = !usesSupabaseAuth ? localRepair : result && 'ticket_no' in result ? result : null;
+  const matchedWarranty = !usesSupabaseAuth ? localWarranty : result && 'serialNumber' in result ? describeWarranty(result) : null;
+  const showResult = Boolean(submittedQuery) && !pending && !completed?.failed;
 
   return (
     <div className="min-h-screen bg-[var(--bg-page)] text-[var(--text-primary)] flex flex-col relative overflow-x-hidden transition-colors duration-300">
@@ -258,18 +292,13 @@ export const CustomerLandingPage: React.FC<CustomerLandingPageProps> = ({ onOpen
             </div>
 
             {/* Search Form */}
-            {usesSupabaseAuth ? (
-              <p className="text-sm text-slate-600 dark:text-slate-300">
-                กรุณาติดต่อเจ้าหน้าที่เพื่อตรวจสอบสถานะงานซ่อมหรือการรับประกัน
-              </p>
-            ) : (
             <form onSubmit={handleSubmit} className="space-y-3">
               <label
                 htmlFor="customer-lookup-input"
                 className="block text-xs font-bold text-slate-700 dark:text-slate-200"
               >
                 {mode === 'repair'
-                  ? 'กรอกเลขใบรับซ่อม (เช่น REP-2569-101) หรือ S/N เครื่องที่ส่งซ่อม'
+                  ? 'กรอกเลขใบรับซ่อมที่อยู่บนเอกสาร'
                   : 'กรอกหมายเลข Serial Number (S/N) บนสติกเกอร์หรือกล่องสินค้า'}
               </label>
 
@@ -282,11 +311,14 @@ export const CustomerLandingPage: React.FC<CustomerLandingPageProps> = ({ onOpen
                   <input
                     id="customer-lookup-input"
                     type="text"
+                    maxLength={128}
+                    required
+                    autoComplete="off"
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
                     placeholder={
                       mode === 'repair'
-                        ? `ตัวอย่าง: ${sampleTicketNo}`
+                        ? 'ตัวอย่าง: REP-2569-101'
                         : 'ตัวอย่าง: SN-2026-001'
                     }
                     className="w-full min-h-[48px] liquid-glass-input rounded-2xl pl-10 pr-20 py-3 text-sm font-mono font-semibold text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#FF6B00]"
@@ -326,10 +358,11 @@ export const CustomerLandingPage: React.FC<CustomerLandingPageProps> = ({ onOpen
                 </button>
               </div>
             </form>
-            )}
+            {pending && <p role="status" className="text-sm">กำลังตรวจสอบ…</p>}
+            {completed?.failed && <p role="alert" className="text-sm text-rose-700 dark:text-rose-300">ตรวจสอบไม่สำเร็จ กรุณาลองอีกครั้ง</p>}
 
             {/* RESULT AREA: REPAIR TRACKING (Public Front-Desk Data Only) */}
-            {!usesSupabaseAuth && submittedQuery && mode === 'repair' && (
+            {showResult && mode === 'repair' && (
               <div className="pt-2 border-t border-slate-200 dark:border-white/10 animate-fade-in">
                 {!matchedRepair ? (
                   <div className="p-5 rounded-2xl bg-slate-50 dark:bg-white/[0.03] border border-slate-200 dark:border-white/10 text-center space-y-1.5">
@@ -376,34 +409,9 @@ export const CustomerLandingPage: React.FC<CustomerLandingPageProps> = ({ onOpen
                           </span>
                         </div>
 
-                        {/* Front-desk summary only (masked customer name, no internal logs/cost/techs) */}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                          <div className="p-3 rounded-xl bg-slate-50 dark:bg-white/[0.03] border border-slate-200 dark:border-white/[0.08]">
-                            <p className="text-slate-500 dark:text-slate-400">ลูกค้า / ผู้ส่งซ่อม</p>
-                            <p className="font-bold text-slate-900 dark:text-white mt-0.5">
-                              {maskCustomerName(matchedRepair.customer_name)}
-                            </p>
-                          </div>
-                          <div className="p-3 rounded-xl bg-slate-50 dark:bg-white/[0.03] border border-slate-200 dark:border-white/[0.08]">
-                            <p className="text-slate-500 dark:text-slate-400">วันที่รับเครื่องเข้าระบบ</p>
-                            <p className="font-bold text-slate-900 dark:text-white mt-0.5">
-                              {formatDateDMY(matchedRepair.received_at || matchedRepair.created_at)}
-                            </p>
-                          </div>
-                          <div className="p-3 rounded-xl bg-slate-50 dark:bg-white/[0.03] border border-slate-200 dark:border-white/[0.08]">
-                            <p className="text-slate-500 dark:text-slate-400">รุ่น / อุปกรณ์</p>
-                            <p className="font-bold text-slate-900 dark:text-white mt-0.5">
-                              {matchedRepair.device_model || '-'}
-                            </p>
-                          </div>
-                          <div className="p-3 rounded-xl bg-slate-50 dark:bg-white/[0.03] border border-slate-200 dark:border-white/[0.08]">
-                            <p className="text-slate-500 dark:text-slate-400">อาการที่แจ้ง</p>
-                            <p className="font-semibold text-slate-800 dark:text-slate-200 mt-0.5">
-                              {matchedRepair.fault_symptom || '-'}
-                            </p>
-                          </div>
-                        </div>
-
+                        <p className="text-sm text-slate-600 dark:text-slate-300">
+                          วันที่รับเครื่อง {formatDateDMY(matchedRepair.received_at)}
+                        </p>
                         {/* Public 5-step progress tracker */}
                         <div className="space-y-2">
                           <p className="text-xs font-bold text-slate-700 dark:text-slate-300">
@@ -456,7 +464,7 @@ export const CustomerLandingPage: React.FC<CustomerLandingPageProps> = ({ onOpen
             )}
 
             {/* RESULT AREA: WARRANTY CHECK BY S/N (Public Info Only) */}
-            {!usesSupabaseAuth && submittedQuery && mode === 'warranty' && (
+            {showResult && mode === 'warranty' && (
               <div className="pt-2 border-t border-slate-200 dark:border-white/10 animate-fade-in">
                 {!matchedWarranty ? (
                   <div className="p-5 rounded-2xl bg-slate-50 dark:bg-white/[0.03] border border-slate-200 dark:border-white/10 text-center space-y-1.5">
@@ -579,6 +587,7 @@ export const CustomerLandingPage: React.FC<CustomerLandingPageProps> = ({ onOpen
           const clean = text.trim();
           setQuery(clean);
           setSubmittedQuery(clean);
+          setAttempt(value => value + 1);
         }}
         title={mode === 'repair' ? 'สแกนเลขใบรับซ่อม / S/N' : 'สแกน Serial Number (S/N)'}
       />
