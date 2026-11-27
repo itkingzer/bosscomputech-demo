@@ -130,7 +130,8 @@ interface AppContextType {
   usesSupabaseAuth: boolean;
   databaseError: string | null;
   manageStaff: (input: { action: 'save'; id?: string; name: string; username: string; password: string; role: UserAccount['role']; work_positions: UserAccount['role'][] }
-    | { action: 'set-active'; id: string; active: boolean }) => Promise<string | null>;
+    | { action: 'set-active'; id: string; active: boolean }
+    | { action: 'delete'; id: string }) => Promise<string | null>;
   requestPasswordReset: (email: string) => Promise<string | null>;
   passwordRecovery: 'checking' | 'ready' | 'invalid' | 'complete' | null;
   updateRecoveredPassword: (password: string) => Promise<string | null>;
@@ -990,7 +991,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (id === staffProfile?.id) {
         const { data, error } = await supabaseClient.rpc('boss_update_own_profile', { changes: updates });
         if (error || !data) return false;
-        setStaffProfile(data as UserAccount);
+        setStaffProfile(previous => ({ ...(data as UserAccount), is_superadmin: previous?.is_superadmin }));
         return true;
       }
       const { password: _password, ...profile } = updates;

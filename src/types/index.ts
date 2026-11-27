@@ -311,6 +311,7 @@ export type UserRole =
 
 export interface UserAccount {
   id: string;
+  is_superadmin?: boolean;
   auth_user_id?: string | null;
   auth_invite_pending?: boolean;
   username: string;

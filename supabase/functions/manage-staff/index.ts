@@ -46,11 +46,22 @@ Deno.serve(async request => {
   const caller = createClient(url, anonKey, { auth, global: { headers: { Authorization: authorization } } });
   const { data: actor, error: accessError } = await caller.rpc('boss_staff_profile');
   const isAdmin = actor?.role === 'admin';
+  const isSuperadmin = isAdmin && actor?.is_superadmin === true;
   const isHr = actor?.role === 'hr' || actor?.work_positions?.includes('hr');
   if (accessError || (!isAdmin && !isHr)) return fail('Admin or HR access required', 403);
 
   const id = typeof input.id === 'string' ? input.id : null;
   if (input.id !== undefined && !id) return fail('Invalid staff profile ID');
+  if (input.action === 'delete') {
+    if (!isSuperadmin) return fail('Superadmin access required', 403);
+    if (!id) return fail('Invalid staff profile ID');
+    const { data, error } = await service.rpc('boss_delete_staff_account', {
+      actor_id: actor.auth_user_id,
+      target_id: id,
+    });
+    if (error) return fail('Could not delete account', error.code === '42501' ? 403 : 409);
+    return data ? reply({ ok: true }) : fail('Staff profile not found', 404);
+  }
   let target = null;
   if (id) {
     const { data, error } = await service.from('users')
@@ -58,13 +69,16 @@ Deno.serve(async request => {
       .eq('id', id).single();
     if (error || !data) return fail('Staff profile not found', 404);
     target = data;
-    if (target.id === actor?.id || target.auth_user_id === actor?.auth_user_id || target.role === 'admin'
+    if (target.id === actor?.id || target.auth_user_id === actor?.auth_user_id || (!isSuperadmin && target.role === 'admin')
       || (!isAdmin && (target.role === 'hr' || target.work_positions?.includes('hr')))) {
       return fail('This account is protected', 403);
     }
     if (target.auth_user_id) {
       const { data: account, error: accountError } = await service.auth.admin.getUserById(target.auth_user_id);
-      if (accountError || !account.user || account.user.app_metadata.boss_role === 'admin') return fail('This account is protected', 403);
+      if (accountError || !account.user || (!isSuperadmin && account.user.app_metadata.boss_role === 'admin')) {
+        return fail('This account is protected', 403);
+      }
+      if (account.user.app_metadata.boss_superadmin === true) return fail('This account is protected', 403);
     }
   }
 
@@ -78,12 +92,16 @@ Deno.serve(async request => {
   const username = typeof input.username === 'string' ? input.username.trim().toLowerCase() : '';
   const password = typeof input.password === 'string' ? input.password : '';
   const positions = input.work_positions;
-  if (!name || name.length > 150 || !usernamePattern.test(username) || !roles.includes(input.role)
+  const adminAccount = input.role === 'admin';
+  const validLogin = adminAccount
+    ? username.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(username) && !username.endsWith('@' + staffDomain)
+    : usernamePattern.test(username);
+  if (!name || name.length > 150 || !validLogin || (!roles.includes(input.role) && !(adminAccount && isSuperadmin))
     || !Array.isArray(positions) || positions.length > roles.length || positions.some(role => !roles.includes(role))) {
     return fail('Check name, username, and staff positions');
   }
   if (!isAdmin && (input.role === 'hr' || positions.includes('hr'))) return fail('Only an administrator can assign HR access', 403);
-  const email = username + '@' + staffDomain;
+  const email = adminAccount ? username : username + '@' + staffDomain;
   const needsPassword = !target?.auth_user_id || target.email !== email;
   if ((needsPassword || password) && (password.length < 8 || new TextEncoder().encode(password).length > 72)) {
     return fail('Use a password with at least 8 characters and at most 72 bytes');
