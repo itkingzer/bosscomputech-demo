@@ -77,7 +77,7 @@ export function StaffProfileFields({ user, details, onDetails, onAvatar, onImage
 }
 
 export function MyStaffProfile({ user, onClose }: { user: UserAccount; onClose: () => void }) {
-  const { updateUser } = useApp();
+  const { updateUser, usesSupabaseAuth } = useApp();
   const formId = useId();
   const [section, setSection] = useState<'profile' | 'contact' | 'work'>('profile');
   const [avatar, setAvatar] = useState(user.avatar ?? null);
@@ -92,7 +92,7 @@ export function MyStaffProfile({ user, onClose }: { user: UserAccount; onClose: 
   const updates: Partial<UserAccount> = {};
   if (avatar !== (user.avatar ?? null)) updates.avatar = avatar;
   if (details.trim() !== (user.profile_details ?? '')) updates.profile_details = details.trim() || null;
-  if (email.trim() !== (user.email ?? '')) updates.email = email.trim() || null;
+  if (!usesSupabaseAuth && email.trim() !== (user.email ?? '')) updates.email = email.trim() || null;
   if (phone.trim() !== (user.phone ?? '')) updates.phone = phone.trim();
   if (address.trim() !== (user.address ?? '')) updates.address = address.trim() || null;
   const dirty = Object.keys(updates).length > 0;
@@ -166,7 +166,7 @@ export function MyStaffProfile({ user, onClose }: { user: UserAccount; onClose: 
               <h4 className="text-base font-bold">ข้อมูลติดต่อ</h4>
               <div>
                 <label htmlFor={`${formId}-email`} className={modalLabelClass}>อีเมล</label>
-                <input id={`${formId}-email`} type="email" autoComplete="email" maxLength={254} value={email}
+                <input id={`${formId}-email`} type="email" autoComplete="email" maxLength={254} value={email} readOnly={usesSupabaseAuth}
                   onChange={event => setEmail(event.target.value)} className={`${modalInputClass} min-h-11 !text-base`} />
               </div>
               <div>

@@ -311,6 +311,8 @@ export type UserRole =
 
 export interface UserAccount {
   id: string;
+  auth_user_id?: string | null;
+  auth_invite_pending?: boolean;
   username: string;
   password?: string;
   name: string;

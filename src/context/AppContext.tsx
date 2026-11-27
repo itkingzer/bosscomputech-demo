@@ -129,6 +129,8 @@ interface AppContextType {
   login: (username: string, password: string) => Promise<string | null>;
   usesSupabaseAuth: boolean;
   databaseError: string | null;
+  inviteStaff: (input: Pick<UserAccount, 'name' | 'role' | 'work_positions'> & { email: string; id?: string }) => Promise<string | null>;
+  requestPasswordReset: (email: string) => Promise<string | null>;
   passwordRecovery: 'checking' | 'ready' | 'invalid' | 'complete' | null;
   updateRecoveredPassword: (password: string) => Promise<string | null>;
   closePasswordRecovery: () => void;
@@ -491,6 +493,8 @@ interface AppContextType {
   lookupWarrantyBySerial: (serialNumber: string | null | undefined) => WarrantyLookupResult;
 }
 
+const STAFF_DIRECTORY_COLUMNS = 'id,username,name,nickname,role,assigned_route,is_active,department,phone,email,address,badge,avatar,profile_details,employment_start_date,work_positions,auth_user_id,auth_invite_pending';
+
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -509,11 +513,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const hash = new URLSearchParams(window.location.hash.slice(1));
     const query = new URLSearchParams(window.location.search);
     if (hash.has('error_code') || query.has('error_code')) return 'invalid';
-    if (hash.get('type') !== 'recovery' && query.get('type') !== 'recovery') return null;
+    const passwordSetupTypes = ['recovery', 'invite'];
+    if (!passwordSetupTypes.some(type => hash.get('type') === type || query.get('type') === type)) return null;
     return hash.has('access_token') || query.has('access_token') || query.has('code') ? 'checking' : 'invalid';
   });
   const recoveryPending = useRef(passwordRecovery === 'checking');
+  const recoveryAccessToken = useRef(
+    new URLSearchParams(window.location.hash.slice(1)).get('access_token')
+      ?? new URLSearchParams(window.location.search).get('access_token'),
+  );
   const [authUser, setAuthUser] = useState<User | null>(null);
+  const [staffProfile, setStaffProfile] = useState<UserAccount | null>(null);
   const [databaseError, setDatabaseError] = useState<string | null>(null);
   const [supabaseClient, setSupabaseClient] = useState<SupabaseClient | null>(null);
 
@@ -677,7 +687,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const client = createClient(supabaseUrl, supabaseKey);
         setAuthClient(client);
         const { data: { subscription } } = client.auth.onAuthStateChange((event, session) => {
-          if (event === 'PASSWORD_RECOVERY' && session && recoveryPending.current) {
+          const isRecoveryCallback = event === 'PASSWORD_RECOVERY' || (
+            event === 'SIGNED_IN' && recoveryAccessToken.current && session?.access_token === recoveryAccessToken.current
+          );
+          if (isRecoveryCallback && session && recoveryPending.current) {
+            recoveryAccessToken.current = null;
             setPasswordRecovery('ready');
           }
           if (event === 'SIGNED_OUT' && recoveryPending.current) setPasswordRecovery('invalid');
@@ -709,7 +723,41 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [supabaseUrl, supabaseKey]);
 
   useEffect(() => {
-    if (!passwordRecovery && authClient && authUser?.app_metadata.boss_role === 'admin') {
+    if (passwordRecovery || !authClient || !authUser) return;
+    let active = true;
+    let checking = false;
+    const checkAccess = async () => {
+      if (checking) return;
+      checking = true;
+      try {
+        const { data, error } = await authClient.rpc('boss_staff_profile');
+        if (!active) return;
+        if (error) {
+          setDatabaseError(error.message);
+          return;
+        }
+        const profile = data as UserAccount | null;
+        setStaffProfile(previous => JSON.stringify(previous) === JSON.stringify(profile) ? previous : profile);
+        if (!profile) setDatabaseError('บัญชีนี้ยังไม่ได้รับสิทธิ์ หรือถูกพักการใช้งาน');
+      } catch (error) {
+        if (active) console.error('Staff access check failed:', error);
+      } finally {
+        checking = false;
+      }
+    };
+    const refresh = () => void checkAccess();
+    refresh();
+    const interval = window.setInterval(refresh, 30_000);
+    window.addEventListener('focus', refresh);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+      window.removeEventListener('focus', refresh);
+    };
+  }, [authClient, authUser, passwordRecovery]);
+
+  useEffect(() => {
+    if (!passwordRecovery && authClient && authUser && staffProfile?.auth_user_id === authUser.id) {
       const client = authClient;
       const connection = new AbortController();
       const { signal } = connection;
@@ -736,7 +784,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           const { data } = await client.from('projects').select('*').order('created_at', { ascending: false }).abortSignal(signal).throwOnError();
           if (!signal.aborted && data) setProjects(data as Project[]);
         } else if (table === 'users') {
-          const { data } = await client.from('users').select('id,username,name,nickname,role,assigned_route,is_active,department,phone,email,address,badge,avatar,profile_details,employment_start_date,work_positions').order('created_at', { ascending: true }).abortSignal(signal).throwOnError();
+          const canReadDirectory = staffProfile.role === 'admin' || staffProfile.role === 'hr'
+            || staffProfile.work_positions?.includes('hr');
+          const query = canReadDirectory
+            ? client.from('users').select(STAFF_DIRECTORY_COLUMNS).order('created_at', { ascending: true })
+            : client.rpc('boss_assignment_directory');
+          const { data } = await query.abortSignal(signal).throwOnError();
           if (!signal.aborted && data) {
             const refreshedUsers = data as UserAccount[];
             setUsers(refreshedUsers);
@@ -783,12 +836,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           channel = subscribeToChanges();
           setSupabaseClient(client);
           setIsSupabaseLive(true);
-          setCurrentUser({
-            id: authUser.id,
-            username: authUser.email ?? authUser.id,
-            name: authUser.email ?? 'Admin',
-            role: 'admin',
-          });
+          setCurrentUser(staffProfile);
         } catch (error) {
           if (!signal.aborted) {
             console.error('Supabase data load error:', error);
@@ -838,7 +886,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setIsSupabaseLive(false);
       setIsSyncing(false);
     }
-  }, [authClient, authUser, usesSupabaseAuth, passwordRecovery]);
+  }, [authClient, authUser, staffProfile, usesSupabaseAuth, passwordRecovery]);
 
   const updateRecoveredPassword = async (password: string) => {
     if (passwordRecovery !== 'ready' || !authClient) return 'ลิงก์ตั้งรหัสผ่านหมดอายุ กรุณาขอลิงก์ใหม่';
@@ -851,6 +899,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const closePasswordRecovery = () => {
     recoveryPending.current = false;
+    recoveryAccessToken.current = null;
     const url = new URL(window.location.href);
     url.hash = '';
     for (const name of ['error', 'error_code', 'error_description', 'type', 'code']) url.searchParams.delete(name);
@@ -863,10 +912,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (!authClient) return 'Supabase setup is incomplete or invalid';
       const { data, error } = await authClient.auth.signInWithPassword({ email: username, password });
       if (error) return error.message;
-      if (data.user?.app_metadata.boss_role !== 'admin') {
+      const { data: profile, error: accessError } = await authClient.rpc('boss_staff_profile');
+      if (accessError || !profile) {
         await authClient.auth.signOut({ scope: 'local' });
-        return 'This account does not have Boss Computech admin access';
+        return accessError?.message ?? 'บัญชีนี้ยังไม่ได้รับสิทธิ์ หรือถูกพักการใช้งาน';
       }
+      setStaffProfile(profile as UserAccount);
       setAuthUser(data.user);
       return null;
     }
@@ -875,6 +926,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!user) return 'Unknown demo username';
     setCurrentUser(user);
     return null;
+  };
+
+  const requestPasswordReset = async (email: string) => {
+    if (!authClient) return 'ยังไม่ได้ตั้งค่า Supabase';
+    const { error } = await authClient.auth.resetPasswordForEmail(email, {
+      redirectTo: new URL(import.meta.env.BASE_URL, window.location.origin).href,
+    });
+    return error?.message ?? null;
+  };
+
+  const inviteStaff: AppContextType['inviteStaff'] = async input => {
+    if (!supabaseClient || currentUser?.role !== 'admin') return 'ต้องเข้าสู่ระบบด้วยบัญชีแอดมิน';
+    const { error } = await supabaseClient.functions.invoke('invite-staff', { body: input });
+    const { data } = await supabaseClient.from('users').select(STAFF_DIRECTORY_COLUMNS).order('created_at', { ascending: true });
+    if (data) setUsers(data as UserAccount[]);
+    if (!error) return null;
+    if (error.context instanceof Response) {
+      const body = await error.context.json().catch(() => null);
+      if (typeof body?.error === 'string') return body.error;
+    }
+    return error.message;
   };
 
   const logout = () => {
@@ -906,6 +978,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const updateUser = async (id: string, updates: Partial<UserAccount>) => {
     if (isSupabaseLive && supabaseClient) {
+      if (id === staffProfile?.id) {
+        const { data, error } = await supabaseClient.rpc('boss_update_own_profile', { changes: updates });
+        if (error || !data) return false;
+        setStaffProfile(data as UserAccount);
+        return true;
+      }
       const { password: _password, ...profile } = updates;
       const { error } = await supabaseClient.from('users').update(profile).eq('id', id).select('id').single();
       if (error) {
@@ -3707,6 +3785,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const clearRemoteState = () => {
     setAuthUser(null);
+    setStaffProfile(null);
     setSupabaseClient(null);
     setIsSupabaseLive(false);
     setIsSyncing(false);
@@ -4662,9 +4741,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   return (
     <AppContext.Provider value={{
       currentUser: usesSupabaseAuth && (
-        !isSupabaseLive || authUser?.app_metadata.boss_role !== 'admin' || currentUser?.id !== authUser.id
+        !isSupabaseLive || staffProfile?.auth_user_id !== authUser?.id || !staffProfile || currentUser !== staffProfile
       ) ? null : currentUser,
       login,
+      inviteStaff,
+      requestPasswordReset,
       passwordRecovery,
       updateRecoveredPassword,
       closePasswordRecovery,

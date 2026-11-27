@@ -6,13 +6,29 @@ import companyLogo from '../assets/BossCom.jpg';
 import loginBanner from '../assets/BossComBanner.png';
 
 export const LoginPage: React.FC<{ onBackToLanding?: () => void; onOpenSettings: () => void }> = ({ onBackToLanding, onOpenSettings }) => {
-  const { login, users, theme, toggleTheme, usesSupabaseAuth, isSyncing, databaseError, databaseStatusLabel } = useApp();
+  const { login, requestPasswordReset, users, theme, toggleTheme, usesSupabaseAuth, isSyncing, databaseError, databaseStatusLabel } = useApp();
   const [selectedUsername, setSelectedUsername] = useState('admin');
   const [customUsername, setCustomUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [resetNotice, setResetNotice] = useState('');
+
+  const sendPasswordReset = async () => {
+    setError('');
+    setResetNotice('');
+    setSubmitting(true);
+    try {
+      const failure = await requestPasswordReset(email.trim());
+      if (failure) setError(failure);
+      else setResetNotice('หากอีเมลนี้มีบัญชี ระบบจะส่งลิงก์ตั้งรหัสผ่านให้');
+    } catch {
+      setError('ส่งลิงก์ไม่สำเร็จ กรุณาลองอีกครั้ง');
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -149,12 +165,13 @@ export const LoginPage: React.FC<{ onBackToLanding?: () => void; onOpenSettings:
               <span>{error || databaseError}</span>
             </div>
           )}
+          {resetNotice && <p role="status" className="mb-4 text-sm text-emerald-700 dark:text-emerald-300">{resetNotice}</p>}
 
           <form onSubmit={handleLogin} className="space-y-4">
             {usesSupabaseAuth ? (
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
                 อีเมลบัญชี Supabase
-                <input type="email" autoComplete="username" required value={email}
+                <input id="staff-email" type="email" autoComplete="username" required value={email}
                   onChange={e => setEmail(e.target.value)}
                   className="mt-1 w-full liquid-glass-input rounded-2xl px-3.5 py-2.5 text-sm"
                 />
@@ -246,9 +263,15 @@ export const LoginPage: React.FC<{ onBackToLanding?: () => void; onOpenSettings:
             </button>
           </form>
 
-          <div className="mt-4 text-center text-[11px] text-slate-500">
-            ระบบความปลอดภัยระดับองค์กร • เมื่อล็อกอินสำเร็จจะมองเห็นเฉพาะแถบเมนูของตนเอง
-          </div>
+          {usesSupabaseAuth && (
+            <button type="button" className="mt-3 min-h-11 self-start text-sm underline" disabled={submitting}
+              onClick={() => {
+                const field = document.getElementById('staff-email') as HTMLInputElement | null;
+                if (field?.reportValidity()) void sendPasswordReset();
+              }}>
+              ส่งลิงก์ตั้งรหัสผ่านไปที่อีเมล
+            </button>
+          )}
         </div>
       </div>
     </div>

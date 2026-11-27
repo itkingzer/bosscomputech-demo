@@ -211,21 +211,14 @@ export const App: React.FC = () => {
     { id: 'admin', role: 'admin', label: 'จัดการผู้ใช้ & สิทธิ์', icon: Shield, badge: null, desc: 'แอดมินระบบส่วนกลาง' },
   ];
 
-  // STRICT FILTER:
-  // If user is Admin -> can see all tabs.
-  // If user is a specific Role -> can ONLY see Dashboard + their own specific Role tab!
-  // Any other tabs are COMPLETELY HIDDEN (ไม่ปรากฏให้รกสายตา).
   const visibleNavItems = allNavItems.filter((nav) => {
     if (currentUser.role === 'admin') return true;
-    if (nav.id === 'dashboard') return true;
-    // แท็บประวัติงาน & Log เปิดให้ทุกบทบาทปฏิบัติการเข้าถึงได้
-    if (nav.id === 'completed-logs') return true;
-    // พนักงานขายเห็นทั้งแท็บ Sales และแท็บสรุปยอด & กำไร (ของตัวเอง)
-    if (nav.id === 'profit' && currentUser.role === 'sales') return true;
-    // ผู้บริหาร/ผู้จัดการ (manager) เห็นแท็บสรุปยอด & กำไร ภาพรวมทั้งบริษัท
+    if (nav.role === 'all') return true;
     if (nav.id === 'profit' && (currentUser.role as string) === 'manager') return true;
-    return nav.role === currentUser.role;
+    return nav.role === currentUser.role
+      || (nav.role !== 'admin' && currentUser.work_positions?.some(position => position === nav.role));
   });
+  const permittedTab = visibleNavItems.some(nav => nav.id === activeTab) ? activeTab : 'dashboard';
   const workMenu = {
     label: 'งานประจำ',
     ids: ['sales', 'accounting', 'prep', 'frontdesk', 'onsite', 'repair', 'finance', 'hr']
@@ -576,18 +569,18 @@ export const App: React.FC = () => {
                 </div>
               }
             >
-              {activeTab === 'dashboard' && <DashboardView />}
-              {activeTab === 'sales' && <SalesView />}
-              {activeTab === 'profit' && <ProfitDashboardView />}
-              {activeTab === 'accounting' && <PurchasingStockView />}
-              {activeTab === 'finance' && <AccountingView />}
-              {activeTab === 'prep' && <PrepView />}
-              {activeTab === 'frontdesk' && <FrontdeskView />}
-              {activeTab === 'onsite' && <OnsiteView />}
-              {activeTab === 'repair' && <RepairView />}
-              {activeTab === 'hr' && <HrDirectoryView />}
-              {activeTab === 'completed-logs' && <CompletedLogsView />}
-              {activeTab === 'admin' && currentUser.role === 'admin' && <AdminUserManagement />}
+              {permittedTab === 'dashboard' && <DashboardView />}
+              {permittedTab === 'sales' && <SalesView />}
+              {permittedTab === 'profit' && <ProfitDashboardView />}
+              {permittedTab === 'accounting' && <PurchasingStockView />}
+              {permittedTab === 'finance' && <AccountingView />}
+              {permittedTab === 'prep' && <PrepView />}
+              {permittedTab === 'frontdesk' && <FrontdeskView />}
+              {permittedTab === 'onsite' && <OnsiteView />}
+              {permittedTab === 'repair' && <RepairView />}
+              {permittedTab === 'hr' && <HrDirectoryView />}
+              {permittedTab === 'completed-logs' && <CompletedLogsView />}
+              {permittedTab === 'admin' && currentUser.role === 'admin' && <AdminUserManagement />}
             </Suspense>
           </div>
         </main>

@@ -5,9 +5,10 @@ import { useApp } from '../context/AppContext';
 import { Users, UserPlus, Trash2, Shield, Database } from 'lucide-react';
 import { UserRole } from '../types';
 import { ToastBanner } from './ui/ToastBanner';
+import { OnlineStaffManagement } from './OnlineStaffManagement';
 
 export const AdminUserManagement: React.FC = () => {
-  const { currentUser, users, addUser, deleteUser, resetAllDemoData } = useApp();
+  const { currentUser, users, addUser, deleteUser, resetAllDemoData, usesSupabaseAuth } = useApp();
   const [showAddModal, setShowAddModal] = useState(false);
   const [name, setName] = useState('');
   const [username, setUsername] = useState('');
@@ -25,6 +26,8 @@ export const AdminUserManagement: React.FC = () => {
       </div>
     );
   }
+
+  if (usesSupabaseAuth) return <OnlineStaffManagement />;
 
   const handleAddUser = (e: React.FormEvent) => {
     e.preventDefault();

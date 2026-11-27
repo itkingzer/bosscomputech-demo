@@ -8,6 +8,10 @@
 
 begin;
 
+-- SQL Editor can connect as postgres while impersonating an application role.
+-- Use the connected owner role for this transaction only.
+set local role postgres;
+
 grant usage on schema public to authenticated;
 
 do $$
@@ -16,6 +20,11 @@ declare
   admin_check constant text :=
     '(select (auth.jwt() -> ''app_metadata'' ->> ''boss_role'') = ''admin'')';
 begin
+  if current_user <> 'postgres' then
+    raise exception 'Run this migration as postgres (current_user=%, session_user=%)',
+      current_user, session_user;
+  end if;
+
   foreach table_name in array array[
     'orders', 'items', 'repair_tickets', 'products', 'stock_pos',
     'projects', 'users', 'contracts', 'contract_items'
