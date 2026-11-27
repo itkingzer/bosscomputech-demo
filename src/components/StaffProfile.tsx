@@ -82,7 +82,7 @@ export function MyStaffProfile({ user, onClose }: { user: UserAccount; onClose: 
   const [section, setSection] = useState<'profile' | 'contact' | 'work'>('profile');
   const [avatar, setAvatar] = useState(user.avatar ?? null);
   const [details, setDetails] = useState(user.profile_details ?? '');
-  const [email, setEmail] = useState(user.email ?? '');
+  const [email, setEmail] = useState(user.email?.endsWith('@staff.bosscomputech.invalid') ? '' : user.email ?? '');
   const [phone, setPhone] = useState(user.phone ?? '');
   const [address, setAddress] = useState(user.address ?? '');
   const [imageBusy, setImageBusy] = useState(false);

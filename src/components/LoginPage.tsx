@@ -10,6 +10,7 @@ export const LoginPage: React.FC<{ onBackToLanding?: () => void; onOpenSettings:
   const [selectedUsername, setSelectedUsername] = useState('admin');
   const [customUsername, setCustomUsername] = useState('');
   const [email, setEmail] = useState('');
+  const [adminLogin, setAdminLogin] = useState(false);
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -22,7 +23,7 @@ export const LoginPage: React.FC<{ onBackToLanding?: () => void; onOpenSettings:
     try {
       const failure = await requestPasswordReset(email.trim());
       if (failure) setError(failure);
-      else setResetNotice('หากอีเมลนี้มีบัญชี ระบบจะส่งลิงก์ตั้งรหัสผ่านให้');
+      else setResetNotice('หากอีเมลนี้ตรงกับบัญชีแอดมิน จะได้รับลิงก์ตั้งรหัสผ่าน');
     } catch {
       setError('ส่งลิงก์ไม่สำเร็จ กรุณาลองอีกครั้ง');
     } finally {
@@ -170,8 +171,10 @@ export const LoginPage: React.FC<{ onBackToLanding?: () => void; onOpenSettings:
           <form onSubmit={handleLogin} className="space-y-4">
             {usesSupabaseAuth ? (
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-                อีเมลบัญชี Supabase
-                <input id="staff-email" type="email" autoComplete="username" required value={email}
+                {adminLogin ? 'อีเมลแอดมิน' : 'ชื่อผู้ใช้พนักงาน'}
+                <input id="staff-email" type={adminLogin ? 'email' : 'text'} autoComplete="username" required value={email}
+                  pattern={adminLogin ? undefined : '[A-Za-z0-9][A-Za-z0-9._\\-]{2,39}'}
+                  autoCapitalize="none" spellCheck={false}
                   onChange={e => setEmail(e.target.value)}
                   className="mt-1 w-full liquid-glass-input rounded-2xl px-3.5 py-2.5 text-sm"
                 />
@@ -264,13 +267,25 @@ export const LoginPage: React.FC<{ onBackToLanding?: () => void; onOpenSettings:
           </form>
 
           {usesSupabaseAuth && (
-            <button type="button" className="mt-3 min-h-11 self-start text-sm underline" disabled={submitting}
+            <div className="mt-3 flex flex-wrap gap-x-4">
+            <button type="button" className="min-h-11 text-sm underline" disabled={submitting}
+              onClick={() => {
+                setAdminLogin(value => !value);
+                setEmail('');
+                setPassword('');
+                setError('');
+                setResetNotice('');
+              }}>
+              {adminLogin ? 'เข้าสู่ระบบพนักงาน' : 'เข้าสู่ระบบแอดมินด้วยอีเมล'}
+            </button>
+            {adminLogin && <button type="button" className="min-h-11 text-sm underline" disabled={submitting}
               onClick={() => {
                 const field = document.getElementById('staff-email') as HTMLInputElement | null;
                 if (field?.reportValidity()) void sendPasswordReset();
               }}>
-              ส่งลิงก์ตั้งรหัสผ่านไปที่อีเมล
-            </button>
+              แอดมินลืมรหัสผ่าน
+            </button>}
+            </div>
           )}
         </div>
       </div>

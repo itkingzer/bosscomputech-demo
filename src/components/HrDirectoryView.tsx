@@ -3,6 +3,7 @@ import { PhoneInput, normalizePhone } from './ui/FormInputs';
 import React, { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from '../context/AppContext';
+import { OnlineStaffManagement } from './OnlineStaffManagement';
 import {
   Users, UserPlus, Edit3, CheckCircle2, XCircle, Search,
   Activity, Briefcase, X, Phone
@@ -27,7 +28,7 @@ const ROLE_OPTIONS: { value: UserRole; label: string; dept: string }[] = [
 
 export const HrDirectoryView: React.FC = () => {
   const { users, addUser, updateUser, orders, projects, stockPOs, repairTickets, usesSupabaseAuth, currentUser } = useApp();
-  const canManageProfiles = !usesSupabaseAuth || currentUser?.role === 'admin';
+  const canManageProfiles = !usesSupabaseAuth;
 
   const [searchQuery, setSearchQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState<string>('all');
@@ -192,6 +193,7 @@ export const HrDirectoryView: React.FC = () => {
 
   return (
     <div className="space-y-5">
+      {usesSupabaseAuth && <OnlineStaffManagement />}
       {/* Header */}
       <div className="liquid-glass rounded-3xl p-5 sm:p-6 border border-white/[0.08] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center gap-3">

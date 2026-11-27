@@ -129,7 +129,8 @@ interface AppContextType {
   login: (username: string, password: string) => Promise<string | null>;
   usesSupabaseAuth: boolean;
   databaseError: string | null;
-  inviteStaff: (input: Pick<UserAccount, 'name' | 'role' | 'work_positions'> & { email: string; id?: string }) => Promise<string | null>;
+  manageStaff: (input: { action: 'save'; id?: string; name: string; username: string; password: string; role: UserAccount['role']; work_positions: UserAccount['role'][] }
+    | { action: 'set-active'; id: string; active: boolean }) => Promise<string | null>;
   requestPasswordReset: (email: string) => Promise<string | null>;
   passwordRecovery: 'checking' | 'ready' | 'invalid' | 'complete' | null;
   updateRecoveredPassword: (password: string) => Promise<string | null>;
@@ -513,7 +514,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const hash = new URLSearchParams(window.location.hash.slice(1));
     const query = new URLSearchParams(window.location.search);
     if (hash.has('error_code') || query.has('error_code')) return 'invalid';
-    const passwordSetupTypes = ['recovery', 'invite'];
+    const passwordSetupTypes = ['recovery'];
     if (!passwordSetupTypes.some(type => hash.get('type') === type || query.get('type') === type)) return null;
     return hash.has('access_token') || query.has('access_token') || query.has('code') ? 'checking' : 'invalid';
   });
@@ -890,6 +891,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const updateRecoveredPassword = async (password: string) => {
     if (passwordRecovery !== 'ready' || !authClient) return 'ลิงก์ตั้งรหัสผ่านหมดอายุ กรุณาขอลิงก์ใหม่';
+    const { data: profile, error: accessError } = await authClient.rpc('boss_staff_profile');
+    if (accessError || profile?.role !== 'admin') return 'พนักงานสามารถขอให้แอดมินหรือ HR ตั้งรหัสผ่านใหม่';
     const { error } = await authClient.auth.updateUser({ password });
     if (error) return error.message;
     recoveryPending.current = false;
@@ -910,10 +913,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const login = async (username: string, password: string) => {
     if (usesSupabaseAuth) {
       if (!authClient) return 'Supabase setup is incomplete or invalid';
-      const { data, error } = await authClient.auth.signInWithPassword({ email: username, password });
+      const identifier = username.toLowerCase();
+      const isAdminLogin = identifier.includes('@');
+      if (identifier.endsWith('@staff.bosscomputech.invalid')) return 'กรุณาใช้ชื่อผู้ใช้พนักงาน';
+      const email = isAdminLogin ? identifier : `${identifier}@staff.bosscomputech.invalid`;
+      const { data, error } = await authClient.auth.signInWithPassword({ email, password });
       if (error) return error.message;
       const { data: profile, error: accessError } = await authClient.rpc('boss_staff_profile');
-      if (accessError || !profile) {
+      if (accessError || !profile || (isAdminLogin && profile.role !== 'admin')) {
         await authClient.auth.signOut({ scope: 'local' });
         return accessError?.message ?? 'บัญชีนี้ยังไม่ได้รับสิทธิ์ หรือถูกพักการใช้งาน';
       }
@@ -930,23 +937,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const requestPasswordReset = async (email: string) => {
     if (!authClient) return 'ยังไม่ได้ตั้งค่า Supabase';
-    const { error } = await authClient.auth.resetPasswordForEmail(email, {
-      redirectTo: new URL(import.meta.env.BASE_URL, window.location.origin).href,
-    });
-    return error?.message ?? null;
+    return runStaffFunction(authClient, { action: 'recover-admin', email });
   };
 
-  const inviteStaff: AppContextType['inviteStaff'] = async input => {
-    if (!supabaseClient || currentUser?.role !== 'admin') return 'ต้องเข้าสู่ระบบด้วยบัญชีแอดมิน';
-    const { error } = await supabaseClient.functions.invoke('invite-staff', { body: input });
-    const { data } = await supabaseClient.from('users').select(STAFF_DIRECTORY_COLUMNS).order('created_at', { ascending: true });
-    if (data) setUsers(data as UserAccount[]);
+  const runStaffFunction = async (client: SupabaseClient, input: object) => {
+    const { error } = await client.functions.invoke('manage-staff', { body: input });
     if (!error) return null;
     if (error.context instanceof Response) {
       const body = await error.context.json().catch(() => null);
       if (typeof body?.error === 'string') return body.error;
     }
     return error.message;
+  };
+
+  const manageStaff: AppContextType['manageStaff'] = async input => {
+    if (!supabaseClient || !currentUser) return 'กรุณาเข้าสู่ระบบก่อน';
+    const error = await runStaffFunction(supabaseClient, input);
+    const { data } = await supabaseClient.from('users').select(STAFF_DIRECTORY_COLUMNS).order('created_at', { ascending: true });
+    if (data) setUsers(data as UserAccount[]);
+    return error;
   };
 
   const logout = () => {
@@ -4744,7 +4753,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         !isSupabaseLive || staffProfile?.auth_user_id !== authUser?.id || !staffProfile || currentUser !== staffProfile
       ) ? null : currentUser,
       login,
-      inviteStaff,
+      manageStaff,
       requestPasswordReset,
       passwordRecovery,
       updateRecoveredPassword,
