@@ -1,3 +1,4 @@
+import { useDepartmentReadOnly } from '../context/DepartmentAccess';
 import { ModalBackdrop } from './ui/ModalBackdrop';
 import { NumberInput, PhoneInput, normalizePhone } from './ui/FormInputs';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -219,6 +220,7 @@ export const RepairView: React.FC = () => {
     saveRepairTicket, updateRepairTicket, deleteRepairTicket, currentUser,
     triggerPrintRepairReceipt, lookupWarrantyBySerial
   } = useApp();
+  const readOnly = useDepartmentReadOnly();
 
   const [toast, setToast] = useState('');
   const [repairIntakeOpen, setRepairIntakeOpen] = useState(false);
@@ -672,7 +674,7 @@ export const RepairView: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
-            <button
+            <button disabled={readOnly}
               type="button"
               onClick={() => setRepairIntakeOpen(true)}
               className="px-4 py-2 bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold rounded-2xl text-xs transition cursor-pointer flex items-center gap-1.5 shadow-lg shadow-[#FF6B00]/25 border border-white/20 active:scale-95"
@@ -771,7 +773,7 @@ export const RepairView: React.FC = () => {
                                 onClick={(e) => e.stopPropagation()}
                                 className="absolute right-0 top-full mt-1.5 z-30 w-48 rounded-xl overflow-hidden shadow-2xl border border-slate-200 dark:border-white/[0.12] bg-white dark:bg-[#12141A] animate-modal-pop"
                               >
-                                <button
+                                <button disabled={readOnly}
                                   type="button"
                                   role="menuitem"
                                   onClick={() => openEditModal(ticket)}
@@ -781,7 +783,7 @@ export const RepairView: React.FC = () => {
                                   <span>แก้ไขข้อมูล (Edit Info)</span>
                                 </button>
                                 <div className="h-px bg-slate-200 dark:bg-white/[0.08]" />
-                                <button
+                                <button disabled={readOnly}
                                   type="button"
                                   role="menuitem"
                                   onClick={() => openDeleteConfirm(ticket)}
@@ -885,7 +887,7 @@ export const RepairView: React.FC = () => {
                     <div className="pt-3 border-t border-white/[0.08] space-y-2">
                       {/* Quick-complete: จบงานฝั่งช่างทันที (เฉพาะ repairing / rma_returned) */}
                       {(lifecycle === 'repairing' || lifecycle === 'rma_returned') && (
-                        <button
+                        <button disabled={readOnly}
                           onClick={() => quickHandoffFromCard(ticket)}
                           className="w-full py-2.5 rounded-xl bg-gradient-to-r from-sky-500 to-cyan-600 hover:from-sky-400 hover:to-cyan-500 hover:brightness-105 text-white font-extrabold text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-sky-500/25 border border-white/20 active:scale-[0.97]"
                           title="ซ่อม/เคลมเสร็จ ส่งเครื่องคืนห้องหน้าร้าน (จบงานฝั่งช่าง)"
@@ -963,7 +965,7 @@ export const RepairView: React.FC = () => {
                 </div>
                 <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
                   {draftStatus !== 'ready_pickup' && draftStatus !== 'awaiting_quote' && (
-                    <button
+                    <button disabled={readOnly}
                       onClick={() => handleQuickHandoff(ticket)}
                       className="w-full sm:w-auto min-h-[44px] py-2.5 px-4 rounded-xl font-extrabold text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-1.5 bg-gradient-to-r from-sky-500 to-cyan-600 hover:from-sky-400 hover:to-cyan-500 hover:brightness-105 text-white shadow-lg shadow-sky-500/25 border border-white/20 active:scale-[0.97]"
                       title="จบงานฝั่งช่างทันที แล้วส่งเครื่องคืนห้องหน้าร้าน"
@@ -974,7 +976,7 @@ export const RepairView: React.FC = () => {
                   )}
                   <button
                     onClick={() => handleSaveAll(ticket)}
-                    disabled={isSaving}
+                    disabled={readOnly || (isSaving)}
                     className="w-full sm:w-auto min-h-[44px] py-2.5 px-5 rounded-xl font-extrabold text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-1.5 bg-gradient-to-r from-emerald-700 to-emerald-800 hover:from-emerald-800 hover:to-emerald-900 text-white shadow-lg shadow-emerald-500/25 border border-white/20 active:scale-[0.97]"
                   >
                     <Save className="w-4 h-4" />
@@ -1014,7 +1016,7 @@ export const RepairView: React.FC = () => {
                   <button
                     type="button"
                     onClick={openStatusPicker}
-                    disabled={isSaving}
+                    disabled={readOnly || (isSaving)}
                     className="px-4 py-3 rounded-xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] hover:to-[#FF6B00] text-black text-sm font-extrabold cursor-pointer flex items-center justify-center gap-2 transition active:scale-[0.97] flex-shrink-0 shadow-lg shadow-[#FF6B00]/25 border border-white/20"
                   >
                     <RefreshCw className="w-4 h-4" />
@@ -1048,7 +1050,7 @@ export const RepairView: React.FC = () => {
                     />
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    <button type="button" className={modalPrimaryBtnClass} onClick={() => handleSaveAll(ticket, true)}>
+                    <button disabled={readOnly} type="button" className={modalPrimaryBtnClass} onClick={() => handleSaveAll(ticket, true)}>
                       {isSaving ? 'กำลังบันทึก…' : 'บันทึกใบเสนอราคา'}
                     </button>
                     {ticket.repair_quotation && !statusChanged && !hasQuoteChanges(ticket) && (
@@ -1410,7 +1412,7 @@ export const RepairView: React.FC = () => {
                 >
                   ยกเลิก
                 </button>
-                <button
+                <button disabled={readOnly}
                   type="button"
                   onClick={confirmStatusPick}
                   className={modalPrimaryBtnClass + ' sm:w-auto min-w-[170px] px-6 py-3 flex items-center justify-center gap-1.5'}
@@ -1441,7 +1443,7 @@ export const RepairView: React.FC = () => {
             <button onClick={() => setIsNewTicketOpen(false)} className={modalSecondaryBtnClass + ' sm:w-auto'}>
               ยกเลิก
             </button>
-            <button type="submit" form="new-ticket-form" className={modalPrimaryBtnClass + ' sm:w-auto flex items-center justify-center gap-1.5'}>
+            <button disabled={readOnly} type="submit" form="new-ticket-form" className={modalPrimaryBtnClass + ' sm:w-auto flex items-center justify-center gap-1.5'}>
               <CheckCircle className="w-4 h-4" />
               <span>บันทึก & เปิดใบรับซ่อม</span>
             </button>
@@ -1838,7 +1840,7 @@ export const RepairView: React.FC = () => {
             <button type="button" onClick={closeEditModal} className={modalSecondaryBtnClass + ' sm:w-auto'}>
               ยกเลิก
             </button>
-            <button type="submit" form="edit-ticket-form" className={modalPrimaryBtnClass + ' sm:w-auto flex items-center justify-center gap-1.5'}>
+            <button disabled={readOnly} type="submit" form="edit-ticket-form" className={modalPrimaryBtnClass + ' sm:w-auto flex items-center justify-center gap-1.5'}>
               <Save className="w-4 h-4" />
               <span>บันทึกการแก้ไข</span>
             </button>
@@ -1918,7 +1920,7 @@ export const RepairView: React.FC = () => {
             <button type="button" onClick={() => setDeleteTicketId(null)} className={modalSecondaryBtnClass + ' sm:w-auto'}>
               ยกเลิก
             </button>
-            <button
+            <button disabled={readOnly}
               type="button"
               onClick={confirmDelete}
               className="w-full sm:w-auto min-h-[44px] py-2.5 px-5 rounded-xl font-extrabold text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-1.5 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-400 hover:to-red-500 text-white shadow-lg shadow-red-500/25 border border-white/20 active:scale-[0.97]"

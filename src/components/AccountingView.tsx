@@ -1,3 +1,4 @@
+import { useDepartmentReadOnly } from '../context/DepartmentAccess';
 import { ModalBackdrop } from './ui/ModalBackdrop';
 import React, { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -19,6 +20,7 @@ export const AccountingView: React.FC = () => {
     orders, projects, items, stockPOs,
     markOrderBilled, markProjectBilled
   } = useApp();
+  const readOnly = useDepartmentReadOnly();
 
   const [activeSubTab, setActiveSubTab] = useState<'billing' | 'po_readonly' | 'doa_readonly'>('billing');
   const [billingFilter, setBillingFilter] = useState<'ready' | 'billed' | 'all'>('ready');
@@ -479,7 +481,7 @@ export const AccountingView: React.FC = () => {
                           <span>พิมพ์ ORDER FORM 2026</span>
                         </button>
                         {prj.billing_status !== 'billed' && (
-                          <button
+                          <button disabled={readOnly}
                             type="button"
                             onClick={() => {
                               setTaxInvoiceInput('');
@@ -627,7 +629,7 @@ export const AccountingView: React.FC = () => {
                           <span>พิมพ์ ORDER FORM 2026</span>
                         </button>
                         {ord.billing_status !== 'billed' && (
-                          <button
+                          <button disabled={readOnly}
                             type="button"
                             onClick={() => {
                               setTaxInvoiceInput('');
@@ -853,7 +855,7 @@ export const AccountingView: React.FC = () => {
               >
                 ยกเลิก
               </button>
-              <button
+              <button disabled={readOnly}
                 type="submit"
                 className="px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-extrabold cursor-pointer flex items-center gap-1.5"
               >

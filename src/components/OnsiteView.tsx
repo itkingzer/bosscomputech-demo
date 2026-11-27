@@ -1,3 +1,4 @@
+import { useDepartmentReadOnly } from '../context/DepartmentAccess';
 import { ModalBackdrop } from './ui/ModalBackdrop';
 import { PhoneInput, NumberInput, normalizePhone } from './ui/FormInputs';
 import React, { useMemo, useState } from 'react';
@@ -172,6 +173,7 @@ export const OnsiteView: React.FC = () => {
     projects, products, addProjectDailyLog, createProjectMaterialRequest, completeProjectHandover,
     updateSiteVisit
   } = useApp();
+  const readOnly = useDepartmentReadOnly();
 
   // Default landing route filter to 'all' so Onsite techs see all their assigned jobs across every route
   const [selectedRouteFilter, setSelectedRouteFilter] = useState<'all' | RouteCode>('all');
@@ -694,7 +696,7 @@ export const OnsiteView: React.FC = () => {
               <Printer className="w-5 h-5" />
               <span>พิมพ์ใบจัดคิวพรุ่งนี้ (Print)</span>
             </button>
-            <button
+            <button disabled={readOnly}
               type="button"
               onClick={() => handleOpenNewServiceSheet()}
               className="hidden px-5 py-3 min-h-[48px] bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:brightness-110 active:scale-[0.97] text-black font-black rounded-xl text-sm transition-all duration-150 cursor-pointer sm:flex items-center justify-center gap-2 shadow-lg shadow-[#FF6B00]/25 border border-white/20"
@@ -1482,7 +1484,7 @@ export const OnsiteView: React.FC = () => {
               footer={
                 <div className="space-y-2">
                   {!isAccepted ? (
-                    <button
+                    <button disabled={readOnly}
                       onClick={() => { handleAcceptGroup(group); }}
                       className={modalPrimaryBtnClass + ' w-full flex items-center justify-center gap-2'}
                     >
@@ -1492,7 +1494,7 @@ export const OnsiteView: React.FC = () => {
                   ) : (
                     <button
                       onClick={() => setConfirmDeliveryKey(group.key)}
-                      disabled={savingDelivery || uploadingDeliveryProof || isConfirmingDelivery}
+                      disabled={readOnly || (savingDelivery || uploadingDeliveryProof || isConfirmingDelivery)}
                       className="w-full px-5 py-3 bg-gradient-to-r from-emerald-700 to-emerald-800 hover:from-emerald-800 active:scale-95 text-white font-extrabold rounded-xl text-sm transition cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/25 border border-white/20 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       <CheckCircle className="w-4 h-4" />
@@ -1502,7 +1504,7 @@ export const OnsiteView: React.FC = () => {
                     </button>
                   )}
                   <button
-                    disabled={savingDelivery || isConfirmingDelivery}
+                    disabled={readOnly || (savingDelivery || isConfirmingDelivery)}
                     onClick={() => {
                       handleOpenNewServiceSheet({
                         customer_name: order?.customer_name,
@@ -1675,7 +1677,7 @@ export const OnsiteView: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => void handleDeliveryConfirmGroup(group)}
-                      disabled={savingDelivery || uploadingDeliveryProof}
+                      disabled={readOnly || (savingDelivery || uploadingDeliveryProof)}
                       className="min-h-11 rounded-xl bg-emerald-700 px-4 text-sm font-bold text-white hover:bg-emerald-800 disabled:opacity-50"
                     >
                       {savingDelivery ? 'กำลังบันทึก…' : 'ยืนยันจบงาน'}
@@ -1716,14 +1718,14 @@ export const OnsiteView: React.FC = () => {
             footer={
               isReturn ? (
                 <div className="space-y-2">
-                  <button
+                  <button disabled={readOnly}
                     onClick={() => { handleReturnConfirm(ticket.id, ticket.ticket_no); closeModal(); }}
                     className="w-full py-3 bg-gradient-to-r from-cyan-600 to-cyan-700 hover:from-cyan-500 active:scale-95 text-white font-bold rounded-xl text-sm transition cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-cyan-600/25 border border-white/20"
                   >
                     <CheckCircle className="w-4 h-4" />
                     <span>ส่งมอบเครื่องซ่อมเสร็จสิ้น (ปิดงาน)</span>
                   </button>
-                  <button
+                  <button disabled={readOnly}
                     onClick={() => {
                       handleOpenNewServiceSheet({
                         customer_name: ticket.customer_name,
@@ -1739,7 +1741,7 @@ export const OnsiteView: React.FC = () => {
                   </button>
                 </div>
               ) : (
-                <button
+                <button disabled={readOnly}
                   onClick={() => { handleOpenPickupForJob(ticket); closeModal(); }}
                   className="w-full px-5 py-3 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 active:scale-95 text-black font-extrabold rounded-xl text-sm transition cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-amber-500/25 border border-white/20"
                 >
@@ -2133,7 +2135,7 @@ export const OnsiteView: React.FC = () => {
                 >
                   ยกเลิก
                 </button>
-                <button
+                <button disabled={readOnly}
                   type="submit"
                   className="w-full sm:w-2/3 py-2.5 min-h-[44px] bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 active:scale-95 text-black font-extrabold rounded-xl text-xs transition cursor-pointer shadow-xl shadow-amber-500/25 border border-white/20 flex items-center justify-center gap-1.5"
                 >
@@ -2474,7 +2476,7 @@ export const OnsiteView: React.FC = () => {
                           )}
                           {canCompleteSiteVisit(sv) && (
                             <div className="flex justify-end pt-1">
-                              <button
+                              <button disabled={readOnly}
                                 type="button"
                                 onClick={async () => {
                                   try {
@@ -2696,7 +2698,7 @@ export const OnsiteView: React.FC = () => {
                       />
                     </div>
 
-                    <button
+                    <button disabled={readOnly}
                       type="submit"
                       className="w-full py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-extrabold text-xs shadow-lg shadow-purple-500/25 cursor-pointer flex items-center justify-center gap-1.5"
                     >
@@ -2804,7 +2806,7 @@ export const OnsiteView: React.FC = () => {
                       </div>
                     </div>
 
-                    <button
+                    <button disabled={readOnly}
                       type="submit"
                       className="w-full py-2.5 rounded-xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold text-xs shadow-lg shadow-[#FF6B00]/25 cursor-pointer flex items-center justify-center gap-1.5"
                     >
@@ -2886,7 +2888,7 @@ export const OnsiteView: React.FC = () => {
                   )}
                   <button
                     type="submit"
-                    disabled={isSubmittingHandover || !canCompleteProjectHandover(activeProject, items)}
+                    disabled={readOnly || (isSubmittingHandover || !canCompleteProjectHandover(activeProject, items))}
                     className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-700 to-teal-800 hover:from-emerald-800 text-white font-extrabold text-sm shadow-lg shadow-emerald-500/25 cursor-pointer flex items-center justify-center gap-2"
                   >
                     <CheckCircle className="w-4 h-4" />
@@ -3071,7 +3073,7 @@ export const OnsiteView: React.FC = () => {
       />
       {/* Mobile Floating Action Button (FAB): ออกใบรับเครื่องซ่อมหน้างาน (Portal เพื่อไม่ให้ติด transform ของ animate-slide-up) */}
       {typeof document !== 'undefined' && createPortal(
-        <button
+        <button disabled={readOnly}
           type="button"
           onClick={() => handleOpenNewServiceSheet()}
           aria-label="ออกใบรับเครื่องซ่อมหน้างาน"

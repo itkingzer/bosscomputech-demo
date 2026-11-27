@@ -1,3 +1,4 @@
+import { useDepartmentReadOnly } from '../context/DepartmentAccess';
 import { ModalBackdrop } from './ui/ModalBackdrop';
 import { ProductCatalogModal } from './ProductCatalogModal';
 import { PurchasingActionConfirmation, type PurchasingActionSummary } from './PurchasingActionConfirmation';
@@ -60,6 +61,7 @@ export const PurchasingStockView: React.FC = () => {
     projects, releaseProjectBatch, removeProjectItem, updateProjectMaterialRequestStatus,
     cutStockForSiteVisit
   } = useApp();
+  const readOnly = useDepartmentReadOnly();
   const [billInputs, setBillInputs] = useState<Record<string, string>>({});
   const [supplierInputs, setSupplierInputs] = useState<Record<string, string>>({});
   const [poInputs, setPoInputs] = useState<Record<string, string>>({});
@@ -1198,7 +1200,7 @@ export const PurchasingStockView: React.FC = () => {
               <p className="hidden sm:block text-xs sm:text-sm text-slate-600 dark:text-slate-300 mt-0.5">เช็กของขาด • เปิดใบสั่งซื้อ (PO) • รับของเข้าคลัง • ตัดสต๊อกส่งช่างเตรียม</p>
             </div>
           </div>
-          <button
+          <button disabled={readOnly}
             type="button"
             onClick={openStockPoModal}
             className="w-full sm:w-auto px-4 sm:px-5 py-2.5 sm:py-3 sm:min-h-[48px] rounded-xl bg-gradient-to-r from-emerald-700 to-teal-800 hover:from-emerald-800 text-white font-black text-xs sm:text-sm transition cursor-pointer flex items-center justify-center gap-1.5 sm:gap-2 shadow-lg shadow-emerald-500/20 border border-white/20 active:scale-[0.97]"
@@ -1465,7 +1467,7 @@ export const PurchasingStockView: React.FC = () => {
                         {renderStockStatusBadge(order)}
                         <div className="flex items-center gap-1.5 shrink-0">
                           {stateCase === 'case_a' && (
-                            <button
+                            <button disabled={readOnly}
                               type="button"
                               onClick={(e) => { e.stopPropagation(); openStockPoFromOrder(order); }}
                               className="px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] text-black text-[11px] font-extrabold cursor-pointer active:scale-95 transition flex items-center gap-1 shadow-sm"
@@ -1485,7 +1487,7 @@ export const PurchasingStockView: React.FC = () => {
                             </button>
                           )}
                           {stateCase === 'case_c' && (
-                            <button
+                            <button disabled={readOnly}
                               type="button"
                               onClick={(e) => { e.stopPropagation(); reviewCutStockAndSendPrep(order.id); }}
                               className="px-2.5 py-1.5 rounded-xl bg-gradient-to-r from-emerald-700 to-teal-800 text-white text-[11px] font-extrabold cursor-pointer active:scale-95 transition flex items-center gap-1 shadow-sm"
@@ -1664,7 +1666,7 @@ export const PurchasingStockView: React.FC = () => {
                                       <span className="text-[11px] font-bold text-rose-700 dark:text-rose-300">
                                         ของในคลังไม่พอ — ต้องสั่ง PO ก่อน
                                       </span>
-                                      <button
+                                      <button disabled={readOnly}
                                         type="button"
                                         onClick={() => openStockPoFromProject(prj)}
                                         className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold text-[11px] cursor-pointer flex items-center gap-1 shadow-sm"
@@ -1678,7 +1680,7 @@ export const PurchasingStockView: React.FC = () => {
                                 return (
                                   <button
                                     type="button"
-                                    disabled={isReleasingProjectStock}
+                                    disabled={readOnly || (isReleasingProjectStock)}
                                     onClick={() => void runProjectStockAction(async () => {
                                       const res = await cutStockForSiteVisit(prj.id, visit.id);
                                       if (!res) return 'ปล่อยรอบไม่ได้ กรุณาตรวจสอบสถานะรอบและยอดของในคลัง';
@@ -1868,7 +1870,7 @@ export const PurchasingStockView: React.FC = () => {
                     {orderedStockPOs.length}
                   </span>
                 </span>
-                <button
+                <button disabled={readOnly}
                   type="button"
                   onClick={openStockPoModal}
                   className="px-3 py-1.5 rounded-xl border bg-emerald-700 hover:bg-emerald-800 text-white border-emerald-700 text-[11px] font-bold transition cursor-pointer flex items-center gap-1 active:scale-95"
@@ -2475,7 +2477,7 @@ export const PurchasingStockView: React.FC = () => {
                     />
                   </div>
                   <div className="flex justify-end">
-                    <button
+                    <button disabled={readOnly}
                       type="button"
                       onClick={() => handleSaveCosts(actionOrder.id, actionOrder.sales_ref)}
                       className="px-3 py-1.5 rounded-xl bg-rose-100 hover:bg-rose-200 text-rose-900 border border-rose-300 dark:bg-rose-500/20 dark:hover:bg-rose-500/30 dark:text-rose-200 dark:border-rose-500/30 text-[11px] font-semibold transition cursor-pointer flex items-center gap-1 active:scale-95"
@@ -2562,7 +2564,7 @@ export const PurchasingStockView: React.FC = () => {
                           รวมขาด {stockStatus.totalShortage} ชิ้น
                         </span>
                       </div>
-                      <button
+                      <button disabled={readOnly}
                         type="button"
                         onClick={() => openStockPoFromOrder(actionOrder)}
                         className="w-full px-5 py-3 bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-[#FF6B00]/25 border border-white/20 active:scale-95"
@@ -2590,7 +2592,7 @@ export const PurchasingStockView: React.FC = () => {
                         )}
                       </div>
                       {readiness.unorderedShortageCount > 0 && (
-                        <button
+                        <button disabled={readOnly}
                           type="button"
                           onClick={() => openStockPoFromOrder(actionOrder)}
                           className="w-full px-5 py-2.5 bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-2 shadow-md shadow-[#FF6B00]/20 border border-white/20 active:scale-95"
@@ -2616,7 +2618,7 @@ export const PurchasingStockView: React.FC = () => {
                 // Case C — Stock Is Sufficient (ขาด 0 ชิ้น & PO received)
                 return (
                   <div className="space-y-2">
-                    <button
+                    <button disabled={readOnly}
                       type="button"
                       onClick={() => reviewCutStockAndSendPrep(actionOrder.id)}
                       className="w-full px-5 py-3 bg-gradient-to-r from-emerald-700 to-teal-800 hover:from-emerald-800 text-white font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-500/25 border border-white/20 active:scale-95"
@@ -2624,7 +2626,7 @@ export const PurchasingStockView: React.FC = () => {
                       <Send className="w-4 h-4" />
                       <span>ตัดสต๊อกส่งช่างเตรียมติดวอย/จัดส่ง</span>
                     </button>
-                    <button
+                    <button disabled={readOnly}
                       type="button"
                       onClick={() => {
                         reviewCutStockAndSendPrep(
@@ -2725,7 +2727,7 @@ export const PurchasingStockView: React.FC = () => {
                       <div className="text-[11px] font-bold text-emerald-900 dark:text-emerald-200">
                         พบบิลขายพร้อมส่งที่รอสินค้ารุ่นนี้: <span className="font-mono">{firstOrd.sales_ref || firstOrd.id}</span> ({firstOrd.customer_name})
                       </div>
-                      <button
+                      <button disabled={readOnly}
                         type="button"
                         onClick={() => reviewCutStockAndSendPrep(firstOrd.id)}
                         className="w-full px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-700 to-teal-800 hover:from-emerald-800 text-white font-extrabold text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-md active:scale-95"
@@ -2736,7 +2738,7 @@ export const PurchasingStockView: React.FC = () => {
                     </div>
                   );
                 })()}
-                <button
+                <button disabled={readOnly}
                   type="button"
                   onClick={() => { handleSendBatchToPrep(batchDetail.key, batchDetail.model_name, batchDetail.itemIds, batchSendQty[batchDetail.key] ?? batchDetail.itemIds.length); setBatchDetail(null); }}
                   className="w-full px-5 py-3 bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-[#FF6B00]/25 border border-white/20 active:scale-95"
@@ -2901,7 +2903,7 @@ export const PurchasingStockView: React.FC = () => {
                       เลขใบกำกับภาษี
                       <input value={receiptTaxInvoice} onChange={event => setReceiptTaxInvoice(event.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-800" />
                     </label>
-                  <button
+                  <button disabled={readOnly}
                     type="submit"
                     className="w-full px-5 py-3 bg-gradient-to-r from-teal-700 to-emerald-800 hover:from-teal-800 text-white font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-teal-500/25 border border-white/20 active:scale-95"
                   >
@@ -3057,7 +3059,7 @@ export const PurchasingStockView: React.FC = () => {
                 </button>
                 <button
                   type="submit"
-                  disabled={isSavingStockPo || stockPoLines.length === 0}
+                  disabled={readOnly || (isSavingStockPo || stockPoLines.length === 0)}
                   className="flex-1 px-4 py-2.5 bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold rounded-xl text-xs transition cursor-pointer shadow-lg shadow-[#FF6B00]/25 border border-white/20 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   {isSavingStockPo ? 'กำลังบันทึก…' : 'บันทึกใบสั่งซื้อ'}
@@ -3227,7 +3229,7 @@ export const PurchasingStockView: React.FC = () => {
                       className="w-full px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 focus:outline-none focus:border-amber-500"
                     />
                   </div>
-                  <button
+                  <button disabled={readOnly}
                     type="submit"
                     className="w-full px-5 py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 text-black font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-amber-500/25 border border-white/20 active:scale-95"
                   >
@@ -3273,7 +3275,7 @@ export const PurchasingStockView: React.FC = () => {
                     </span>
                   </label>
 
-                  <button
+                  <button disabled={readOnly}
                     type="button"
                     onClick={handleConfirmDoaReplacement}
                     className="w-full px-5 py-2.5 bg-gradient-to-r from-emerald-700 to-teal-800 hover:from-emerald-800 text-white font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-500/25 border border-white/20 active:scale-95"
@@ -3301,7 +3303,7 @@ export const PurchasingStockView: React.FC = () => {
                     </p>
                     <p>RMA: <span className="font-mono">{doaClaimItem.doa_rma_no || '-'}</span></p>
                     {replacementItem?.status === 'raw_stock' && (
-                      <button
+                      <button disabled={readOnly}
                         type="button"
                         onClick={() => {
                           handleSendRawToPrep(replacementItem.id, replacementItem.model_name);
@@ -3414,7 +3416,7 @@ export const PurchasingStockView: React.FC = () => {
                             </div>
                             <div className="flex items-center gap-1.5 flex-wrap">
                               {req.status === 'pending' && (
-                                <button
+                                <button disabled={readOnly}
                                   type="button"
                                   onClick={() => updateProjectMaterialRequestStatus(actionProject.id, req.id, 'approved_ordered')}
                                   className="px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-bold cursor-pointer"
@@ -3423,7 +3425,7 @@ export const PurchasingStockView: React.FC = () => {
                                 </button>
                               )}
                               {req.status !== 'fulfilled' && (
-                                <button
+                                <button disabled={readOnly}
                                   type="button"
                                   onClick={() => {
                                     const catProduct = products.find(p => p.name.trim().toLowerCase() === req.item_name.trim().toLowerCase());
@@ -3453,7 +3455,7 @@ export const PurchasingStockView: React.FC = () => {
                                 const reqAvail = stockCountByName[(req.item_name || '').trim().toLowerCase()] || 0;
                                 const canFulfillReq = reqAvail >= (req.qty || 1);
                                 return canFulfillReq ? (
-                                  <button
+                                  <button disabled={readOnly}
                                     type="button"
                                     onClick={() => updateProjectMaterialRequestStatus(actionProject.id, req.id, 'fulfilled')}
                                     className="px-2.5 py-1 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-[10px] font-bold cursor-pointer"
@@ -3577,7 +3579,7 @@ export const PurchasingStockView: React.FC = () => {
                                   ) : (
                                     <>
                                       {!row.isLabor && row.shortage > 0 && (
-                                        <button
+                                        <button disabled={readOnly}
                                           type="button"
                                           onClick={() => {
                                             const catProduct = products.find(p => p.name.trim().toLowerCase() === it.model_name.trim().toLowerCase());
@@ -3604,7 +3606,7 @@ export const PurchasingStockView: React.FC = () => {
                                         </button>
                                       )}
                                       {it.qty_allocated === 0 && (
-                                        <button
+                                        <button disabled={readOnly}
                                           type="button"
                                           onClick={() => {
                                             if (confirm(`ต้องการลบ "${it.model_name}" ออกจากโปรเจกต์ ${actionProject.id} หรือไม่? (ใช้กรณีไม่มีของ/ยกเลิกรายการ)`)) {
@@ -3715,7 +3717,7 @@ export const PurchasingStockView: React.FC = () => {
                           <span>รอของเข้า PO ({st.orderedLinkedPOs.map(p => p.po_number).join(', ')})</span>
                         </button>
                       ) : (
-                        <button
+                        <button disabled={readOnly}
                           type="button"
                           onClick={() => openStockPoFromProject(actionProject)}
                           className="flex-1 py-3 px-4 rounded-xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold text-xs transition cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-[#FF6B00]/25"
@@ -3729,7 +3731,7 @@ export const PurchasingStockView: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => handleReleaseProjectBatchSubmit(actionProject)}
-                        disabled={isReleasingProjectStock}
+                        disabled={readOnly || (isReleasingProjectStock)}
                         className="flex-1 py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-700 to-teal-800 hover:from-emerald-800 text-white font-extrabold text-xs transition cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/25"
                       >
                         <Send className="w-4 h-4" />

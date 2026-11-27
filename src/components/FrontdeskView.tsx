@@ -1,3 +1,4 @@
+import { useDepartmentReadOnly } from '../context/DepartmentAccess';
 import { ModalBackdrop } from './ui/ModalBackdrop';
 import { PhoneInput, NumberInput } from './ui/FormInputs';
 import React, { useMemo, useState } from 'react';
@@ -299,6 +300,7 @@ export const FrontdeskView: React.FC = () => {
     scheduleItemDispatch, unscheduleItemDispatch,
     scheduleRepairDispatch, unscheduleRepairDispatch, removeSiteVisit
   } = useApp();
+  const readOnly = useDepartmentReadOnly();
 
   const [activeTab, setActiveTab] = useState<TabId>('counter');
   const [printModalTicket, setPrintModalTicket] = useState<RepairTicket | null>(null);
@@ -1115,7 +1117,7 @@ export const FrontdeskView: React.FC = () => {
       </div>
       <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-white/[0.06]">
         {row.id.startsWith('item-') && (
-          <button
+          <button disabled={readOnly}
             type="button"
             onClick={() => unscheduleItemDispatch(row.id.replace('item-', ''))}
             className="px-2.5 py-1 rounded-lg bg-rose-100 dark:bg-rose-500/15 text-rose-700 dark:text-rose-300 text-[11px] font-bold cursor-pointer"
@@ -1124,7 +1126,7 @@ export const FrontdeskView: React.FC = () => {
           </button>
         )}
         {row.id.startsWith('rep-') && (
-          <button
+          <button disabled={readOnly}
             type="button"
             onClick={() => unscheduleRepairDispatch(row.id.replace('rep-', ''))}
             className="px-2.5 py-1 rounded-lg bg-rose-100 dark:bg-rose-500/15 text-rose-700 dark:text-rose-300 text-[11px] font-bold cursor-pointer"
@@ -1136,7 +1138,7 @@ export const FrontdeskView: React.FC = () => {
           const vid = row.id.replace('visit-', '');
           const ownerPrj = projects.find(p => (p.site_visits || []).some(v => v.id === vid));
           return ownerPrj ? (
-            <button
+            <button disabled={readOnly}
               type="button"
               onClick={() => removeSiteVisit(ownerPrj.id, vid)}
               className="px-2.5 py-1 rounded-lg bg-rose-100 dark:bg-rose-500/15 text-rose-700 dark:text-rose-300 text-[11px] font-bold cursor-pointer"
@@ -1640,7 +1642,7 @@ export const FrontdeskView: React.FC = () => {
                           วันส่ง: {due ? formatDateDMY(due) : 'ยังไม่ระบุ'}
                         </div>
                       </div>
-                      <button
+                      <button disabled={readOnly}
                         type="button"
                         onClick={() =>
                           openScheduleJobModal({
@@ -1701,7 +1703,7 @@ export const FrontdeskView: React.FC = () => {
                         </span>
                       </div>
                     </div>
-                    <button
+                    <button disabled={readOnly}
                       type="button"
                       onClick={() =>
                         openScheduleJobModal({
@@ -1808,7 +1810,7 @@ export const FrontdeskView: React.FC = () => {
                       <span className="text-slate-600 dark:text-slate-300 font-semibold">
                         นัดเข้าไซต์ {visitCount} รอบ (เสร็จ {completedVisitCount})
                       </span>
-                      <button
+                      <button disabled={readOnly}
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
@@ -1908,7 +1910,7 @@ export const FrontdeskView: React.FC = () => {
         <div className="space-y-4 sm:space-y-6">
           {/* Quick actions */}
           <div className="grid grid-cols-2 gap-2 sm:gap-3">
-            <button
+            <button disabled={readOnly}
               type="button"
               onClick={() => setIntakeOpen(true)}
               className="group flex items-center gap-2 sm:gap-3 p-2.5 sm:p-4 rounded-xl sm:rounded-2xl bg-gradient-to-br from-[#FF6B00] to-[#FF8F3C] text-white shadow-lg shadow-[#FF6B00]/20 hover:shadow-xl transition-all active:scale-[0.98] sm:min-h-[72px]"
@@ -1923,7 +1925,7 @@ export const FrontdeskView: React.FC = () => {
               <ArrowRight className="hidden sm:block w-5 h-5 opacity-70 group-hover:translate-x-0.5 transition-transform" />
             </button>
 
-            <button
+            <button disabled={readOnly}
               type="button"
               onClick={() => setOnsiteOpen(true)}
               className="group flex items-center gap-2 sm:gap-3 p-2.5 sm:p-4 rounded-xl sm:rounded-2xl bg-gradient-to-br from-sky-600 to-cyan-500 text-white shadow-lg shadow-sky-600/20 hover:shadow-xl transition-all active:scale-[0.98] sm:min-h-[72px]"
@@ -2228,7 +2230,7 @@ export const FrontdeskView: React.FC = () => {
                                     {member.status === 'ready_for_dispatch' ? (
                                       <div className="flex flex-wrap items-center gap-2">
                                         <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-300">ติดวอยพร้อมปล่อย</span>
-                                        <button
+                                        <button disabled={readOnly}
                                           type="button"
                                           onClick={() => {
                                             setPrepDetailKey(null);
@@ -2521,7 +2523,7 @@ export const FrontdeskView: React.FC = () => {
             <button type="button" onClick={() => setOnsiteOpen(false)} className={modalSecondaryBtnClass}>
               ยกเลิก
             </button>
-            <button type="submit" form="onsite-form" className={modalPrimaryBtnClass}>
+            <button disabled={readOnly} type="submit" form="onsite-form" className={modalPrimaryBtnClass}>
               <Truck className="w-4 h-4" />
               มอบหมายช่าง & ออกใบงาน
             </button>
@@ -2652,10 +2654,10 @@ export const FrontdeskView: React.FC = () => {
             <button type="button" onClick={() => setDispatchTarget(null)} className={modalSecondaryBtnClass}>
               ยกเลิก
             </button>
-            <button type="button" onClick={saveDispatchScheduleOnly} className={modalSecondaryBtnClass}>
+            <button disabled={readOnly} type="button" onClick={saveDispatchScheduleOnly} className={modalSecondaryBtnClass}>
               บันทึกวันส่ง/สายรถอย่างเดียว
             </button>
-            <button type="button" onClick={confirmDispatch} className={modalPrimaryBtnClass}>
+            <button disabled={readOnly} type="button" onClick={confirmDispatch} className={modalPrimaryBtnClass}>
               <Truck className="w-4 h-4" />
               ยืนยันจัดส่ง
             </button>
@@ -2802,7 +2804,7 @@ export const FrontdeskView: React.FC = () => {
             <button type="button" onClick={() => setPickupItemId(null)} className={modalSecondaryBtnClass}>
               ยกเลิก
             </button>
-            <button type="button" onClick={confirmPickup} className={modalPrimaryBtnClass}>
+            <button disabled={readOnly} type="button" onClick={confirmPickup} className={modalPrimaryBtnClass}>
               <CheckCircle2 className="w-4 h-4" />
               ยืนยันรับสินค้า
             </button>
@@ -2979,7 +2981,7 @@ export const FrontdeskView: React.FC = () => {
                         <span className="block text-[11px] text-slate-500 dark:text-slate-400">ปิดงานทันที · บันทึกผู้ส่งคืน "รับเองหน้าร้าน"</span>
                       </span>
                     </button>
-                    <button
+                    <button disabled={readOnly}
                       type="button"
                       onClick={confirmQueueForDispatch}
                       className="flex items-start gap-2.5 p-3 rounded-xl border border-slate-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.03] text-left hover:border-[#FF6B00]/50 transition-all active:scale-[0.98]"
@@ -3002,7 +3004,7 @@ export const FrontdeskView: React.FC = () => {
                       <button type="button" onClick={resetHandover} className={modalSecondaryBtnClass}>
                         <X className="w-4 h-4" /> ยกเลิก
                       </button>
-                      <button type="button" onClick={confirmSelfPickup} className={modalPrimaryBtnClass}>
+                      <button disabled={readOnly} type="button" onClick={confirmSelfPickup} className={modalPrimaryBtnClass}>
                         <CheckCircle2 className="w-4 h-4" /> ยืนยันลูกค้ารับเอง (ปิดงานทันที)
                       </button>
                     </div>
@@ -3066,7 +3068,7 @@ export const FrontdeskView: React.FC = () => {
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 {!showScheduleForm && (
-                  <button
+                  <button disabled={readOnly}
                     type="button"
                     onClick={() => setShowScheduleForm(true)}
                     className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] text-black font-extrabold text-xs cursor-pointer flex items-center gap-1.5 shadow-sm"
@@ -3202,7 +3204,7 @@ export const FrontdeskView: React.FC = () => {
                     >
                       ยกเลิก
                     </button>
-                    <button
+                    <button disabled={readOnly}
                       type="submit"
                       className={modalPrimaryBtnClass}
                     >
@@ -3486,7 +3488,7 @@ export const FrontdeskView: React.FC = () => {
               </button>
               <button
                 type="submit"
-                disabled={schedSaving || (scheduleTarget.kind === 'item' && schedItemIds.length === 0)}
+                disabled={readOnly || (schedSaving || (scheduleTarget.kind === 'item' && schedItemIds.length === 0))}
                 className={modalPrimaryBtnClass}
               >
                 <Check className="w-4 h-4 inline mr-1" />
@@ -3513,6 +3515,7 @@ export const FrontdeskView: React.FC = () => {
         customTeamBlocks={customTeamBlocks}
         onAddCustomTeamBlock={handleAddCustomTeamBlock}
         availableTechs={onsiteTechs.map(u => u.name)}
+        readOnly={readOnly}
       />
 
       {/* Onsite Daily Report A4 Print Preview Modal */}

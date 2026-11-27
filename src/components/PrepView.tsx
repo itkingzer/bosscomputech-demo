@@ -1,3 +1,4 @@
+import { useDepartmentReadOnly } from '../context/DepartmentAccess';
 import { ModalBackdrop } from './ui/ModalBackdrop';
 import React, { useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -155,6 +156,7 @@ export const PrepView: React.FC = () => {
     prepFinishToStock, prepFinishAndDispatch, prepFinishLogoToStageB, prepFinishProjectEquipment, applyVoidAndDispatch, currentUser,
     movePrepStockToReady, reportItemDOA
   } = useApp();
+  const readOnly = useDepartmentReadOnly();
 
   // Tab state:
   // - 'stageA': Stage A — Stock PO Prep (!order_id / จากห้อง DOA -> เทส, สแกน S/N, ติดโลโก้ -> ยิงเข้า in_stock)
@@ -470,7 +472,7 @@ export const PrepView: React.FC = () => {
             >
               <Camera className="w-4 h-4" />
             </button>
-            <button
+            <button disabled={readOnly}
               type="button"
               onClick={() => generateNewSn(item.id)}
               title="สุ่ม S/N ใหม่"
@@ -1285,7 +1287,7 @@ export const PrepView: React.FC = () => {
                     </span>
                   </div>
                   <button
-                    disabled={isAccepting}
+                    disabled={readOnly || (isAccepting)}
                     onClick={() => void acceptGroup(group)}
                     className={`w-full py-3 bg-gradient-to-r ${accentGradient} text-black font-extrabold rounded-xl text-sm transition cursor-pointer flex items-center justify-center gap-2 shadow-lg border border-white/20 active:scale-95`}
                   >
@@ -1330,7 +1332,7 @@ export const PrepView: React.FC = () => {
                           </div>
                         </div>
                       ))}
-                      <button
+                      <button disabled={readOnly}
                         onClick={() => requestGroupAction(group, 'release')}
                         className={`w-full py-2.5 bg-gradient-to-r ${accentGradient} text-black font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg border border-white/20 active:scale-95`}
                       >
@@ -1349,7 +1351,7 @@ export const PrepView: React.FC = () => {
                           >
                             {renderSnRow(item, idx, accent)}
                             <div className="flex justify-end">
-                              <button
+                              <button disabled={readOnly}
                                 type="button"
                                 onClick={() => openDoaReportModal(item)}
                                 className="px-3 py-1.5 rounded-xl text-[11px] font-bold bg-rose-100 hover:bg-rose-200 text-rose-800 border border-rose-300 dark:bg-rose-500/15 dark:hover:bg-rose-500/25 dark:text-rose-300 dark:border-rose-500/35 transition cursor-pointer flex items-center gap-1.5 active:scale-95"
@@ -1381,7 +1383,7 @@ export const PrepView: React.FC = () => {
                               className={modalInputClass + ' font-mono'}
                             />
                           </div>
-                          <button
+                          <button disabled={readOnly}
                             onClick={() => requestGroupAction(group, isProjectGroup ? 'project' : 'dispatch')}
                             className="w-full py-3 bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-[#FF6B00]/25 border border-white/20 active:scale-95"
                           >
@@ -1392,7 +1394,7 @@ export const PrepView: React.FC = () => {
                                 : `เทส + ติดโลโก้ + ติดวอย → พร้อมส่งออกเลย${group.items.length > 1 ? ` (${group.items.length})` : ''}`}
                             </span>
                           </button>
-                          <button
+                          <button disabled={readOnly}
                             onClick={() => requestGroupAction(group, 'stageB')}
                             className="w-full py-2 rounded-xl text-[11px] font-bold bg-slate-100 hover:bg-slate-200 dark:bg-white/[0.06] dark:hover:bg-white/[0.1] text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-white/[0.1] transition cursor-pointer flex items-center justify-center gap-1.5 active:scale-95"
                           >
@@ -1406,7 +1408,7 @@ export const PrepView: React.FC = () => {
                             เทสฮาร์ดแวร์ สแกน S/N และติดโลโก้ BossComputech ให้เรียบร้อย (ยังไม่ติดวอยประกัน)
                           </div>
 
-                          <button
+                          <button disabled={readOnly}
                             onClick={() => requestGroupAction(group, 'stock')}
                             className={`w-full py-2.5 bg-gradient-to-r ${accentGradient} text-black font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg border border-white/20 active:scale-95`}
                           >
@@ -1467,7 +1469,7 @@ export const PrepView: React.FC = () => {
 
                       <div className="space-y-2 pt-1">
                         {isProjectGroup ? (
-                          <button
+                          <button disabled={readOnly}
                             onClick={() => requestGroupAction(group, 'project')}
                             className="w-full py-3 bg-gradient-to-r from-emerald-700 to-teal-800 hover:from-emerald-800 text-white font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-500/25 border border-white/20 active:scale-95"
                           >
@@ -1476,14 +1478,14 @@ export const PrepView: React.FC = () => {
                           </button>
                         ) : (
                           <>
-                            <button
+                            <button disabled={readOnly}
                               onClick={() => requestGroupAction(group, 'hold')}
                               className="w-full py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 text-black font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-amber-500/25 border border-white/20 active:scale-95"
                             >
                               <Warehouse className="w-4 h-4" />
                               <span>เก็บรอวันส่งมอบ (prepped_in_stock){group.items.length > 1 ? ` (${group.items.length})` : ''}</span>
                             </button>
-                            <button
+                            <button disabled={readOnly}
                               onClick={() => requestGroupAction(group, 'dispatch')}
                               className="w-full py-2.5 bg-gradient-to-r from-emerald-700 to-teal-800 hover:from-emerald-800 text-white font-extrabold rounded-xl text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-500/25 border border-white/20 active:scale-95"
                             >
@@ -1627,7 +1629,7 @@ export const PrepView: React.FC = () => {
                 >
                   ยกเลิก
                 </button>
-                <button
+                <button disabled={readOnly}
                   type="submit"
                   className="w-full min-h-[44px] py-2.5 px-5 rounded-xl font-extrabold text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-1.5 bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 text-white shadow-lg shadow-rose-500/25 border border-white/20 active:scale-[0.97]"
                 >

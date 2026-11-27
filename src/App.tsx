@@ -6,7 +6,7 @@ import { LoginPage } from './components/LoginPage';
 import { PasswordRecoveryPage } from './components/PasswordRecoveryPage';
 import { RepairReceiptPrintDocument } from './components/RepairReceiptPrintDocument';
 import { MyStaffProfile, StaffAvatar } from './components/StaffProfile';
-import { DepartmentReadOnlyView } from './components/DepartmentReadOnlyView';
+import { DepartmentReadOnlyContext } from './context/DepartmentAccess';
 
 const DashboardView = lazy(() => import('./components/DashboardView').then(m => ({ default: m.DashboardView })));
 const SettingsModal = lazy(() => import('./components/SettingsModal').then(m => ({ default: m.SettingsModal })));
@@ -573,7 +573,9 @@ export const App: React.FC = () => {
                 </div>
               }
             >
-              {readOnly ? <DepartmentReadOnlyView page={currentPage.id} title={currentPage.label} /> : <>
+              <DepartmentReadOnlyContext.Provider value={Boolean(readOnly)}>
+              <div className={readOnly ? '[&_button:disabled]:cursor-not-allowed [&_button:disabled]:opacity-50' : undefined}
+                onSubmitCapture={readOnly ? event => { event.preventDefault(); event.stopPropagation(); } : undefined}>
               {permittedTab === 'dashboard' && <DashboardView />}
               {permittedTab === 'sales' && <SalesView />}
               {permittedTab === 'profit' && <ProfitDashboardView />}
@@ -586,7 +588,8 @@ export const App: React.FC = () => {
               {permittedTab === 'hr' && <HrDirectoryView />}
               {permittedTab === 'completed-logs' && <CompletedLogsView />}
               {permittedTab === 'admin' && currentUser.role === 'admin' && <AdminUserManagement />}
-              </>}
+              </div>
+              </DepartmentReadOnlyContext.Provider>
             </Suspense>
           </div>
         </main>

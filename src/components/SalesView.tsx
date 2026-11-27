@@ -1,3 +1,4 @@
+import { useDepartmentReadOnly } from '../context/DepartmentAccess';
 import { ModalBackdrop } from './ui/ModalBackdrop';
 import { ProductEditorModal } from './ProductEditorModal';
 import { ProductCatalogModal } from './ProductCatalogModal';
@@ -92,6 +93,7 @@ export const SalesView: React.FC = () => {
     orders, createOrder, editOrder, deleteDraftOrder, currentUser, users, products, addProduct, updateProduct, deleteProduct, items,
     projects, createProject, addProjectAddonItems, contracts, addContract, updateContractStatus
   } = useApp();
+  const readOnly = useDepartmentReadOnly();
 
   // ชื่อพนักงานขายที่ล็อกอินอยู่ (auto-tag ลงทุกออเดอร์ ไม่ต้องเลือกเอง)
   const salespersonName = currentUser?.name || 'ไม่ระบุตัวตน';
@@ -1212,7 +1214,7 @@ export const SalesView: React.FC = () => {
           </div>
 
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 flex-wrap">
-            <button
+            <button disabled={readOnly}
               type="button"
               onClick={() => setIsBillingTypeModalOpen(true)}
               className="px-5 py-2.5 min-h-[44px] rounded-xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] hover:brightness-105 text-black font-extrabold text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-2 shadow-lg shadow-[#FF6B00]/25 border border-white/20 active:scale-[0.97]"
@@ -1236,7 +1238,7 @@ export const SalesView: React.FC = () => {
               <ShoppingBag className="w-4 h-4 text-[#FF6B00]" />
               <span>จัดการแคตตาล็อก</span>
             </button>
-            <button
+            <button disabled={readOnly}
               type="button"
               onClick={() => setProductEditor({})}
               className="inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-xl border border-[#FF6B00]/40 bg-[#FF6B00]/15 px-4 py-2.5 text-xs font-bold text-orange-900 transition hover:bg-[#FF6B00]/25 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-600 dark:text-orange-200 dark:focus-visible:outline-orange-400"
@@ -1295,7 +1297,7 @@ export const SalesView: React.FC = () => {
               เซลล์ทุกคนสามารถกด <strong className="text-purple-700 dark:text-purple-300">"+ แอดรายการเพิ่มเข้าโปรเจกต์ (Add-on)"</strong> เพื่อขายพ่วงเข้าไซต์งานได้ตลอดเวลา
             </p>
           </div>
-          <button
+          <button disabled={readOnly}
             type="button"
             onClick={handleOpenCreateProjectModal}
             className="px-3.5 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-md shadow-purple-500/20 active:scale-95"
@@ -1394,7 +1396,7 @@ export const SalesView: React.FC = () => {
 
                   <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-200 dark:border-white/[0.08]">
                     {prj.status === 'completed' ? (
-                      <button
+                      <button disabled={readOnly}
                         type="button"
                         onClick={() => handleCreateFollowUpBillFromClosedProject(prj)}
                         className="flex-1 py-2 px-3 rounded-xl border bg-emerald-700 hover:bg-emerald-800 text-white border-emerald-700 font-extrabold text-xs transition cursor-pointer flex items-center justify-center gap-1.5 active:scale-95"
@@ -1403,7 +1405,7 @@ export const SalesView: React.FC = () => {
                         <span>เปิดบิลใหม่จากลูกค้า/ไซต์นี้</span>
                       </button>
                     ) : (
-                      <button
+                      <button disabled={readOnly}
                         type="button"
                         onClick={(e) => handleOpenAddonModal(prj, e)}
                         className="flex-1 py-2 px-3 rounded-xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-sm active:scale-95"
@@ -2151,7 +2153,7 @@ export const SalesView: React.FC = () => {
                 </button>
                 <button
                   type="submit"
-                  disabled={(!orderFieldsLocked && orderItems.length === 0) || isSavingOrder}
+                  disabled={readOnly || ((!orderFieldsLocked && orderItems.length === 0) || isSavingOrder)}
                   className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-[#FF6B00] hover:bg-[#FF8A33] disabled:opacity-40 disabled:cursor-not-allowed text-black dark:text-white text-xs font-bold shadow-lg shadow-[#FF6B00]/30 transition active:scale-[0.97] cursor-pointer"
                 >
                   <Send className="w-4 h-4" />
@@ -2181,11 +2183,11 @@ export const SalesView: React.FC = () => {
           onQuantityChange={(id, qty) => handleUpdateModalItemQty(id, Math.trunc(qty))}
           onConfirm={handleConfirmModalSelection}
           onClose={() => setIsCatalogModalOpen(false)}
-          onAdd={() => setProductEditor({})}
-          onEdit={product => setProductEditor({ product })}
+          onAdd={readOnly ? undefined : () => setProductEditor({})}
+          onEdit={readOnly ? undefined : product => setProductEditor({ product })}
           renderActions={item => (
             <div className="flex items-center gap-1">
-              <button
+              <button disabled={readOnly}
                 type="button"
                 onClick={(e) => handleDeleteCatalogItem(item.id, item.name, e)}
                 aria-label="ลบสินค้า"
@@ -2242,7 +2244,7 @@ export const SalesView: React.FC = () => {
                       setShowDeleteOrder(false);
                       handleOpenEditOrder(detailOrder);
                     }}
-                    disabled={isDeletingOrder}
+                    disabled={readOnly || (isDeletingOrder)}
                     className="inline-flex h-8 !min-h-8 items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 text-xs font-semibold text-slate-800 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 cursor-pointer disabled:opacity-50"
                   >
                     <Pencil className="size-3.5" aria-hidden="true" /> แก้ไขบิล
@@ -2254,7 +2256,7 @@ export const SalesView: React.FC = () => {
                       setDeleteOrderError('');
                     }}
                     aria-expanded={showDeleteOrder}
-                    disabled={isDeletingOrder}
+                    disabled={readOnly || (isDeletingOrder)}
                     className="inline-flex h-8 !min-h-8 items-center gap-1.5 rounded-lg border border-rose-300 bg-rose-50 px-2.5 text-xs font-semibold text-rose-700 hover:bg-rose-100 dark:border-rose-500/40 dark:bg-rose-500/10 dark:text-rose-300 dark:hover:bg-rose-500/20 cursor-pointer disabled:opacity-50"
                   >
                     <Trash2 className="size-3.5" aria-hidden="true" /> ลบบิล
@@ -2285,7 +2287,7 @@ export const SalesView: React.FC = () => {
                   <div className="flex flex-wrap gap-2">
                     <button type="button" onClick={() => setShowDeleteOrder(false)} disabled={isDeletingOrder} className={`${modalSecondaryBtnClass} sm:w-auto`}>ยกเลิก</button>
                     {canDeleteDetailOrder && (
-                      <button type="button" onClick={() => void handleDeleteOrder()} disabled={isDeletingOrder} className="min-h-11 rounded-xl bg-rose-700 px-4 font-bold text-white hover:bg-rose-800 cursor-pointer disabled:opacity-50">
+                      <button type="button" onClick={() => void handleDeleteOrder()} disabled={readOnly || (isDeletingOrder)} className="min-h-11 rounded-xl bg-rose-700 px-4 font-bold text-white hover:bg-rose-800 cursor-pointer disabled:opacity-50">
                         {isDeletingOrder ? 'กำลังลบ…' : 'ยืนยันลบบิล'}
                       </button>
                     )}
@@ -2728,7 +2730,7 @@ export const SalesView: React.FC = () => {
                 </button>
                 <button
                   type="submit"
-                  disabled={prjItems.length === 0}
+                  disabled={readOnly || (prjItems.length === 0)}
                   className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 disabled:opacity-40 text-white font-extrabold text-xs shadow-lg shadow-purple-500/30 cursor-pointer flex items-center gap-2"
                 >
                   <Send className="w-4 h-4" />
@@ -2803,7 +2805,7 @@ export const SalesView: React.FC = () => {
                           </p>
                         </div>
                       </div>
-                      <button
+                      <button disabled={readOnly}
                         type="button"
                         onClick={() => handleCreateFollowUpBillFromClosedProject(detailProject)}
                         className="px-4 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-extrabold text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-md shrink-0 active:scale-95"
@@ -2822,7 +2824,7 @@ export const SalesView: React.FC = () => {
                           เซลล์ทุกคนสามารถแอดสินค้า/สายไฟ/ค่าแรงเพิ่มเข้าไซต์งานนี้ได้ ระบบจะระบุชื่อผู้แอดและแยกยอดตั้งต้น vs ยอดแอดเพิ่มอัตโนมัติ
                         </p>
                       </div>
-                      <button
+                      <button disabled={readOnly}
                         type="button"
                         onClick={(e) => handleOpenAddonModal(detailProject, e)}
                         className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] text-black font-extrabold text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-md shrink-0"
@@ -3190,7 +3192,7 @@ export const SalesView: React.FC = () => {
                 </button>
                 <button
                   type="submit"
-                  disabled={addonItems.length === 0}
+                  disabled={readOnly || (addonItems.length === 0)}
                   className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] disabled:opacity-40 text-black font-extrabold shadow-lg shadow-[#FF6B00]/25 cursor-pointer flex items-center gap-1.5"
                 >
                   <Check className="w-4 h-4" />
@@ -3736,7 +3738,7 @@ export const SalesView: React.FC = () => {
                 </button>
                 <button
                   type="submit"
-                  disabled={!selectedContract || !!duplicatePeriodOrder || contractOrderItems.length === 0}
+                  disabled={readOnly || (!selectedContract || !!duplicatePeriodOrder || contractOrderItems.length === 0)}
                   className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] hover:from-[#FF8A24] disabled:opacity-40 disabled:cursor-not-allowed text-black text-xs font-extrabold shadow-lg shadow-[#FF6B00]/25 cursor-pointer flex items-center gap-1.5"
                 >
                   <Send className="w-4 h-4" />
@@ -3778,7 +3780,7 @@ export const SalesView: React.FC = () => {
               </div>
               <div className="flex items-center gap-2">
                 {!showAddContractForm && (
-                  <button
+                  <button disabled={readOnly}
                     type="button"
                     onClick={() => handleOpenContractManager(true, 'rental')}
                     className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] text-black font-extrabold text-xs cursor-pointer flex items-center gap-1.5 shadow-sm"
@@ -4058,7 +4060,7 @@ export const SalesView: React.FC = () => {
                   </button>
                   <button
                     type="submit"
-                    disabled={ctrItems.length === 0}
+                    disabled={readOnly || (ctrItems.length === 0)}
                     className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#FF6B00] to-[#E65A00] disabled:opacity-40 text-black font-extrabold text-xs cursor-pointer flex items-center gap-1.5 shadow-md"
                   >
                     <Check className="w-4 h-4" />
@@ -4098,7 +4100,7 @@ export const SalesView: React.FC = () => {
                         <div className="flex items-center gap-2 flex-shrink-0">
                           {ctr.status === 'active' ? (
                             <>
-                              <button
+                              <button disabled={readOnly}
                                 type="button"
                                 onClick={() => {
                                   setIsContractManagerOpen(false);
@@ -4112,7 +4114,7 @@ export const SalesView: React.FC = () => {
                               >
                                 เปิดบิลจากสัญญานี้
                               </button>
-                              <button
+                              <button disabled={readOnly}
                                 type="button"
                                 onClick={() => updateContractStatus(ctr.id, 'cancelled')}
                                 className="px-2.5 py-1.5 rounded-xl bg-rose-100 dark:bg-rose-500/15 text-rose-700 dark:text-rose-300 text-[11px] font-bold cursor-pointer"
@@ -4121,7 +4123,7 @@ export const SalesView: React.FC = () => {
                               </button>
                             </>
                           ) : (
-                            <button
+                            <button disabled={readOnly}
                               type="button"
                               onClick={() => updateContractStatus(ctr.id, 'active')}
                               className="px-3 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white border-emerald-700 text-xs font-bold cursor-pointer"

@@ -1,4 +1,5 @@
-import React, { createContext, useCallback, useContext, useState, useEffect, useRef } from 'react';
+import React, { createContext, useContext, useMemo, useState, useEffect, useRef } from 'react';
+import { useDepartmentReadOnly } from './DepartmentAccess';
 import { UserAccount, Order, Item, RepairTicket, RepairStatus, RepairLifecycleStatus, ServiceType, RouteCode, JobCategory, Product, StockPO, ProductCategory, getRouteByDistrict, ActivityLog, computeWarrantyExpire, REPAIR_LIFECYCLE_META, ReceivedChannel, ROUTE_DEFINITIONS, WarrantyLookupResult, lookupWarrantyBySerial as lookupWarrantyHelper, Project, ProjectItem, ProjectItemType, ProjectMaterialRequestStatus, Contract, ContractItem, BILLING_BADGE_META, getOrderBillingBadgeKey, SiteVisit, SiteVisitItemRef, SiteVisitPrepStatus, SiteVisitStatus } from '../types';
 import { INITIAL_USERS, INITIAL_ORDERS, INITIAL_ITEMS, INITIAL_REPAIR_TICKETS, INITIAL_PRODUCTS, INITIAL_STOCK_POS, INITIAL_PROJECTS, INITIAL_CONTRACTS } from '../data/initialData';
 import { createClient, SupabaseClient, type User } from '@supabase/supabase-js';
@@ -133,7 +134,6 @@ interface AppContextType {
     | { action: 'set-active'; id: string; active: boolean }
     | { action: 'update-profile'; id: string; profile: Partial<UserAccount> }
     | { action: 'delete'; id: string }) => Promise<string | null>;
-  readDepartmentPage: (page: string, signal: AbortSignal) => Promise<{ reference: string; detail: string; status: string }[]>;
   requestPasswordReset: (email: string) => Promise<string | null>;
   passwordRecovery: 'checking' | 'ready' | 'invalid' | 'complete' | null;
   updateRecoveredPassword: (password: string) => Promise<string | null>;
@@ -961,11 +961,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return error;
   };
 
-  const readDepartmentPage: AppContextType['readDepartmentPage'] = useCallback(async (page, signal) => {
-    if (!supabaseClient) return [];
-    const { data } = await supabaseClient.rpc('boss_department_page', { page }).abortSignal(signal).throwOnError();
-    return data ?? [];
-  }, [supabaseClient]);
 
   const logout = () => {
     setCurrentUser(null);
@@ -4763,7 +4758,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ) ? null : currentUser,
       login,
       manageStaff,
-      readDepartmentPage,
       requestPasswordReset,
       passwordRecovery,
       updateRecoveredPassword,
@@ -4883,6 +4877,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
 export const useApp = () => {
   const context = useContext(AppContext);
+  const readOnly = useDepartmentReadOnly();
+  const scopedContext = useMemo(() => {
+    if (!context || !readOnly) return context;
+    return new Proxy(context, {
+      get(target, key: keyof AppContextType) {
+        const value = target[key];
+        if (typeof value !== 'function' || key === 'lookupWarrantyBySerial' || key === 'triggerPrintRepairReceipt'
+          || key === 'closePrintRepairReceipt') return value;
+        return () => { throw new Error('หน้านี้เปิดดูได้อย่างเดียว'); };
+      },
+    });
+  }, [context, readOnly]);
   if (!context) throw new Error('useApp must be used within AppProvider');
-  return context;
+  return scopedContext!;
 };

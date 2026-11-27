@@ -1,3 +1,4 @@
+import { useDepartmentReadOnly } from '../context/DepartmentAccess';
 import { ModalBackdrop } from './ui/ModalBackdrop';
 import { PhoneInput, normalizePhone } from './ui/FormInputs';
 import React, { useMemo, useRef, useState } from 'react';
@@ -28,6 +29,7 @@ const ROLE_OPTIONS: { value: UserRole; label: string; dept: string }[] = [
 
 export const HrDirectoryView: React.FC = () => {
   const { users, addUser, updateUser, manageStaff, orders, projects, stockPOs, repairTickets, usesSupabaseAuth, currentUser } = useApp();
+  const readOnly = useDepartmentReadOnly();
   const canManageProfiles = !usesSupabaseAuth;
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -214,7 +216,7 @@ export const HrDirectoryView: React.FC = () => {
             </p>
           </div>
         </div>
-        <button
+        <button disabled={readOnly}
           ref={accountsButton}
           type="button"
           aria-haspopup="dialog"
@@ -312,7 +314,7 @@ export const HrDirectoryView: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => updateUser(u.id, { is_active: !active })}
-                  disabled={!canManageProfiles || u.id === 'u-admin' || u.id === currentUser?.id}
+                  disabled={readOnly || (!canManageProfiles || u.id === 'u-admin' || u.id === currentUser?.id)}
                   title={active ? 'คลิกเพื่อพักงาน/ปิดใช้งานชั่วคราว' : 'คลิกเพื่อเปิดใช้งาน'}
                   className={`px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 shrink-0 cursor-pointer disabled:cursor-not-allowed ${
                     active
@@ -385,7 +387,7 @@ export const HrDirectoryView: React.FC = () => {
                   <Activity className="w-3.5 h-3.5" />
                   <span>ดูประวัติการปฏิบัติงาน</span>
                 </button>
-                {(usesSupabaseAuth ? u.role !== 'admin' : u.id !== currentUser?.id) && <button
+                {(usesSupabaseAuth ? u.role !== 'admin' : u.id !== currentUser?.id) && <button disabled={readOnly}
                   type="button"
                   onClick={() => openEditModal(u)}
                   className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs font-bold cursor-pointer flex items-center gap-1"
@@ -531,7 +533,7 @@ export const HrDirectoryView: React.FC = () => {
               </button>
               <button
                 type="submit"
-                disabled={busy}
+                disabled={readOnly || (busy)}
                 className="min-h-11 px-5 py-2 rounded-xl bg-[#FF6B00] hover:bg-[#FF8A24] text-black text-xs font-extrabold cursor-pointer disabled:opacity-50"
               >
                 {saving ? 'กำลังบันทึก…' : 'บันทึกข้อมูลพนักงาน'}

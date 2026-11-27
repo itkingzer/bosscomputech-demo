@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { ClipboardList } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import { useDepartmentReadOnly } from '../context/DepartmentAccess';
 import { formatThaiDateTime, type RepairTicket } from '../types';
 import { Modal, modalInputClass, modalPrimaryBtnClass, modalSecondaryBtnClass } from './ui/Modal';
 
@@ -17,6 +18,7 @@ type Selection = { ticket: RepairTicket; kind: 'edit' | 'withdraw' | 'delete' };
 
 export function ServiceSheetHistoryModal({ onClose, onToast }: { onClose: () => void; onToast: (msg: string) => void }) {
   const { serviceSheetHistory, manageServiceSheet } = useApp();
+  const readOnly = useDepartmentReadOnly();
   const [selection, setSelection] = useState<Selection | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -110,9 +112,9 @@ export function ServiceSheetHistoryModal({ onClose, onToast }: { onClose: () => 
                 <p className="text-xs text-slate-600 dark:text-slate-300">{formatThaiDateTime(ticket.created_at)} · {ticket.received_by || 'ช่าง Onsite'}</p>
                 <p className="text-sm">{[ticket.device_model, ticket.walkin_sn, ticket.fault_symptom].filter(Boolean).join(' · ')}</p>
                 <div className="flex flex-wrap gap-2">
-                  <button type="button" className={modalSecondaryBtnClass} onClick={() => select({ ticket, kind: 'edit' })}>แก้ไข</button>
-                  {queued && <button type="button" className={modalSecondaryBtnClass} onClick={() => select({ ticket, kind: 'withdraw' })}>ถอนจากคิวห้องช่าง</button>}
-                  {(queued || withdrawn) && <button type="button" className={modalSecondaryBtnClass + ' text-rose-700 dark:text-rose-300'} onClick={() => select({ ticket, kind: 'delete' })}>ลบ</button>}
+                  <button type="button" disabled={readOnly} className={modalSecondaryBtnClass} onClick={() => select({ ticket, kind: 'edit' })}>แก้ไข</button>
+                  {queued && <button type="button" disabled={readOnly} className={modalSecondaryBtnClass} onClick={() => select({ ticket, kind: 'withdraw' })}>ถอนจากคิวห้องช่าง</button>}
+                  {(queued || withdrawn) && <button type="button" disabled={readOnly} className={modalSecondaryBtnClass + ' text-rose-700 dark:text-rose-300'} onClick={() => select({ ticket, kind: 'delete' })}>ลบ</button>}
                 </div>
               </li>
             );
