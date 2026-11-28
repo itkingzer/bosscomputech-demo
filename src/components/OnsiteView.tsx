@@ -524,6 +524,7 @@ export const OnsiteView: React.FC = () => {
   };
 
   const handleDeliveryConfirmGroup = async (group: ItemGroup) => {
+    if (readOnly) return;
     if (savingDelivery || uploadingDeliveryProof) return;
     const photos = goodsDeliveryPhotos[group.key] ?? [];
     setSavingDelivery(true);
@@ -1628,7 +1629,7 @@ export const OnsiteView: React.FC = () => {
                           {item.void_date || 'ระบุแล้ว'}
                         </span>
                       </div>
-                      <input
+                      <input disabled={readOnly}
                         type="text"
                         aria-label={`หมายเหตุการส่งมอบ ${item.serial_number}`}
                         placeholder="หมายเหตุการส่งมอบ (ถ้ามี)"
@@ -1650,7 +1651,7 @@ export const OnsiteView: React.FC = () => {
                   <ActivityTimeline logs={firstItem.activity_logs} />
                 </div>
                 {isAccepted && (
-                  <DeliverySignaturePad onChange={setDeliverySignature} disabled={savingDelivery || isConfirmingDelivery} />
+                  <DeliverySignaturePad onChange={setDeliverySignature} disabled={readOnly || savingDelivery || isConfirmingDelivery} />
                 )}
 
               </div>
@@ -2648,7 +2649,7 @@ export const OnsiteView: React.FC = () => {
                         </label>
                         <div className="flex gap-1.5">
                           {[25, 50, 75, 90, 100].map(pct => (
-                            <button
+                            <button disabled={readOnly}
                               key={pct}
                               type="button"
                               onClick={() => setDailyProgressInput(pct)}
@@ -2663,7 +2664,7 @@ export const OnsiteView: React.FC = () => {
                           ))}
                         </div>
                       </div>
-                      <input
+                      <input disabled={readOnly}
                         type="range"
                         min={0}
                         max={100}
@@ -2678,7 +2679,7 @@ export const OnsiteView: React.FC = () => {
                       <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                         รายละเอียดงานที่ทำสำเร็จในวันนี้ / ปัญหาหน้างาน *
                       </label>
-                      <textarea
+                      <textarea disabled={readOnly}
                         rows={3}
                         required
                         value={dailyNoteInput}
@@ -2756,7 +2757,7 @@ export const OnsiteView: React.FC = () => {
                         <label className="font-bold text-slate-700 dark:text-slate-300">
                           ชื่ออุปกรณ์ / สายสัญญาณ / วัสดุที่ต้องการเพิ่ม *
                         </label>
-                        <button
+                        <button disabled={readOnly}
                           type="button"
                           onClick={() => {
                             setReqCatalogSearch('');
@@ -2769,7 +2770,7 @@ export const OnsiteView: React.FC = () => {
                           <span>เลือกจากแคตตาล็อก</span>
                         </button>
                       </div>
-                      <input
+                      <input disabled={readOnly}
                         type="text"
                         required
                         value={reqItemName}
@@ -2785,7 +2786,7 @@ export const OnsiteView: React.FC = () => {
                     <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
                       <div>
                         <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">จำนวนที่ขอเพิ่ม *</label>
-                        <NumberInput
+                        <NumberInput disabled={readOnly}
                           min={1}
                           required
                           value={reqQty}
@@ -2795,7 +2796,7 @@ export const OnsiteView: React.FC = () => {
                       </div>
                       <div className="sm:col-span-3">
                         <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">เหตุผลความจำเป็นหน้างาน *</label>
-                        <input
+                        <input disabled={readOnly}
                           type="text"
                           required
                           value={reqReason}
@@ -2873,7 +2874,7 @@ export const OnsiteView: React.FC = () => {
                     <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                       บันทึกการตรวจรับงาน / ชื่อผู้เซ็นรับมอบฝั่งลูกค้า
                     </label>
-                    <textarea
+                    <textarea disabled={readOnly}
                       rows={3}
                       value={handoverNoteInput}
                       onChange={(e) => setHandoverNoteInput(e.target.value)}
@@ -2989,7 +2990,7 @@ export const OnsiteView: React.FC = () => {
                       ).length;
                       const isSelected = reqProductId === prod.id;
                       return (
-                        <button
+                        <button disabled={readOnly}
                           key={prod.id}
                           type="button"
                           onClick={() => {

@@ -2700,7 +2700,7 @@ export const FrontdeskView: React.FC = () => {
 
             <div>
               <label className={modalLabelClass}>วันกำหนดส่งมอบใหม่ (Delivery Date)</label>
-              <input
+              <input disabled={readOnly}
                 type="date"
                 value={dispatchDueDate}
                 onChange={(e) => setDispatchDueDate(e.target.value)}
@@ -2710,7 +2710,7 @@ export const FrontdeskView: React.FC = () => {
 
             <div>
               <label className={modalLabelClass}>สายรถ</label>
-              <select
+              <select disabled={readOnly}
                 value={dispatchRoute}
                 onChange={(e) => setDispatchRoute(e.target.value as RouteCode)}
                 className={modalInputClass}
@@ -2761,7 +2761,7 @@ export const FrontdeskView: React.FC = () => {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className={modalLabelClass}>สายรถ</label>
-                <select
+                <select disabled={readOnly}
                   value={dispatchRoute}
                   onChange={(e) => setDispatchRoute(e.target.value as RouteCode)}
                   className={modalInputClass}
@@ -2773,7 +2773,7 @@ export const FrontdeskView: React.FC = () => {
               </div>
               <div>
                 <label className={modalLabelClass}>วันกำหนดส่งคืน (Due Date)</label>
-                <input
+                <input disabled={readOnly}
                   type="date"
                   value={dispatchDueDate}
                   onChange={(e) => setDispatchDueDate(e.target.value)}
@@ -2970,7 +2970,7 @@ export const FrontdeskView: React.FC = () => {
 
                 {handoverMode === 'none' && (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                    <button
+                    <button disabled={readOnly}
                       type="button"
                       onClick={() => setHandoverMode('self_pickup')}
                       className="flex items-start gap-2.5 p-3 rounded-xl border border-slate-200 dark:border-white/[0.08] bg-white dark:bg-white/[0.03] text-left hover:border-emerald-500/50 transition-all active:scale-[0.98]"
@@ -3107,7 +3107,7 @@ export const FrontdeskView: React.FC = () => {
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div>
                       <label className={modalLabelClass}>วันที่เข้าไซต์ (Visit Date) *</label>
-                      <input
+                      <input disabled={readOnly}
                         type="date"
                         required
                         value={visitDate}
@@ -3117,7 +3117,7 @@ export const FrontdeskView: React.FC = () => {
                     </div>
                     <div>
                       <label className={modalLabelClass}>ช่วงเวลา *</label>
-                      <select
+                      <select disabled={readOnly}
                         value={visitTimeSlot}
                         onChange={(e) => setVisitTimeSlot(e.target.value)}
                         className={modalInputClass}
@@ -3129,7 +3129,7 @@ export const FrontdeskView: React.FC = () => {
                     </div>
                     <div>
                       <label className={modalLabelClass}>ขอบเขตงานวันนี้ *</label>
-                      <input
+                      <input disabled={readOnly}
                         type="text"
                         required
                         value={visitScope}
@@ -3146,7 +3146,7 @@ export const FrontdeskView: React.FC = () => {
                       {(onsiteTechs.length > 0 ? onsiteTechs.map(u => u.name) : ['ช่างเอ', 'ช่างบี', 'ช่างซี', 'ช่างดี']).map(techName => {
                         const selected = visitTechs.includes(techName);
                         return (
-                          <button
+                          <button disabled={readOnly}
                             key={techName}
                             type="button"
                             onClick={() =>
@@ -3394,7 +3394,7 @@ export const FrontdeskView: React.FC = () => {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
               <div>
                 <label className={modalLabelClass}>วันที่วิ่งงาน (Scheduled Date) *</label>
-                <input
+                <input disabled={readOnly}
                   type="date"
                   required
                   value={schedDate}
@@ -3404,7 +3404,7 @@ export const FrontdeskView: React.FC = () => {
               </div>
               <div>
                 <label className={modalLabelClass}>ช่วงเวลา *</label>
-                <select
+                <select disabled={readOnly}
                   value={schedTimeSlot}
                   onChange={(e) => setSchedTimeSlot(e.target.value as 'เช้า' | 'บ่าย' | 'ทั้งวัน')}
                   className={modalInputClass}
@@ -3418,7 +3418,7 @@ export const FrontdeskView: React.FC = () => {
 
             <div className="text-xs">
               <label className={modalLabelClass}>สายรถ / โซน *</label>
-              <select
+              <select disabled={readOnly}
                 value={schedRouteZone}
                 onChange={(e) => setSchedRouteZone(e.target.value)}
                 className={modalInputClass}
@@ -3435,7 +3435,7 @@ export const FrontdeskView: React.FC = () => {
                 {(onsiteTechs.length > 0 ? onsiteTechs.map(u => u.name) : ['ช่างเอ', 'ช่างบี', 'ช่างซี', 'ช่างดี']).map(techName => {
                   const selected = schedTechs.includes(techName);
                   return (
-                    <button
+                    <button disabled={readOnly}
                       key={techName}
                       type="button"
                       onClick={() =>
@@ -3462,7 +3462,7 @@ export const FrontdeskView: React.FC = () => {
                 <div className="max-h-40 overflow-y-auto">
                   {schedItems.map(item => (
                     <label key={item.id} className="flex min-h-11 cursor-pointer items-center gap-2 text-sm">
-                      <input
+                      <input disabled={readOnly}
                         type="checkbox"
                         checked={schedItemIds.includes(item.id)}
                         onChange={e => {

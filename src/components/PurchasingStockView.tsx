@@ -2414,7 +2414,7 @@ export const PurchasingStockView: React.FC = () => {
                             <span className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-300 whitespace-nowrap flex items-center gap-1">
                               <Boxes className="w-3 h-3 shrink-0" /> คลังพร้อมขาย ({matchingStock.length}):
                             </span>
-                            <select
+                            <select disabled={readOnly}
                               value={pickedStockId}
                               onChange={(e) => setStockPickInputs({ ...stockPickInputs, [`${actionOrder.id}:${idx}`]: e.target.value })}
                               className="w-full sm:flex-1 min-w-0 rounded-lg px-2 py-1 text-[11px] bg-white dark:bg-slate-800 text-emerald-800 dark:text-emerald-200 border border-slate-300 dark:border-slate-700 font-mono focus:outline-none focus:border-blue-500 truncate"
@@ -2454,7 +2454,7 @@ export const PurchasingStockView: React.FC = () => {
                           <span className="text-slate-500 font-mono mr-1">{idx + 1}.</span>
                           {it.model_name} <span className="text-slate-500">(x{it.quantity})</span>
                         </div>
-                        <NumberInput
+                        <NumberInput disabled={readOnly}
                           finishOnEnter
                           min={0}
                           placeholder="ราคาทุน/หน่วย"
@@ -2467,7 +2467,7 @@ export const PurchasingStockView: React.FC = () => {
                   </div>
                   <div className="flex items-center justify-between gap-2 pt-2 border-t border-rose-200 dark:border-rose-500/15">
                     <label className="text-[11px] text-slate-700 dark:text-slate-300">ต้นทุนค่าแรง/อื่นๆ (Extra Job Cost)</label>
-                    <NumberInput
+                    <NumberInput disabled={readOnly}
                       finishOnEnter
                       min={0}
                       placeholder="0"
@@ -2501,7 +2501,7 @@ export const PurchasingStockView: React.FC = () => {
                 <div className="px-3 pb-3 border-t border-slate-200 dark:border-slate-700 pt-2.5 grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   <div>
                     <label className="block text-[10px] text-slate-600 dark:text-slate-400 mb-1">Supplier</label>
-                    <select
+                    <select disabled={readOnly}
                       value={supplierInputs[actionOrder.id] || actionOrder.items_list?.[0]?.supplier || 'สต๊อกร้าน (Main Store)'}
                       onChange={(e) => setSupplierInputs({ ...supplierInputs, [actionOrder.id]: e.target.value })}
                       className="w-full rounded-xl px-2.5 py-1.5 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 focus:outline-none focus:border-blue-500"
@@ -2513,7 +2513,7 @@ export const PurchasingStockView: React.FC = () => {
                   </div>
                   <div>
                     <label className="block text-[10px] text-slate-600 dark:text-slate-400 mb-1">เลขที่ PO</label>
-                    <input
+                    <input disabled={readOnly}
                       type="text"
                       placeholder="เช่น PO-2026-101"
                       value={poInputs[actionOrder.id] || actionOrder.items_list?.[0]?.po_no || ''}
@@ -2523,7 +2523,7 @@ export const PurchasingStockView: React.FC = () => {
                   </div>
                   <div>
                     <label className="block text-[10px] text-slate-600 dark:text-slate-400 mb-1">เลขที่บิล (INV)</label>
-                    <input
+                    <input disabled={readOnly}
                       type="text"
                       placeholder="สร้างอัตโนมัติถ้าเว้นว่าง"
                       value={billInputs[actionOrder.id] || ''}
@@ -2533,7 +2533,7 @@ export const PurchasingStockView: React.FC = () => {
                   </div>
                   <div>
                     <label className="block text-[10px] text-slate-600 dark:text-slate-400 mb-1">Prep Note</label>
-                    <input
+                    <input disabled={readOnly}
                       type="text"
                       placeholder="เช่น ประกอบด่วน"
                       value={prepNoteInputs[actionOrder.id] || ''}
@@ -2703,7 +2703,7 @@ export const PurchasingStockView: React.FC = () => {
 
               <div>
                 <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1.5">จำนวนที่ส่งช่างเทส & ติดโลโก้</label>
-                <NumberInput
+                <NumberInput disabled={readOnly}
                   finishOnEnter
                   min={1}
                   max={batchDetail.itemIds.length}
@@ -2897,11 +2897,11 @@ export const PurchasingStockView: React.FC = () => {
                     <p className="text-xs text-slate-600 dark:text-slate-300">ตรวจจำนวนสินค้า แล้วกรอกเลขจากเอกสารที่ผู้ขายส่งมา หากยังไม่มีเอกสารให้เว้นว่างได้</p>
                     <label className="block text-xs font-semibold">
                       เลขใบส่งของ
-                      <input value={receiptDeliveryNote} onChange={event => setReceiptDeliveryNote(event.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-800" />
+                      <input disabled={readOnly} value={receiptDeliveryNote} onChange={event => setReceiptDeliveryNote(event.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-800" />
                     </label>
                     <label className="block text-xs font-semibold">
                       เลขใบกำกับภาษี
-                      <input value={receiptTaxInvoice} onChange={event => setReceiptTaxInvoice(event.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-800" />
+                      <input disabled={readOnly} value={receiptTaxInvoice} onChange={event => setReceiptTaxInvoice(event.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-800" />
                     </label>
                   <button disabled={readOnly}
                     type="submit"
@@ -3200,7 +3200,7 @@ export const PurchasingStockView: React.FC = () => {
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                     <div>
                       <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">เลขที่ RMA / Tracking No.</label>
-                      <input
+                      <input disabled={readOnly}
                         type="text"
                         required
                         value={doaRmaInput}
@@ -3211,7 +3211,7 @@ export const PurchasingStockView: React.FC = () => {
                     </div>
                     <div>
                       <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">วันที่ส่งเคลม</label>
-                      <input
+                      <input disabled={readOnly}
                         type="date"
                         value={doaSentDateInput}
                         onChange={(e) => setDoaSentDateInput(e.target.value)}
@@ -3221,7 +3221,7 @@ export const PurchasingStockView: React.FC = () => {
                   </div>
                   <div>
                     <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">หมายเหตุการส่งเคลม (ถ้ามี)</label>
-                    <input
+                    <input disabled={readOnly}
                       type="text"
                       value={doaNotesInput}
                       onChange={(e) => setDoaNotesInput(e.target.value)}
@@ -3264,7 +3264,7 @@ export const PurchasingStockView: React.FC = () => {
                   </div>
 
                   <label className="flex items-center gap-2 p-2.5 rounded-xl bg-white dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 cursor-pointer">
-                    <input
+                    <input disabled={readOnly}
                       type="checkbox"
                       checked={doaSendDirectToPrep}
                       onChange={(e) => setDoaSendDirectToPrep(e.target.checked)}
@@ -3628,7 +3628,7 @@ export const PurchasingStockView: React.FC = () => {
                                         finishOnEnter
                                         min={0}
                                         max={row.releasableNow}
-                                        disabled={row.releasableNow === 0}
+                                        disabled={readOnly || (row.releasableNow === 0)}
                                         value={Math.min(releaseVal, row.releasableNow)}
                                         onChange={(e) =>
                                           setBatchReleaseQtyMap(prev => ({
@@ -3651,7 +3651,7 @@ export const PurchasingStockView: React.FC = () => {
                       <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
                         หมายเหตุงวดเบิกที่ {nextBatchNo} (ส่งถึงช่าง Prep & ทีมช่าง Onsite)
                       </label>
-                      <input
+                      <input disabled={readOnly}
                         type="text"
                         value={batchReleaseNote}
                         onChange={(e) => setBatchReleaseNote(e.target.value)}

@@ -1026,7 +1026,7 @@ export const RepairView: React.FC = () => {
               </div>
 
               {draftStatus === 'awaiting_quote' && (
-                <fieldset disabled={isSaving} className="space-y-3 rounded-xl border border-slate-200 p-4 dark:border-white/10">
+                <fieldset disabled={readOnly || isSaving} className="space-y-3 rounded-xl border border-slate-200 p-4 dark:border-white/10">
                   <legend className="px-1 font-bold">ใบเสนอราคาซ่อม</legend>
                   <div>
                     <label htmlFor="repair-quote-description" className={modalLabelClass}>รายการซ่อมและอะไหล่ที่เสนอ</label>
@@ -1133,7 +1133,7 @@ export const RepairView: React.FC = () => {
               <div>
                 <label className={modalLabelClass}>ประเภทงานซ่อม *</label>
                 <div className="grid grid-cols-2 gap-2">
-                  <button
+                  <button disabled={readOnly}
                     type="button"
                     onClick={() => setDraftServiceType('in_house_repair')}
                     className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-2 ${draftServiceType === 'in_house_repair'
@@ -1144,7 +1144,7 @@ export const RepairView: React.FC = () => {
                     <Wrench className="w-4 h-4 flex-shrink-0" />
                     <span className="font-bold text-xs">ซ่อมเองหน้าร้าน</span>
                   </button>
-                  <button
+                  <button disabled={readOnly}
                     type="button"
                     onClick={() => setDraftServiceType('rma_claim')}
                     className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-2 ${draftServiceType === 'rma_claim'
@@ -1172,7 +1172,7 @@ export const RepairView: React.FC = () => {
                         <Building2 className="w-3 h-3 inline mr-1" />
                         Supplier / ศูนย์เคลม
                       </label>
-                      <select
+                      <select disabled={readOnly}
                         value={draftRmaSupplier}
                         onChange={(e) => setDraftRmaSupplier(e.target.value)}
                         className={modalInputClass + ' cursor-pointer'}
@@ -1187,7 +1187,7 @@ export const RepairView: React.FC = () => {
                         <Hash className="w-3 h-3 inline mr-1" />
                         เลขใบส่งเคลม / เลขพัสดุ
                       </label>
-                      <input
+                      <input disabled={readOnly}
                         type="text"
                         placeholder="เช่น SNX-RMA-2569-00871"
                         value={draftRmaTrackingNo}
@@ -1200,7 +1200,7 @@ export const RepairView: React.FC = () => {
                         <CalendarDays className="w-3 h-3 inline mr-1" />
                         วันที่ส่งออกเคลม
                       </label>
-                      <input
+                      <input disabled={readOnly}
                         type="date"
                         value={draftRmaSentDate}
                         onChange={(e) => setDraftRmaSentDate(e.target.value)}
@@ -1212,7 +1212,7 @@ export const RepairView: React.FC = () => {
                         <CalendarDays className="w-3 h-3 inline mr-1" />
                         วันที่ได้ของเคลมกลับ
                       </label>
-                      <input
+                      <input disabled={readOnly}
                         type="date"
                         value={draftRmaReturnedDate}
                         onChange={(e) => setDraftRmaReturnedDate(e.target.value)}
@@ -1228,14 +1228,14 @@ export const RepairView: React.FC = () => {
                       S/N ตัวใหม่ (กรณีศูนย์เปลี่ยนเครื่อง)
                     </div>
                     <div className="flex items-center gap-2">
-                      <input
+                      <input disabled={readOnly}
                         type="text"
                         placeholder="S/N ใหม่กรณีศูนย์เปลี่ยนตัวใหม่"
                         value={draftReplacementSn}
                         onChange={(e) => setDraftReplacementSn(e.target.value)}
                         className={modalInputClass + ' font-mono'}
                       />
-                      <button
+                      <button disabled={readOnly}
                         type="button"
                         onClick={() => setScannerTarget('replacement')}
                         className="px-3 py-2 rounded-xl bg-violet-500/15 hover:bg-violet-500/25 text-violet-600 dark:text-violet-300 border border-violet-500/30 text-xs font-semibold cursor-pointer flex items-center gap-1 transition flex-shrink-0"
@@ -1257,7 +1257,7 @@ export const RepairView: React.FC = () => {
               {/* Included Accessories */}
               <div>
                 <label className={modalLabelClass}>อุปกรณ์ที่ติดมากับเครื่อง (ระบุในใบรับซ่อม)</label>
-                <input
+                <input disabled={readOnly}
                   type="text"
                   placeholder="เช่น Adapter, สายชาร์จ, กระเป๋า"
                   value={draftIncludedAccessories}
@@ -1270,7 +1270,7 @@ export const RepairView: React.FC = () => {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className={modalLabelClass}>รายละเอียดการซ่อม / ผลการทดสอบ</label>
-                  <textarea
+                  <textarea disabled={readOnly}
                     rows={2}
                     placeholder="ระบุสิ่งที่ซ่อม / ผลทดสอบหลังซ่อม"
                     value={draftRepairDetail}
@@ -1280,7 +1280,7 @@ export const RepairView: React.FC = () => {
                 </div>
                 <div>
                   <label className={modalLabelClass}>อะไหล่ที่ใช้</label>
-                  <input
+                  <input disabled={readOnly}
                     type="text"
                     placeholder="เช่น SSD 512GB, พัดลม CPU"
                     value={draftPartsUsed}
@@ -1288,7 +1288,7 @@ export const RepairView: React.FC = () => {
                     className={modalInputClass}
                   />
                   <label className={modalLabelClass + ' mt-2'}>ค่าใช้จ่าย (บาท)</label>
-                  <NumberInput
+                  <NumberInput disabled={readOnly}
                     finishOnEnter
                     min={0}
                     step="0.01"

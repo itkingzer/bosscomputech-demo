@@ -839,7 +839,7 @@ export const AccountingView: React.FC = () => {
             </div>
             <div>
               <label className="block text-xs font-bold mb-1">เลขที่ใบกำกับภาษี / เลขที่วางบิล (ถ้ามี)</label>
-              <input
+              <input disabled={readOnly}
                 type="text"
                 value={taxInvoiceInput}
                 onChange={(e) => setTaxInvoiceInput(e.target.value)}

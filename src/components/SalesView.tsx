@@ -156,7 +156,7 @@ export const SalesView: React.FC = () => {
 
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isCatalogModalOpen, setIsCatalogModalOpen] = useState(false);
-  const [catalogTarget, setCatalogTarget] = useState<'order' | 'contract_order' | 'contract_template' | 'project_equipment' | 'project_consumable' | 'addon'>('order');
+  const [catalogTarget, setCatalogTarget] = useState<'browse' | 'order' | 'contract_order' | 'contract_template' | 'project_equipment' | 'project_consumable' | 'addon'>('browse');
 
   // Contract Manager & Add Contract Modal State
   const [isContractManagerOpen, setIsContractManagerOpen] = useState(false);
@@ -371,6 +371,19 @@ export const SalesView: React.FC = () => {
     : getRouteByDistrict(district);
   const routeMeta = ROUTE_DEFINITIONS[currentRouteCode];
 
+  const canSelectCatalogItems = (target: typeof catalogTarget) => {
+    if (readOnly) return false;
+    switch (target) {
+      case 'order': return isCreateModalOpen && !orderFieldsLocked && !isSavingOrder;
+      case 'contract_order': return isContractBillingOpen;
+      case 'contract_template': return isContractManagerOpen && showAddContractForm;
+      case 'project_equipment':
+      case 'project_consumable': return isCreateProjectOpen;
+      case 'addon': return !!addonProject;
+      case 'browse': return false;
+    }
+  };
+  const catalogSelectionEnabled = canSelectCatalogItems(catalogTarget);
   // Lock background scroll while any modal is open
   const anyModalOpen = !!productEditor || isCreateModalOpen || isCatalogModalOpen || !!detailOrder || isCreateProjectOpen || !!detailProject || !!addonProject;
   useEffect(() => {
@@ -506,6 +519,7 @@ export const SalesView: React.FC = () => {
   };
 
   const handleOpenContractBillingModal = (mode: 'rental' | 'ma') => {
+    if (readOnly) return;
     setIsBillingTypeModalOpen(false);
     setContractBillingMode(mode);
     const prefix = mode === 'rental' ? 'RN' : 'MA';
@@ -597,6 +611,7 @@ export const SalesView: React.FC = () => {
   };
 
   const handleOpenContractManager = (openForm = false, presetType: 'rental' | 'ma' = 'rental') => {
+    if (readOnly) return;
     const defaultSub: Contract['sub_type'] = presetType === 'ma' ? 'ma_monthly' : 'internet_rental';
     setCtrType(presetType);
     setCtrSubType(defaultSub);
@@ -755,7 +770,8 @@ export const SalesView: React.FC = () => {
   };
 
   // Open Catalog Modal
-  const handleOpenCatalogModal = (target: 'order' | 'contract_order' | 'contract_template' | 'project_equipment' | 'project_consumable' | 'addon' = 'order') => {
+  const handleOpenCatalogModal = (target: typeof catalogTarget) => {
+    if (target !== 'browse' && !canSelectCatalogItems(target)) return;
     setCatalogTarget(target);
     setModalSelectedMap({});
     setIsCatalogModalOpen(true);
@@ -763,6 +779,7 @@ export const SalesView: React.FC = () => {
 
   // Toggle selection in Modal
   const handleToggleSelectModalItem = (item: Product) => {
+    if (!catalogSelectionEnabled) return;
     setModalSelectedMap(prev => {
       const copy = { ...prev };
       if (copy[item.id] !== undefined) {
@@ -775,12 +792,14 @@ export const SalesView: React.FC = () => {
   };
 
   const handleUpdateModalItemQty = (itemId: string, qty: number) => {
+    if (!catalogSelectionEnabled) return;
     const validQty = Math.max(1, qty);
     setModalSelectedMap(prev => ({ ...prev, [itemId]: validQty }));
   };
 
   // Delete item from Catalog
   const handleDeleteCatalogItem = (itemId: string, itemName: string, e: React.MouseEvent) => {
+    if (readOnly) return;
     e.stopPropagation();
     if (confirm(`ต้องการลบ "${itemName}" ออกจากแคตตาล็อกหรือไม่?`)) {
       deleteProduct(itemId);
@@ -794,6 +813,7 @@ export const SalesView: React.FC = () => {
 
   // Confirm selected items from Modal back to Order / Project / Add-On Form
   const handleConfirmModalSelection = () => {
+    if (!catalogSelectionEnabled) return;
     const selectedIds = Object.keys(modalSelectedMap);
     if (selectedIds.length === 0) {
       alert('กรุณาติ๊กเลือกสินค้าหรือบริการอย่างน้อย 1 รายการ');
@@ -882,7 +902,7 @@ export const SalesView: React.FC = () => {
     }
 
     setIsCatalogModalOpen(false);
-    setToast(`เพิ่ม ${itemsToAdd.length} รายการเข้าบิลเรียบร้อยแล้ว`);
+    setToast(`เพิ่ม ${itemsToAdd.length} รายการ${catalogTarget === 'contract_template' ? 'เข้าสัญญา' : 'เข้าบิล'}เรียบร้อยแล้ว`);
     setTimeout(() => setToast(''), 3500);
   };
 
@@ -1224,6 +1244,7 @@ export const SalesView: React.FC = () => {
             </button>
             <button
               type="button"
+              disabled={readOnly}
               onClick={() => handleOpenContractManager(false, 'rental')}
               className="px-4 py-2.5 min-h-[44px] rounded-xl bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-700 dark:text-indigo-300 border border-indigo-500/30 font-bold text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-2 active:scale-[0.97]"
             >
@@ -1232,7 +1253,7 @@ export const SalesView: React.FC = () => {
             </button>
             <button
               type="button"
-              onClick={() => handleOpenCatalogModal('order')}
+              onClick={() => handleOpenCatalogModal('browse')}
               className="px-4 py-2.5 min-h-[44px] rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-300 dark:bg-white/[0.04] dark:hover:bg-white/[0.08] dark:text-slate-200 dark:border-white/[0.1] font-bold text-xs transition-all duration-150 cursor-pointer flex items-center justify-center gap-2 active:scale-[0.97]"
             >
               <ShoppingBag className="w-4 h-4 text-[#FF6B00]" />
@@ -1593,7 +1614,7 @@ export const SalesView: React.FC = () => {
       {/* ========================================================================= */}
       {/* CREATE SALES ORDER MODAL                                                  */}
       {/* ========================================================================= */}
-      {isCreateModalOpen && createPortal(
+      {!readOnly && isCreateModalOpen && createPortal(
         <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 sm:p-6 bg-black/60 backdrop-blur-sm animate-fade-in overscroll-contain">
           <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-3xl w-full sm:w-[92vw] max-w-5xl max-h-[94dvh] sm:max-h-[82dvh] sm:max-h-[86dvh] flex flex-col overflow-hidden animate-modal-pop">
 
@@ -2172,8 +2193,9 @@ export const SalesView: React.FC = () => {
       {isCatalogModalOpen && (
         <ProductCatalogModal
           products={products}
-          description="เลือกสินค้าเข้าบิล หรือเพิ่ม/แก้ไขสินค้าในแคตตาล็อก"
-          confirmLabel={catalogTarget === 'order' ? 'เพิ่มเข้าบิล' : catalogTarget === 'addon' ? 'เพิ่มเข้า Add-on' : 'เพิ่มเข้าโปรเจกต์'}
+          selectionEnabled={catalogSelectionEnabled}
+          description={catalogSelectionEnabled ? 'เลือกสินค้าเพื่อเพิ่มลงในฟอร์มที่เปิดอยู่' : 'ค้นหาสินค้า ราคา และจำนวนในสต๊อก'}
+          confirmLabel={catalogTarget === 'order' || catalogTarget === 'contract_order' ? 'เพิ่มเข้าบิล' : catalogTarget === 'contract_template' ? 'เพิ่มเข้าสัญญา' : catalogTarget === 'addon' ? 'เพิ่มเข้า Add-on' : 'เพิ่มเข้าโปรเจกต์'}
           priceLabel="ราคา"
           getPrice={item => item.sell_price}
           getStock={name => stockByName[name.trim().toLowerCase()]?.inStock ?? 0}
@@ -2185,7 +2207,7 @@ export const SalesView: React.FC = () => {
           onClose={() => setIsCatalogModalOpen(false)}
           onAdd={readOnly ? undefined : () => setProductEditor({})}
           onEdit={readOnly ? undefined : product => setProductEditor({ product })}
-          renderActions={item => (
+          renderActions={readOnly ? undefined : item => (
             <div className="flex items-center gap-1">
               <button disabled={readOnly}
                 type="button"
@@ -2200,7 +2222,7 @@ export const SalesView: React.FC = () => {
         />
       )}
 
-      {productEditor && (
+      {!readOnly && productEditor && (
         <ProductEditorModal
           product={productEditor.product}
           onClose={() => setProductEditor(null)}
@@ -2436,7 +2458,7 @@ export const SalesView: React.FC = () => {
       {/* ========================================================================= */}
       {/* CREATE PROJECT SITE MODAL (PRJ-2026-XXX, createPortal, z-[9999])          */}
       {/* ========================================================================= */}
-      {isCreateProjectOpen && createPortal(
+      {!readOnly && isCreateProjectOpen && createPortal(
         <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 sm:p-6 bg-black/60 backdrop-blur-sm animate-fade-in overscroll-contain">
           <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-purple-300 dark:border-purple-500/40 shadow-2xl rounded-3xl w-full sm:w-[94vw] max-w-5xl max-h-[94dvh] sm:max-h-[82dvh] sm:max-h-[86dvh] flex flex-col overflow-hidden animate-modal-pop">
             <div className="p-4 sm:p-5 bg-slate-50/90 dark:bg-slate-900/95 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 flex-shrink-0">
@@ -3010,7 +3032,7 @@ export const SalesView: React.FC = () => {
       {/* ========================================================================= */}
       {/* ADD-ON MODAL FOR ANY SALES USER (createPortal, z-[10000])                 */}
       {/* ========================================================================= */}
-      {addonProject && createPortal(
+      {!readOnly && addonProject && createPortal(
         <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4 sm:p-6 bg-black/70 backdrop-blur-sm animate-fade-in overscroll-contain">
           <div className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-[#FF6B00]/50 shadow-2xl rounded-3xl w-full sm:w-[92vw] max-w-lg max-h-[88dvh] flex flex-col overflow-hidden animate-modal-pop">
             <div className="p-4 sm:p-5 bg-slate-50/90 dark:bg-slate-900/95 border-b border-slate-200 dark:border-slate-800 flex items-start justify-between gap-2">
@@ -3208,7 +3230,7 @@ export const SalesView: React.FC = () => {
       {/* ========================================================================= */}
       {/* BILLING TYPE SELECTION PORTAL MODAL (z-[9999])                            */}
       {/* ========================================================================= */}
-      {isBillingTypeModalOpen && createPortal(
+      {!readOnly && isBillingTypeModalOpen && createPortal(
         <ModalBackdrop
           className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 animate-fade-in overscroll-contain"
           onDismiss={() => setIsBillingTypeModalOpen(false)}
@@ -3318,7 +3340,7 @@ export const SalesView: React.FC = () => {
       {/* ========================================================================= */}
       {/* CUSTOMER TYPE SELECTION */}
       <Modal
-        open={isCustomerTypeModalOpen}
+        open={!readOnly && isCustomerTypeModalOpen}
         onClose={() => setIsCustomerTypeModalOpen(false)}
         title="เปิดบิลให้ใคร?"
         icon={<UserRound aria-hidden="true" className="size-5" />}
@@ -3354,7 +3376,7 @@ export const SalesView: React.FC = () => {
 
       {/* RENTAL & MA RECURRING CONTRACT BILLING MODAL (z-[9999])                   */}
       {/* ========================================================================= */}
-      {isContractBillingOpen && createPortal(
+      {!readOnly && isContractBillingOpen && createPortal(
         <ModalBackdrop
           className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 animate-fade-in overscroll-contain"
           onDismiss={() => setIsContractBillingOpen(false)}
@@ -3754,7 +3776,7 @@ export const SalesView: React.FC = () => {
       {/* ========================================================================= */}
       {/* CONTRACT MANAGER & ADD CONTRACT PORTAL MODAL (z-[10000])                  */}
       {/* ========================================================================= */}
-      {isContractManagerOpen && createPortal(
+      {!readOnly && isContractManagerOpen && createPortal(
         <ModalBackdrop
           className="fixed inset-0 z-[10000] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 animate-fade-in overscroll-contain"
           onDismiss={() => setIsContractManagerOpen(false)}

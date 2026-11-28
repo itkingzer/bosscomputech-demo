@@ -1,3 +1,4 @@
+import { useDepartmentReadOnly } from '../context/DepartmentAccess';
 import { ModalBackdrop } from './ui/ModalBackdrop';
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -35,13 +36,15 @@ export const EvidencePhotoUploader: React.FC<EvidencePhotoUploaderProps> = ({
   value,
   onChange,
   folder,
-  editable = true,
+  editable: allowEditing = true,
   maxPhotos = MAX_EVIDENCE_PHOTOS,
   label = 'รูปภาพหลักฐาน',
   helperText,
   compact = false,
   onUploadingChange
 }) => {
+  const readOnly = useDepartmentReadOnly();
+  const editable = allowEditing && !readOnly;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -77,7 +80,7 @@ export const EvidencePhotoUploader: React.FC<EvidencePhotoUploaderProps> = ({
   }
 
   const handleFilesSelected = async (fileList: FileList | null) => {
-    if (!fileList || fileList.length === 0 || remainingSlots <= 0) return;
+    if (!editable || !fileList || fileList.length === 0 || remainingSlots <= 0) return;
     setErrorMsg(null);
 
     const selectedFiles = Array.from(fileList)
@@ -119,6 +122,7 @@ export const EvidencePhotoUploader: React.FC<EvidencePhotoUploaderProps> = ({
 
   const handleDelete = async (indexToRemove: number, e: React.MouseEvent) => {
     e.stopPropagation();
+    if (!editable) return;
     const targetUrl = photos[indexToRemove];
     const next = photos.filter((_, idx) => idx !== indexToRemove);
     onChange(next);

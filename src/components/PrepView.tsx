@@ -456,7 +456,7 @@ export const PrepView: React.FC = () => {
           #{index + 1}
         </span>
         <div className="relative flex-1">
-          <input
+          <input disabled={readOnly}
             type="text"
             value={currentSn}
             onChange={(e) => setSnInputs({ ...snInputs, [item.id]: e.target.value })}
@@ -464,7 +464,7 @@ export const PrepView: React.FC = () => {
             className={`w-full liquid-glass-input rounded-xl pl-3 pr-16 py-2 text-sm font-mono font-bold data-key ${accentText} focus:outline-none`}
           />
           <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
-            <button
+            <button disabled={readOnly}
               type="button"
               onClick={() => setScanTarget(item.id)}
               title="สแกนด้วยกล้อง"
@@ -1319,7 +1319,7 @@ export const PrepView: React.FC = () => {
                           </div>
                           <div>
                             <label className={modalLabelClass}>วันที่ติดวอยประกัน</label>
-                            <input
+                            <input disabled={readOnly}
                               type="date"
                               value={voidDateInputs[item.id] || todayStr}
                               onChange={(e) => setVoidDateInputs({ ...voidDateInputs, [item.id]: e.target.value })}
@@ -1371,7 +1371,7 @@ export const PrepView: React.FC = () => {
                           </div>
                           <div>
                             <label className={modalLabelClass}>วันที่ติดวอยประกัน (กรณีจบงานพร้อมส่งทันที)</label>
-                            <input
+                            <input disabled={readOnly}
                               type="date"
                               value={voidDateInputs[group.items[0].id] || todayStr}
                               onChange={(e) => {
@@ -1451,7 +1451,7 @@ export const PrepView: React.FC = () => {
 
                               <div>
                                 <label className={modalLabelClass}>วันที่ติดวอยประกัน (กรณีส่งออกเลย)</label>
-                                <input
+                                <input disabled={readOnly}
                                   type="date"
                                   value={voidDateInputs[item.id] || todayStr}
                                   onChange={(e) => setVoidDateInputs({ ...voidDateInputs, [item.id]: e.target.value })}
