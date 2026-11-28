@@ -118,7 +118,7 @@ export async function compressEvidenceImage(file: File, maxWidth = MAX_IMAGE_WID
 
 /**
  * Upload an evidence image:
- * - Live Mode (Supabase configured): uploads compressed Blob to bucket 'evidence-photos' under `${folder}/` and returns public URL.
+ * - Live Mode: uploads to private Storage and returns a stable image reference.
  * - Demo Mode (fallback): returns lightweight compressed Data URL for localStorage persistence.
  */
 export async function uploadEvidenceImage(file: File, folder: EvidenceFolder): Promise<string> {
@@ -141,34 +141,42 @@ export async function uploadEvidenceImage(file: File, folder: EvidenceFolder): P
       throw new Error(`อัปโหลดรูปภาพไปยัง Supabase Storage ไม่สำเร็จ: ${uploadError.message}`);
     }
 
-    const { data } = client.storage.from(EVIDENCE_BUCKET).getPublicUrl(storagePath);
-    if (!data?.publicUrl) {
-      throw new Error('ไม่สามารถสร้าง Public URL สำหรับรูปภาพได้');
-    }
-    return data.publicUrl;
+    return `${EVIDENCE_BUCKET}/${storagePath}`;
   }
 
   return blobToDataUrl(blob);
 }
 
-/**
- * Delete an evidence image:
- * - Live Mode: removes the file from Supabase Storage bucket 'evidence-photos' when given a Supabase public URL.
- * - Demo Mode / Data URLs: resolves immediately so caller removes it from local state.
- */
-export async function deleteEvidenceImage(url: string): Promise<void> {
-  if (!url || url.startsWith('data:')) return;
+function evidenceStoragePath(reference: string): string | null {
+  const prefix = `${EVIDENCE_BUCKET}/`;
+  if (reference.startsWith(prefix)) return reference.slice(prefix.length);
+  try {
+    const url = new URL(reference);
+    const config = getSupabaseConfig();
+    const legacyPrefix = `/storage/v1/object/public/${prefix}`;
+    if (config && url.origin === new URL(config.url).origin && url.pathname.startsWith(legacyPrefix)) {
+      return decodeURIComponent(url.pathname.slice(legacyPrefix.length));
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
 
+export async function getEvidenceImageUrl(reference: string): Promise<string> {
+  const path = evidenceStoragePath(reference);
+  if (!path) return reference;
   const client = getStorageSupabaseClient();
-  if (!client) return;
+  if (!client) throw new Error('ไม่ได้เชื่อมต่อระบบจัดเก็บรูป');
+  const { data, error } = await client.storage.from(EVIDENCE_BUCKET).createSignedUrl(path, 600);
+  if (error || !data) throw new Error('ไม่สามารถเปิดรูปหลักฐานได้');
+  return data.signedUrl;
+}
 
-  const marker = `/${EVIDENCE_BUCKET}/`;
-  const idx = url.indexOf(marker);
-  if (idx === -1) return;
-
-  const rawPath = url.slice(idx + marker.length).split('?')[0];
-  const storagePath = decodeURIComponent(rawPath);
-  if (!storagePath) return;
+export async function deleteEvidenceImage(reference: string): Promise<void> {
+  const storagePath = evidenceStoragePath(reference);
+  const client = getStorageSupabaseClient();
+  if (!client || !storagePath) return;
 
   const { error } = await client.storage.from(EVIDENCE_BUCKET).remove([storagePath]);
   if (error) {

@@ -2,6 +2,8 @@ import { useDepartmentReadOnly } from '../context/DepartmentAccess';
 import { ModalBackdrop } from './ui/ModalBackdrop';
 import { ProductEditorModal } from './ProductEditorModal';
 import { ProductCatalogModal } from './ProductCatalogModal';
+import { OrderMapLinkField } from './OrderMapPins';
+import { googleMapsPinUrl } from '../utils/googleMaps';
 import { PhoneInput, NumberInput, normalizePhone } from './ui/FormInputs';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
@@ -105,6 +107,7 @@ export const SalesView: React.FC = () => {
   const [district, setDistrict] = useState('เมืองสุราษฎร์ธานี');
   const [provinceCustom, setProvinceCustom] = useState('');
   const [deliveryLoc, setDeliveryLoc] = useState('');
+  const [deliveryMapLink, setDeliveryMapLink] = useState('');
   const [deliveryDate, setDeliveryDate] = useState(() => {
     const d = new Date();
     d.setDate(d.getDate() + 1);
@@ -706,6 +709,7 @@ export const SalesView: React.FC = () => {
     setDistrict('เมืองสุราษฎร์ธานี');
     setProvinceCustom('');
     setDeliveryLoc('');
+    setDeliveryMapLink('');
     setDeliveryDate('');
     setOrderDueDate('');
     setBillType('tax_invoice');
@@ -739,6 +743,7 @@ export const SalesView: React.FC = () => {
     setDistrict(order.district ?? '');
     setProvinceCustom(order.province_custom ?? '');
     setDeliveryLoc(order.delivery_location ?? '');
+    setDeliveryMapLink(order.delivery_map_url ?? '');
     setDeliveryDate(order.delivery_date ?? '');
     setOrderDueDate(order.due_date ?? '');
     setBillType(order.bill_type ?? 'tax_invoice');
@@ -941,6 +946,11 @@ export const SalesView: React.FC = () => {
     }
 
     const totalQty = orderItems.reduce((acc, curr) => acc + curr.quantity, 0);
+    const deliveryMapUrl = googleMapsPinUrl(deliveryMapLink);
+    if (deliveryMapLink.trim() && !deliveryMapUrl) {
+      setOrderSaveError('กรุณาตรวจลิงก์หมุด Google Maps');
+      return;
+    }
 
     setIsSavingOrder(true);
     setOrderSaveError('');
@@ -948,6 +958,7 @@ export const SalesView: React.FC = () => {
       customer_name: customerName.trim(),
       customer_phone: customerPhone.trim(),
       delivery_location: deliveryLoc.trim() || (district ? `อ.${district}` : ''),
+      delivery_map_url: deliveryMapUrl,
       site_notes: siteNotes.trim(),
       ...(customerType === 'organization' ? { customer_contact_name: customerContactName.trim() } : {}),
     };
@@ -1979,6 +1990,12 @@ export const SalesView: React.FC = () => {
                   />
                 </div>
               </div>
+
+              <OrderMapLinkField
+                address={[deliveryLoc, district, provinceCustom].filter(Boolean).join(' ')}
+                value={deliveryMapLink}
+                onChange={setDeliveryMapLink}
+              />
 
               {/* Section 5: Items in this Order */}
               <fieldset disabled={orderFieldsLocked} className="min-w-0 pt-3 border-t border-slate-200 dark:border-white/[0.06] disabled:opacity-70">

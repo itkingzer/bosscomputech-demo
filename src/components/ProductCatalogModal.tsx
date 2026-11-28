@@ -1,9 +1,12 @@
 import { useDepartmentReadOnly } from '../context/DepartmentAccess';
-import { useState, type ReactNode } from 'react';
+import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, Layers, Pencil, Plus, Search, ShoppingBag, X } from 'lucide-react';
 import { type Product, type ProductCategory, PRODUCT_CATEGORY_LABELS } from '../types';
 import { NumberInput } from './ui/FormInputs';
+import { ListControls } from './ListControls';
+
+const CATALOG_PAGE_SIZES = [10, 20, 30, 100];
 
 interface ProductCatalogModalProps {
   products: Product[];
@@ -31,11 +34,14 @@ export function ProductCatalogModal({
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<'all' | ProductCategory>('all');
   const [sortBy, setSortBy] = useState<'stock_desc' | 'stock_asc' | 'price_desc' | 'price_asc' | 'name'>('stock_desc');
+  const [pageSize, setPageSize] = useState(CATALOG_PAGE_SIZES[0]);
+  const [requestedPage, setRequestedPage] = useState(1);
+  const listRef = useRef<HTMLDivElement>(null);
   const readOnly = useDepartmentReadOnly();
   const canSelect = selectionEnabled && !readOnly;
   const selectedCount = Object.keys(quantities).length;
   const query = searchQuery.trim().toLowerCase();
-  const filteredCatalog = products.filter(item =>
+  const filteredCatalog = useMemo(() => products.filter(item =>
     item.name.toLowerCase().includes(query) &&
     (categoryFilter === 'all' || item.category === categoryFilter),
   ).sort((a, b) => {
@@ -46,7 +52,16 @@ export function ProductCatalogModal({
       case 'price_asc': return getPrice(a) - getPrice(b);
       case 'name': return a.name.localeCompare(b.name, 'th');
     }
-  });
+  }), [products, query, categoryFilter, sortBy, getStock, getPrice]);
+  const totalPages = Math.max(1, Math.ceil(filteredCatalog.length / pageSize));
+  const page = Math.min(requestedPage, totalPages);
+  const startIndex = (page - 1) * pageSize;
+  const pageItems = filteredCatalog.slice(startIndex, startIndex + pageSize);
+
+  const changePage = (nextPage: number) => {
+    setRequestedPage(nextPage);
+    listRef.current?.scrollTo({ top: 0 });
+  };
 
   return createPortal(
     <div className="fixed inset-0 z-[10001] flex items-center justify-center p-4 sm:p-6 bg-black/60 backdrop-blur-sm animate-fade-in overscroll-contain">
@@ -83,14 +98,14 @@ export function ProductCatalogModal({
                 aria-label="ค้นหาชื่อสินค้า"
                 placeholder="ค้นหาชื่อสินค้า..."
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(e) => { setSearchQuery(e.target.value); changePage(1); }}
                 className="w-full rounded-xl pl-9 pr-3 py-2 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 placeholder-slate-400 focus:outline-none focus:border-blue-500"
               />
             </div>
             <select
               aria-label="เรียงสินค้า"
               value={sortBy}
-              onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+              onChange={(e) => { setSortBy(e.target.value as typeof sortBy); changePage(1); }}
               className="rounded-xl px-3 py-2 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 focus:outline-none focus:border-blue-500"
             >
               <option value="stock_desc" className="bg-white dark:bg-[#12141A]">สต๊อกมาก → น้อย</option>
@@ -116,7 +131,7 @@ export function ProductCatalogModal({
               <button
                 key={cat}
                 type="button"
-                onClick={() => setCategoryFilter(cat)}
+                onClick={() => { setCategoryFilter(cat); changePage(1); }}
                 className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border whitespace-nowrap transition active:scale-[0.97] cursor-pointer ${categoryFilter === cat
                   ? 'bg-[#FF6B00]/15 dark:bg-[#FF6B00]/20 border-[#FF6B00]/60 dark:border-[#FF6B00]/50 text-[#C2410C] dark:text-[#FF6B00]'
                   : 'bg-slate-100 dark:bg-white/[0.02] border-slate-200 dark:border-white/[0.08] text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
@@ -126,18 +141,32 @@ export function ProductCatalogModal({
               </button>
             ))}
           </div>
+          <ListControls
+            from={pageItems.length ? startIndex + 1 : 0}
+            to={startIndex + pageItems.length}
+            total={filteredCatalog.length}
+            page={page}
+            totalPages={totalPages}
+            pageSize={pageSize}
+            pageSizeOptions={CATALOG_PAGE_SIZES}
+            onPageSizeChange={(size) => { setPageSize(size); changePage(1); }}
+            onPageChange={changePage}
+            hideSort
+            showPageButtonLabels
+            className="[&_button]:min-h-11 [&_button]:min-w-11 [&_select]:min-h-11 [&_select]:focus-visible:ring-2"
+          />
         </div>
 
         {/* Product list */}
-        <div className="flex-1 overflow-y-auto overscroll-contain p-3 sm:p-4">
-          {filteredCatalog.length === 0 ? (
+        <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 sm:p-4">
+          {pageItems.length === 0 ? (
             <div className="p-8 text-center">
               <ShoppingBag className="w-10 h-10 text-slate-400 dark:text-slate-600 mx-auto mb-2" />
               <p className="text-xs text-slate-500 dark:text-slate-400">ไม่พบสินค้าที่ตรงกับเงื่อนไข</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
-              {filteredCatalog.map((item) => {
+              {pageItems.map((item) => {
                 const isSelected = canSelect && quantities[item.id] !== undefined;
                 const stock = getStock(item.name);
                 return (

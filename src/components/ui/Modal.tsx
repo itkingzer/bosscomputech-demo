@@ -83,7 +83,7 @@ export const Modal: React.FC<ModalProps> = ({
 
     return createPortal(
         <ModalBackdrop
-            className="fixed inset-0 z-[9999] flex items-center justify-center p-4 sm:p-6 bg-black/65 dark:bg-black/80 backdrop-blur-sm overflow-y-auto overscroll-contain animate-fade-in"
+            className="fixed inset-0 z-[9999] flex items-center justify-center p-3 sm:p-6 bg-black/65 dark:bg-black/80 backdrop-blur-sm overscroll-contain animate-fade-in"
             role="dialog"
             aria-modal="true"
             aria-label={ariaLabel || (typeof title === 'string' ? title : undefined)}
@@ -92,9 +92,9 @@ export const Modal: React.FC<ModalProps> = ({
             <div
                 onClick={(e) => e.stopPropagation()}
                 className={`w-full ${maxWidthClass}
-          max-h-[82dvh] sm:max-h-[86dvh]
+          max-h-[min(86dvh,calc(100dvh-1.5rem))]
           flex flex-col overflow-hidden
-          rounded-2xl sm:rounded-3xl
+          rounded-3xl
           shadow-2xl border
           bg-white text-slate-900 border-slate-200/90
           dark:bg-[#12141A] dark:text-white dark:border-white/[0.12]
@@ -102,17 +102,17 @@ export const Modal: React.FC<ModalProps> = ({
           ${accentClass} ${panelClassName}`}
             >
                 {!hideHeader && (
-                    <div className="flex items-center justify-between gap-2.5 px-4 py-3 sm:px-5 sm:py-3.5 border-b border-slate-200 dark:border-white/[0.1] flex-shrink-0">
+                    <div className="flex items-center justify-between gap-2.5 px-4 py-3 border-b border-slate-200 dark:border-white/[0.1] flex-shrink-0">
                         <div className="flex items-center gap-2.5 min-w-0">
                             {icon && <div className="flex-shrink-0 text-[#FF6B00]">{icon}</div>}
                             <div className="min-w-0">
                                 {title && (
-                                    <h3 className="text-sm sm:text-base font-bold leading-snug text-slate-900 dark:text-white truncate">
+                                    <h3 className="text-base font-bold leading-snug text-slate-900 dark:text-white break-words">
                                         {title}
                                     </h3>
                                 )}
                                 {subtitle && (
-                                    <p className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 mt-0.5 line-clamp-1">
+                                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 line-clamp-2">
                                         {subtitle}
                                     </p>
                                 )}
@@ -124,19 +124,19 @@ export const Modal: React.FC<ModalProps> = ({
                             aria-label="ปิดหน้าต่าง"
                             className="p-1.5 rounded-xl text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white
                 bg-slate-100 dark:bg-white/[0.06] hover:bg-slate-200 dark:hover:bg-white/[0.12]
-                transition-all duration-150 active:scale-[0.97] !min-w-[32px] !min-h-[32px] w-8 h-8 sm:w-9 sm:h-9 flex items-center justify-center flex-shrink-0 cursor-pointer"
+                transition-all duration-150 active:scale-[0.97] !min-h-11 size-11 flex items-center justify-center flex-shrink-0 cursor-pointer"
                         >
-                            <X className="w-4 h-4 sm:w-5 sm:h-5" />
+                            <X className="size-5" />
                         </button>
                     </div>
                 )}
 
-                <div className="flex-1 overflow-y-auto overscroll-contain px-4 py-3 sm:px-5 sm:py-4 text-xs">
+                <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 text-xs">
                     {children}
                 </div>
 
                 {footer && (
-                    <div className="flex-shrink-0 px-4 py-2.5 sm:px-5 sm:py-3 border-t border-slate-200 dark:border-white/[0.1] bg-slate-50 dark:bg-white/[0.02]">
+                    <div className="flex-shrink-0 px-4 py-3 border-t border-slate-200 dark:border-white/[0.1] bg-slate-50 dark:bg-white/[0.02]">
                         {footer}
                     </div>
                 )}

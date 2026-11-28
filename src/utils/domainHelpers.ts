@@ -104,7 +104,7 @@ export const canConfigureSupabase = (user: UserAccount | null): boolean =>
   user?.role === 'admin' && user.is_superadmin === true;
 
 export const getWorkPositions = (user: UserAccount): UserRole[] =>
-  user.work_positions ?? [user.role];
+  [...new Set([user.role, ...(user.work_positions ?? [])])];
 
 export const worksInPosition = (user: UserAccount, position: UserRole): boolean =>
   getWorkPositions(user).includes(position);

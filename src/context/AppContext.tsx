@@ -388,6 +388,7 @@ interface AppContextType {
   queueRepairTicketForDispatch: (ticketId: string) => void;
   updateOrderDeliveryDate: (orderId: string, deliveryDate: string) => void;
   updateOrderRoute: (orderId: string, routeCode: RouteCode) => Promise<void>;
+  updateOrderMap: (order: Order, changes: Pick<Order, 'delivery_map_url' | 'onsite_map_pin'>) => Promise<boolean>;
   confirmCustomerPickup: (itemId: string, voidDate?: string) => Promise<void>;
   updateRepairTicketDueDate: (ticketId: string, dueDate: string) => void;
   /**
@@ -779,8 +780,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           const { data } = await client.from('repair_tickets').select('*').order('created_at', { ascending: false }).abortSignal(signal).throwOnError();
           if (!signal.aborted && data) setRepairTickets(data);
         } else if (table === 'products') {
-          const { data } = await client.from('products').select('*').order('created_at', { ascending: false }).abortSignal(signal).throwOnError();
-          if (!signal.aborted && data) setProducts(data as Product[]);
+          const pageSize = 500;
+          const catalog: Product[] = [];
+          for (let offset = 0; !signal.aborted; offset += pageSize) {
+            const { data } = await client.from('products').select('*')
+              .order('created_at', { ascending: false }).order('id')
+              .range(offset, offset + pageSize - 1).abortSignal(signal).throwOnError();
+            const page = data as Product[];
+            catalog.push(...page);
+            if (page.length < pageSize) break;
+          }
+          if (!signal.aborted) setProducts(catalog);
         } else if (table === 'stock_pos') {
           const { data } = await client.from('stock_pos').select('*').order('created_at', { ascending: false }).abortSignal(signal).throwOnError();
           if (!signal.aborted && data) setStockPOs(data as StockPO[]);
@@ -1255,6 +1265,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       customer_contact_name: orderData.customer_contact_name,
       customer_phone: orderData.customer_phone,
       delivery_location: orderData.delivery_location,
+      delivery_map_url: orderData.delivery_map_url,
       district: orderData.district,
       route_code: routeCode,
       province_custom: orderData.province_custom,
@@ -2859,6 +2870,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       await supabaseClient.from('orders').update({ route_code: routeCode }).eq('id', orderId);
     }
     setOrders(prev => prev.map(o => o.id === orderId ? { ...o, route_code: routeCode } : o));
+  };
+
+  const updateOrderMap: AppContextType['updateOrderMap'] = async (order, changes) => {
+    if (usesSupabaseAuth) {
+      if (!isSupabaseLive || !supabaseClient) return false;
+      const query = supabaseClient.from('orders').update(changes).eq('id', order.id);
+      if (order.updated_at) query.eq('updated_at', order.updated_at);
+      const { data, error } = await query.select().maybeSingle();
+      if (error || !data) return false;
+      setOrders(prev => prev.map(row => row.id === order.id ? data as Order : row));
+      return true;
+    }
+    setOrders(prev => prev.map(row => row.id === order.id ? { ...row, ...changes } : row));
+    return true;
   };
 
   const assignRepairTicketOnsite = async (ticketId: string, techs: string[], jobCategory?: JobCategory) => {
@@ -4853,6 +4878,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       queueRepairTicketForDispatch,
       updateOrderDeliveryDate,
       updateOrderRoute,
+      updateOrderMap,
       confirmCustomerPickup,
       updateRepairTicketDueDate,
       selfPickupRepairTicket,

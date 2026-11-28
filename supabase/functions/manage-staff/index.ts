@@ -11,16 +11,19 @@ Deno.serve(async request => {
   const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
   if (!siteUrl || !url || !anonKey || !serviceKey) return Response.json({ error: 'Staff accounts are not configured' }, { status: 503 });
 
-  const origin = new URL(siteUrl).origin;
+  const siteOrigin = new URL(siteUrl).origin;
+  const requestOrigin = request.headers.get('Origin');
+  const allowedOrigins = [siteOrigin, ...(Deno.env.get('STAFF_ALLOWED_ORIGINS') ?? '').split(',').map(value => value.trim())];
+  const originAllowed = !requestOrigin || allowedOrigins.includes(requestOrigin);
   const headers = {
-    'Access-Control-Allow-Origin': origin,
+    ...(requestOrigin && originAllowed ? { 'Access-Control-Allow-Origin': requestOrigin } : {}),
     'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info, x-region',
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
     'Vary': 'Origin',
   };
   const reply = (body: object, status = 200) => Response.json(body, { status, headers });
   const fail = (error: string, status = 400) => reply({ error }, status);
-  if (request.headers.get('Origin') && request.headers.get('Origin') !== origin) return fail('Origin not allowed', 403);
+  if (!originAllowed) return fail('Origin not allowed', 403);
   if (request.method === 'OPTIONS') return new Response(null, { headers });
   if (request.method !== 'POST') return fail('Method not allowed', 405);
 

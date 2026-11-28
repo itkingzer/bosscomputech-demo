@@ -327,7 +327,8 @@ export const OnsiteDispatchRosterModal: React.FC<OnsiteDispatchRosterModalProps>
           <div className="p-3 rounded-xl bg-indigo-50 dark:bg-indigo-500/10 border border-indigo-200 dark:border-indigo-500/30 flex flex-wrap items-center gap-3 text-xs">
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="font-bold">เลือกช่างเข้าชุด:</span>
-              {(availableTechs.length > 0 ? availableTechs : ['ช่างเอ', 'ช่างบี', 'ช่างซี', 'ช่างดี']).map(t => {
+              {availableTechs.length === 0 && <span>ยังไม่มีช่าง Onsite ที่เปิดใช้งานในระบบ</span>}
+              {availableTechs.map(t => {
                 const active = newTeamTechs.includes(t);
                 return (
                   <button

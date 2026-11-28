@@ -590,7 +590,7 @@ export interface OrderItem {
 export type OrderCustomerType = 'individual' | 'organization';
 
 export type OrderHeaderEdit = Pick<Order,
-  'customer_name' | 'customer_contact_name' | 'customer_phone' | 'delivery_location' | 'site_notes'
+  'customer_name' | 'customer_contact_name' | 'customer_phone' | 'delivery_location' | 'delivery_map_url' | 'site_notes'
 >;
 
 export type OrderDraftEdit = Pick<Order,
@@ -598,6 +598,13 @@ export type OrderDraftEdit = Pick<Order,
   'bill_type' | 'payment_term' | 'delivery_mode' | 'items_list' | 'extra_cost' |
   'deposit_amount' | 'customer_id' | 'contract_id'
 >;
+
+export interface OnsiteMapPin {
+  latitude: number;
+  longitude: number;
+  accuracy: number;
+  captured_at: string;
+}
 
 export interface Order {
   id: string;
@@ -608,6 +615,8 @@ export interface Order {
   customer_contact_name?: string | null;
   customer_phone?: string;
   delivery_location: string;
+  delivery_map_url?: string | null;
+  onsite_map_pin?: OnsiteMapPin | null;
   district?: string;
   route_code?: RouteCode;
   province_custom?: string;

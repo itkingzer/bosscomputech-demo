@@ -1,5 +1,6 @@
 import { useDepartmentReadOnly } from '../context/DepartmentAccess';
 import { ModalBackdrop } from './ui/ModalBackdrop';
+import { OrderMapLinkEditor } from './OrderMapPins';
 import { PhoneInput, NumberInput } from './ui/FormInputs';
 import React, { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -1152,6 +1153,8 @@ export const FrontdeskView: React.FC = () => {
   );
 
   const selectedRosterGroup = dailyRosterGroups.find(group => group.key === selectedRosterKey);
+  const rosterOrderId = selectedRosterGroup?.rows[0].orderId;
+  const rosterOrder = rosterOrderId ? orders.find(order => order.id === rosterOrderId) : undefined;
 
   const openScheduleJobModal = (
     target:
@@ -1184,7 +1187,7 @@ export const FrontdeskView: React.FC = () => {
     e.preventDefault();
     if (!scheduleTarget || schedSaving) return;
     if (schedTechs.length === 0) {
-      alert('กรุณาเลือกช่าง Onsite อย่างน้อย 1 คน');
+      alert(onsiteTechs.length ? 'กรุณาเลือกช่าง Onsite อย่างน้อย 1 คน' : 'ยังไม่มีช่าง Onsite ที่เปิดใช้งานในระบบ');
       return;
     }
     setSchedSaving(true);
@@ -1899,7 +1902,10 @@ export const FrontdeskView: React.FC = () => {
               subtitle={selectedRosterGroup && `${selectedRosterGroup.rows[0].customerName} · ${selectedRosterGroup.rows.length} ${selectedRosterGroup.rows[0].projectId ? 'รายการ' : 'ชิ้น'}`}
               maxWidthClass="max-w-2xl"
             >
-              <div className="space-y-2">{selectedRosterGroup?.rows.map(renderRosterRow)}</div>
+              <div className="space-y-2">
+                {rosterOrder && !readOnly && <OrderMapLinkEditor key={rosterOrder.id} order={rosterOrder} />}
+                {selectedRosterGroup?.rows.map(renderRosterRow)}
+              </div>
             </Modal>
           </div>
         </div>
@@ -2696,6 +2702,7 @@ export const FrontdeskView: React.FC = () => {
                   <MapPin className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {dispatchOrder.delivery_location}
                 </div>
               )}
+              {dispatchOrder && !readOnly && <OrderMapLinkEditor key={dispatchOrder.id} order={dispatchOrder} />}
             </div>
 
             <div>
@@ -3143,7 +3150,7 @@ export const FrontdeskView: React.FC = () => {
                   <div>
                     <label className={modalLabelClass}>เลือกชุดช่าง Onsite สำหรับรอบนี้ *</label>
                     <div className="flex flex-wrap gap-2">
-                      {(onsiteTechs.length > 0 ? onsiteTechs.map(u => u.name) : ['ช่างเอ', 'ช่างบี', 'ช่างซี', 'ช่างดี']).map(techName => {
+                      {onsiteTechs.map(({ name: techName }) => {
                         const selected = visitTechs.includes(techName);
                         return (
                           <button disabled={readOnly}
@@ -3299,30 +3306,33 @@ export const FrontdeskView: React.FC = () => {
       {/* ========================================================================= */}
       {/* SCHEDULE JOB MODAL (z-[9999])                                             */}
       {/* ========================================================================= */}
-      {scheduleTarget && createPortal(
-        <ModalBackdrop
-          className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 animate-fade-in overscroll-contain"
-          onDismiss={() => { if (!schedSaving) setScheduleTarget(null); }}
-        >
-          <form
-            onSubmit={handleConfirmScheduleJob}
-            onClick={(e) => e.stopPropagation()}
-            className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-800 shadow-2xl rounded-3xl w-full sm:w-[92vw] max-w-lg max-h-[90dvh] overflow-y-auto p-5 space-y-4 animate-modal-pop"
-          >
-            <div className="flex items-center justify-between gap-2">
-              <div className="min-w-0">
-                <h3 className="text-sm sm:text-base font-extrabold truncate">ลงตารางวิ่งงานล่วงหน้า (Schedule Job)</h3>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">{scheduleTarget.title} • {scheduleTarget.subtitle}</p>
-              </div>
+      {scheduleTarget && (
+        <Modal
+          open
+          onClose={() => { if (!schedSaving) setScheduleTarget(null); }}
+          closeOnBackdrop={!schedSaving}
+          closeOnEscape={!schedSaving}
+          title="ลงตารางวิ่งงานล่วงหน้า"
+          subtitle={`${scheduleTarget.title} • ${scheduleTarget.subtitle}`}
+          icon={<Calendar className="size-5" aria-hidden="true" />}
+          footer={
+            <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-2">
+              <button type="button" onClick={() => setScheduleTarget(null)} disabled={schedSaving} className={modalSecondaryBtnClass}>
+                ยกเลิก
+              </button>
               <button
-                type="button"
-                onClick={() => setScheduleTarget(null)}
-                disabled={schedSaving}
-                className="p-2 rounded-xl bg-slate-100 dark:bg-white/[0.06] text-slate-500 cursor-pointer"
+                type="submit"
+                form="schedule-dispatch-form"
+                disabled={readOnly || schedSaving || (scheduleTarget.kind === 'item' && schedItemIds.length === 0)}
+                className={modalPrimaryBtnClass}
               >
-                <X className="w-4 h-4" />
+                <Check className="size-4 shrink-0" aria-hidden="true" />
+                {schedSaving ? 'กำลังบันทึก…' : 'บันทึกลงตารางวิ่งงาน'}
               </button>
             </div>
+          }
+        >
+          <form id="schedule-dispatch-form" onSubmit={handleConfirmScheduleJob} className="min-w-0 space-y-4">
 
             {/* ข้อมูลลูกค้า เบอร์โทร และสถานที่ส่งมอบ (ป้องกันลงคิวผิด) */}
             {(() => {
@@ -3332,6 +3342,9 @@ export const FrontdeskView: React.FC = () => {
               let custAddress = '-';
               let jobDetail = '';
               let dueStr = '';
+              const scheduledOrder = scheduleTarget.kind === 'item' && !scheduleTarget.item.project_id
+                ? orders.find(order => order.id === scheduleTarget.item.order_id)
+                : undefined;
               if (scheduleTarget.kind === 'repair') {
                 const t = scheduleTarget.ticket;
                 custName = t.customer_name || '-';
@@ -3381,6 +3394,7 @@ export const FrontdeskView: React.FC = () => {
                       <strong>{custDistrict}</strong> • {custAddress}
                     </span>
                   </div>
+                  {scheduledOrder && !readOnly && <OrderMapLinkEditor key={scheduledOrder.id} order={scheduledOrder} />}
                   <div className="text-[11px] text-slate-700 dark:text-slate-200 pt-1 border-t border-slate-200 dark:border-white/[0.06] flex flex-wrap items-center justify-between gap-2">
                     <span className="truncate">{jobDetail}</span>
                     {dueStr && (
@@ -3431,8 +3445,9 @@ export const FrontdeskView: React.FC = () => {
 
             <div className="text-xs">
               <label className={modalLabelClass}>ทีมช่างที่รับผิดชอบ *</label>
+              {onsiteTechs.length === 0 && <p className="text-slate-600 dark:text-slate-300">ยังไม่มีช่าง Onsite ที่เปิดใช้งานในระบบ</p>}
               <div className="flex flex-wrap gap-2">
-                {(onsiteTechs.length > 0 ? onsiteTechs.map(u => u.name) : ['ช่างเอ', 'ช่างบี', 'ช่างซี', 'ช่างดี']).map(techName => {
+                {onsiteTechs.map(({ name: techName }) => {
                   const selected = schedTechs.includes(techName);
                   return (
                     <button disabled={readOnly}
@@ -3477,27 +3492,8 @@ export const FrontdeskView: React.FC = () => {
               </fieldset>
             )}
 
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
-              <button
-                type="button"
-                onClick={() => setScheduleTarget(null)}
-                disabled={schedSaving}
-                className={modalSecondaryBtnClass}
-              >
-                ยกเลิก
-              </button>
-              <button
-                type="submit"
-                disabled={readOnly || (schedSaving || (scheduleTarget.kind === 'item' && schedItemIds.length === 0))}
-                className={modalPrimaryBtnClass}
-              >
-                <Check className="w-4 h-4 inline mr-1" />
-                {schedSaving ? 'กำลังบันทึก…' : 'บันทึกลงตารางวิ่งงาน'}
-              </button>
-            </div>
           </form>
-        </ModalBackdrop>,
-        document.body
+        </Modal>
       )}
 
       {/* Tomorrow / Daily Job Dispatch Roster Sheet (ONSITE SERVICE + INSTALLATION) */}

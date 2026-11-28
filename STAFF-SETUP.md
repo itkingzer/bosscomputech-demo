@@ -9,7 +9,8 @@
 ## ติดตั้งบน Supabase
 
 1. สำหรับโปรเจกต์ที่ใช้ระบบพนักงานอยู่แล้ว ให้รัน [supabase-staff-passwords.sql](./supabase-staff-passwords.sql) ทั้งไฟล์ด้วย role Postgres สำหรับฐานข้อมูลใหม่ ให้ลง `schema.sql`, `supabase-admin-access.sql` และ `supabase-staff-access.sql` ก่อน
-2. ตั้ง `STAFF_SITE_URL` และ Auth **Site URL / Redirect URLs** เป็น `https://bosscomputech-demo-bqcx.vercel.app/` ปิดการสมัครสาธารณะสำหรับโปรเจกต์ภายใน
+2. ตั้ง `STAFF_SITE_URL` และ Auth **Site URL / Redirect URLs** เป็น `https://bosscomputech-demo.vercel.app/` ปิดการสมัครสาธารณะสำหรับโปรเจกต์ภายใน
+   หากมี origin เพิ่มเติมที่ต้องเรียก Edge Function ให้กำหนดใน `STAFF_ALLOWED_ORIGINS` โดยคั่นด้วยจุลภาค
 3. รัน [supabase-staff-superadmin.sql](./supabase-staff-superadmin.sql) เพื่อเปิดสิทธิ์ Superadmin ให้บัญชีแอดมินตั้งต้นเมื่อมีบัญชีตั้งต้นเพียงบัญชีเดียว หากมีหลายบัญชี ให้ผู้ดูแลโปรเจกต์กำหนด `boss_superadmin: true` ใน Auth app metadata ของบัญชีแอดมินที่เลือก
 4. Deploy `manage-staff` ด้วย `--no-verify-jwt` เพื่อให้หน้าแอดมินที่ยังล็อกอินไม่ได้ขอกู้รหัสได้ ตัว Function ตรวจ session และบทบาทเองก่อนอนุญาตให้จัดการบัญชี
 5. Deploy เว็บ แล้วปิด Edge Function `invite-staff` รุ่นเดิม

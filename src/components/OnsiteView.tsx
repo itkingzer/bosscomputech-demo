@@ -1,7 +1,8 @@
 import { useDepartmentReadOnly } from '../context/DepartmentAccess';
 import { ModalBackdrop } from './ui/ModalBackdrop';
+import { OnsiteOrderMap } from './OrderMapPins';
 import { PhoneInput, NumberInput, normalizePhone } from './ui/FormInputs';
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { canCompleteProjectHandover, canCompleteSiteVisit, useApp } from '../context/AppContext';
 import {
@@ -209,6 +210,22 @@ export const OnsiteView: React.FC = () => {
   const [isReqCatalogOpen, setIsReqCatalogOpen] = useState(false);
   const [reqCatalogSearch, setReqCatalogSearch] = useState('');
   const [reqCatalogCategory, setReqCatalogCategory] = useState<'all' | ProductCategory>('all');
+  const [reqCatalogPageSize, setReqCatalogPageSize] = useState(10);
+  const [reqCatalogPage, setReqCatalogPage] = useState(1);
+  const reqCatalogListRef = useRef<HTMLDivElement>(null);
+  const reqCatalogQuery = reqCatalogSearch.trim().toLowerCase();
+  const reqCatalogResults = useMemo(() => isReqCatalogOpen ? products.filter(product =>
+    product.name.toLowerCase().includes(reqCatalogQuery) &&
+    (reqCatalogCategory === 'all' || product.category === reqCatalogCategory)
+  ) : [], [isReqCatalogOpen, products, reqCatalogQuery, reqCatalogCategory]);
+  const reqCatalogTotalPages = Math.max(1, Math.ceil(reqCatalogResults.length / reqCatalogPageSize));
+  const reqCatalogVisiblePage = Math.min(reqCatalogPage, reqCatalogTotalPages);
+  const reqCatalogStart = (reqCatalogVisiblePage - 1) * reqCatalogPageSize;
+  const reqCatalogPageItems = reqCatalogResults.slice(reqCatalogStart, reqCatalogStart + reqCatalogPageSize);
+  const changeReqCatalogPage = (page: number) => {
+    setReqCatalogPage(page);
+    reqCatalogListRef.current?.scrollTo({ top: 0 });
+  };
   const [handoverNoteInput, setHandoverNoteInput] = useState('');
   const [handoverPhotosInput, setHandoverPhotosInput] = useState<string[]>([]);
   const [isSubmittingHandover, setIsSubmittingHandover] = useState(false);
@@ -1580,6 +1597,8 @@ export const OnsiteView: React.FC = () => {
                   </div>
                 </div>
 
+                {order && <OnsiteOrderMap key={order.id} order={order} canCapture={isAccepted && !readOnly} />}
+
                 {isAccepted && <div className="p-3 rounded-xl bg-slate-50 dark:bg-white/[0.03] border border-slate-200 dark:border-white/[0.08]">
                   <EvidencePhotoUploader
                     key={group.key}
@@ -2762,6 +2781,7 @@ export const OnsiteView: React.FC = () => {
                           onClick={() => {
                             setReqCatalogSearch('');
                             setReqCatalogCategory('all');
+                            setReqCatalogPage(1);
                             setIsReqCatalogOpen(true);
                           }}
                           className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#FF6B00]/15 hover:bg-[#FF6B00]/25 border border-[#FF6B00]/40 text-[#C2410C] dark:text-[#FF6B00] text-[11px] font-bold transition active:scale-[0.97] cursor-pointer"
@@ -2944,7 +2964,7 @@ export const OnsiteView: React.FC = () => {
                   type="text"
                   placeholder="ค้นหาชื่ออุปกรณ์, สาย LAN, ท่อ, สวิตช์..."
                   value={reqCatalogSearch}
-                  onChange={(e) => setReqCatalogSearch(e.target.value)}
+                  onChange={(e) => { setReqCatalogSearch(e.target.value); changeReqCatalogPage(1); }}
                   className="w-full rounded-xl pl-9 pr-3 py-2 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 focus:outline-none focus:border-blue-500"
                 />
               </div>
@@ -2953,7 +2973,7 @@ export const OnsiteView: React.FC = () => {
                   <button
                     key={cat}
                     type="button"
-                    onClick={() => setReqCatalogCategory(cat)}
+                    onClick={() => { setReqCatalogCategory(cat); changeReqCatalogPage(1); }}
                     className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border whitespace-nowrap transition cursor-pointer ${
                       reqCatalogCategory === cat
                         ? 'bg-[#FF6B00]/15 dark:bg-[#FF6B00]/20 border-[#FF6B00]/60 text-[#C2410C] dark:text-[#FF6B00]'
@@ -2966,24 +2986,30 @@ export const OnsiteView: React.FC = () => {
               </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto overscroll-contain p-3 sm:p-4">
-              {(() => {
-                const q = reqCatalogSearch.trim().toLowerCase();
-                const filtered = products.filter(p => {
-                  const matchQ = !q || p.name.toLowerCase().includes(q);
-                  const matchC = reqCatalogCategory === 'all' || p.category === reqCatalogCategory;
-                  return matchQ && matchC;
-                });
-                if (filtered.length === 0) {
-                  return (
+            <div className="shrink-0 px-3 pt-2 sm:px-4">
+              <ListControls
+                from={reqCatalogPageItems.length ? reqCatalogStart + 1 : 0}
+                to={reqCatalogStart + reqCatalogPageItems.length}
+                total={reqCatalogResults.length}
+                page={reqCatalogVisiblePage}
+                totalPages={reqCatalogTotalPages}
+                pageSize={reqCatalogPageSize}
+                pageSizeOptions={[10, 20, 30, 100]}
+                onPageSizeChange={(size) => { setReqCatalogPageSize(size); changeReqCatalogPage(1); }}
+                onPageChange={changeReqCatalogPage}
+                hideSort
+                showPageButtonLabels
+                className="[&_button]:min-h-11 [&_button]:min-w-11 [&_select]:min-h-11 [&_select]:focus-visible:ring-2"
+              />
+            </div>
+            <div ref={reqCatalogListRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 sm:p-4">
+              {reqCatalogPageItems.length === 0 ? (
                     <div className="py-10 text-center text-xs text-slate-500">
                       ไม่พบสินค้าในแคตตาล็อกที่ตรงกับคำค้นหา
                     </div>
-                  );
-                }
-                return (
+              ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
-                    {filtered.map((prod: Product) => {
+                    {reqCatalogPageItems.map((prod: Product) => {
                       const inStockCount = items.filter(
                         it => (it.status === 'in_stock' || it.status === 'raw_stock') &&
                           (it.model_name || '').trim().toLowerCase() === prod.name.trim().toLowerCase()
@@ -3022,8 +3048,7 @@ export const OnsiteView: React.FC = () => {
                       );
                     })}
                   </div>
-                );
-              })()}
+              )}
             </div>
           </div>
         </ModalBackdrop>,

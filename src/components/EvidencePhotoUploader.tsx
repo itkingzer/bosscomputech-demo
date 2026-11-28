@@ -16,9 +16,26 @@ import {
   EvidenceFolder,
   MAX_EVIDENCE_PHOTOS,
   deleteEvidenceImage,
+  getEvidenceImageUrl,
   isImageStorageLive,
   uploadEvidenceImage
 } from '../services/imageStorageService';
+
+function EvidenceImage({ reference, ...props }: Omit<React.ImgHTMLAttributes<HTMLImageElement>, 'src'> & { reference: string }) {
+  const [url, setUrl] = useState<string>();
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let active = true;
+    void getEvidenceImageUrl(reference).then(
+      resolved => { if (active) setUrl(resolved); },
+      () => { if (active) setFailed(true); },
+    );
+    return () => { active = false; };
+  }, [reference]);
+  if (failed) return <span role="status" className="flex h-full items-center justify-center p-2 text-xs">เปิดรูปหลักฐานไม่ได้</span>;
+  if (!url) return null;
+  return <img {...props} src={url} />;
+}
 
 interface EvidencePhotoUploaderProps {
   value: string[];
@@ -196,8 +213,8 @@ export const EvidencePhotoUploader: React.FC<EvidencePhotoUploaderProps> = ({
               aria-label={`ดูรูปภาพหลักฐานที่ ${idx + 1}`}
               className="group relative aspect-square rounded-xl overflow-hidden border border-slate-200 dark:border-white/[0.12] bg-slate-100 dark:bg-slate-800/80 cursor-pointer shadow-sm hover:border-[#FF6B00]/60 transition"
             >
-              <img
-                src={url}
+              <EvidenceImage
+                reference={url}
                 alt={`หลักฐาน ${idx + 1}`}
                 className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-105"
                 loading="lazy"
@@ -325,8 +342,9 @@ export const EvidencePhotoUploader: React.FC<EvidencePhotoUploaderProps> = ({
               </button>
             )}
 
-            <img
-              src={photos[lightboxIndex]}
+            <EvidenceImage
+              key={photos[lightboxIndex]}
+              reference={photos[lightboxIndex]}
               alt={`หลักฐาน ${lightboxIndex + 1}`}
               className="max-w-full max-h-[78dvh] object-contain rounded-2xl shadow-2xl border border-white/10 bg-black/40"
             />

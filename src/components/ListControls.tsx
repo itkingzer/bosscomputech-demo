@@ -127,8 +127,8 @@ interface ListControlsProps {
     page: number;
     totalPages: number;
     pageSize: number;
-    sort: SortDirection;
-    onSortChange: (sort: SortDirection) => void;
+    sort?: SortDirection;
+    onSortChange?: (sort: SortDirection) => void;
     onPageSizeChange: (size: number) => void;
     onPageChange: (page: number) => void;
     /** Optional label for the sort dropdown, e.g. "เรียงตามวันที่". */
@@ -139,6 +139,7 @@ interface ListControlsProps {
     hideSort?: boolean;
     /** Custom page-size options (e.g. [10, 20, 30]). Defaults to [10, 20, 50, 0]. */
     pageSizeOptions?: number[];
+    showPageButtonLabels?: boolean;
     className?: string;
 }
 
@@ -153,7 +154,7 @@ export const ListControls: React.FC<ListControlsProps> = ({
     page,
     totalPages,
     pageSize,
-    sort,
+    sort = 'newest',
     onSortChange,
     onPageSizeChange,
     onPageChange,
@@ -161,6 +162,7 @@ export const ListControls: React.FC<ListControlsProps> = ({
     unit = 'รายการ',
     hideSort = false,
     pageSizeOptions = PAGE_SIZE_OPTIONS,
+    showPageButtonLabels = false,
     className = ''
 }) => {
     const SortIcon = sort === 'newest' || sort === 'high' ? ArrowDownWideNarrow : ArrowUpNarrowWide;
@@ -175,7 +177,7 @@ export const ListControls: React.FC<ListControlsProps> = ({
                         <SortIcon className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-slate-400 flex-shrink-0" />
                         <select
                             value={sort}
-                            onChange={(e) => onSortChange(e.target.value as SortDirection)}
+                            onChange={(e) => onSortChange?.(e.target.value as SortDirection)}
                             aria-label={sortLabel}
                             className="liquid-glass-input rounded-lg sm:rounded-xl px-2 py-0.5 sm:px-2.5 sm:py-1.5 text-[11px] text-slate-900 dark:text-white focus:outline-none cursor-pointer"
                         >
@@ -220,9 +222,10 @@ export const ListControls: React.FC<ListControlsProps> = ({
                         onClick={() => onPageChange(page - 1)}
                         disabled={page <= 1}
                         aria-label="หน้าก่อนหน้า"
-                        className="p-1 sm:p-1.5 rounded-lg sm:rounded-xl bg-slate-100 dark:bg-white/[0.06] hover:bg-slate-200 dark:hover:bg-white/[0.12] text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-white/[0.1] transition cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed w-7 h-7 sm:w-9 sm:h-9 flex items-center justify-center"
+                        className={`rounded-lg bg-slate-100 dark:bg-white/[0.06] hover:bg-slate-200 dark:hover:bg-white/[0.12] text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-white/[0.1] transition cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center ${showPageButtonLabels ? 'h-11 gap-1 px-2 text-xs font-semibold whitespace-nowrap' : 'w-7 h-7 sm:w-9 sm:h-9'}`}
                     >
                         <ChevronLeft className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                        {showPageButtonLabels && 'ก่อนหน้า'}
                     </button>
                     <span className="text-[10px] sm:text-[11px] text-slate-600 dark:text-slate-300 font-mono px-0.5 sm:px-1 whitespace-nowrap">
                         {page}/{totalPages}
@@ -232,8 +235,9 @@ export const ListControls: React.FC<ListControlsProps> = ({
                         onClick={() => onPageChange(page + 1)}
                         disabled={page >= totalPages}
                         aria-label="หน้าถัดไป"
-                        className="p-1 sm:p-1.5 rounded-lg sm:rounded-xl bg-slate-100 dark:bg-white/[0.06] hover:bg-slate-200 dark:hover:bg-white/[0.12] text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-white/[0.1] transition cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed w-7 h-7 sm:w-9 sm:h-9 flex items-center justify-center"
+                        className={`rounded-lg bg-slate-100 dark:bg-white/[0.06] hover:bg-slate-200 dark:hover:bg-white/[0.12] text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-white/[0.1] transition cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center ${showPageButtonLabels ? 'h-11 gap-1 px-2 text-xs font-semibold whitespace-nowrap' : 'w-7 h-7 sm:w-9 sm:h-9'}`}
                     >
+                        {showPageButtonLabels && 'ถัดไป'}
                         <ChevronRight className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                     </button>
                 </div>
