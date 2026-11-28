@@ -3,7 +3,7 @@ import { useDepartmentReadOnly } from './DepartmentAccess';
 import { UserAccount, Order, Item, RepairTicket, RepairStatus, RepairLifecycleStatus, ServiceType, RouteCode, JobCategory, Product, StockPO, ProductCategory, getRouteByDistrict, ActivityLog, computeWarrantyExpire, REPAIR_LIFECYCLE_META, ReceivedChannel, ROUTE_DEFINITIONS, WarrantyLookupResult, lookupWarrantyBySerial as lookupWarrantyHelper, Project, ProjectItem, ProjectItemType, ProjectMaterialRequestStatus, Contract, ContractItem, BILLING_BADGE_META, getOrderBillingBadgeKey, SiteVisit, SiteVisitItemRef, SiteVisitPrepStatus, SiteVisitStatus } from '../types';
 import { INITIAL_USERS, INITIAL_ORDERS, INITIAL_ITEMS, INITIAL_REPAIR_TICKETS, INITIAL_PRODUCTS, INITIAL_STOCK_POS, INITIAL_PROJECTS, INITIAL_CONTRACTS } from '../data/initialData';
 import { createClient, SupabaseClient, type User } from '@supabase/supabase-js';
-import { newUuid, isSerialDuplicate, isNonPrepCableOrConsumable, isServiceItem, canChangeDraftOrder } from '../utils/domainHelpers';
+import { newUuid, isSerialDuplicate, isNonPrepCableOrConsumable, isServiceItem, canChangeDraftOrder, canConfigureSupabase } from '../utils/domainHelpers';
 import type { OrderDraftEdit, OrderHeaderEdit } from '../types';
 
 const safeLoadJson = <T,>(key: string, fallback: T): T => {
@@ -178,7 +178,7 @@ interface AppContextType {
       unit_price: number;
       warranty_years?: number;
     }[];
-  }) => Project;
+  }) => Promise<Project>;
   addProjectAddonItems: (
     projectId: string,
     payload: {
@@ -1062,41 +1062,40 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
   };
 
+  const toProjectRow = (proj: Project) => ({
+    id: proj.id,
+    site_name: proj.site_name,
+    customer_name: proj.customer_name,
+    phone: proj.phone || null,
+    location: proj.location || null,
+    district: proj.district || null,
+    route_code: proj.route_code || null,
+    created_by: proj.created_by,
+    start_date: proj.start_date || null,
+    due_date: proj.due_date || null,
+    status: proj.status,
+    assigned_techs: proj.assigned_techs || [],
+    billing_status: proj.billing_status || 'pending',
+    billed_at: proj.billed_at || null,
+    billed_by: proj.billed_by || null,
+    tax_invoice_no: proj.tax_invoice_no || null,
+    items: proj.items || [],
+    batches: proj.batches || [],
+    material_requests: proj.material_requests || [],
+    daily_logs: proj.daily_logs || [],
+    site_visits: proj.site_visits || [],
+    handover_photo_urls: proj.handover_photo_urls || [],
+    handover_note: proj.handover_note || null,
+    completed_at: proj.completed_at || null,
+    activity_logs: proj.activity_logs || [],
+    updated_at: proj.updated_at || new Date().toISOString()
+  });
+
   const syncProjectRow = (proj: Project) => {
     if (!isSupabaseLive || !supabaseClient) return;
     void supabaseClient
       .from('projects')
-      .upsert(
-        [{
-          id: proj.id,
-          site_name: proj.site_name,
-          customer_name: proj.customer_name,
-          phone: proj.phone || null,
-          location: proj.location || null,
-          district: proj.district || null,
-          route_code: proj.route_code || null,
-          created_by: proj.created_by,
-          start_date: proj.start_date || null,
-          due_date: proj.due_date || null,
-          status: proj.status,
-          assigned_techs: proj.assigned_techs || [],
-          billing_status: proj.billing_status || 'pending',
-          billed_at: proj.billed_at || null,
-          billed_by: proj.billed_by || null,
-          tax_invoice_no: proj.tax_invoice_no || null,
-          items: proj.items || [],
-          batches: proj.batches || [],
-          material_requests: proj.material_requests || [],
-          daily_logs: proj.daily_logs || [],
-          site_visits: proj.site_visits || [],
-          handover_photo_urls: proj.handover_photo_urls || [],
-          handover_note: proj.handover_note || null,
-          completed_at: proj.completed_at || null,
-          activity_logs: proj.activity_logs || [],
-          updated_at: proj.updated_at || new Date().toISOString()
-        }],
-        { onConflict: 'id' }
-      )
+      .upsert(toProjectRow(proj), { onConflict: 'id' })
       .then(({ error }) => {
         if (error) console.warn('Supabase projects upsert warning:', error.message);
       });
@@ -3814,7 +3813,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const updateSupabaseConfig = (url: string, key: string) => {
-    if (currentUser?.role !== 'admin' || currentUser.is_superadmin !== true) return;
+    if (!canConfigureSupabase(currentUser)) return;
     if (url === supabaseUrl && key === supabaseKey) {
       if (authUser) setAuthUser({ ...authUser });
       return;
@@ -3830,7 +3829,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const disconnectSupabase = () => {
-    if (!usesSupabaseAuth || currentUser?.role !== 'admin' || currentUser.is_superadmin !== true) return;
+    if (!usesSupabaseAuth || !canConfigureSupabase(currentUser)) return;
     updateSupabaseConfig('', '');
     setUsers(safeLoadJson('boss_users', INITIAL_USERS));
     setOrders(safeLoadJson('boss_orders', INITIAL_ORDERS));
@@ -3873,6 +3872,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
    * พร้อมปลดล็อกการจองออเดอร์/แท็กงานเดิมให้พร้อมขายทันที
    */
   const clearDemoKeepStock = () => {
+    if (!canConfigureSupabase(currentUser)) return;
+
     const cleanedStockItems: Item[] = items
       .filter((item) => {
         const isWarehouseStock = item.status === 'in_stock' || item.status === 'raw_stock';
@@ -3915,7 +3916,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // ==========================================================================
   // Project & Site Installation Module (PRJ-2026-XXX)
   // ==========================================================================
-  const createProject = (payload: {
+  const createProject = async (payload: {
     id?: string;
     site_name: string;
     customer_name: string;
@@ -3936,7 +3937,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       unit_price: number;
       warranty_years?: number;
     }[];
-  }): Project => {
+  }): Promise<Project> => {
     const now = new Date().toISOString();
     const actor = currentUserRef.current;
     const currentYear = new Date().getFullYear();
@@ -3944,9 +3945,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const m = p.id.match(/^PRJ-\d{4}-(\d+)$/);
       return m ? Math.max(max, parseInt(m[1], 10)) : max;
     }, 0);
-    const projectId =
-      payload.id?.trim() ||
-      `PRJ-${currentYear}-${String(Math.max(projects.length, existingMax) + 1).padStart(3, '0')}`;
+    const firstSequence = Math.max(projects.length, existingMax) + 1;
+    const formatProjectId = (sequence: number) => `PRJ-${currentYear}-${String(sequence).padStart(3, '0')}`;
+    const requestedId = payload.id?.trim();
+    const projectId = requestedId || formatProjectId(firstSequence);
     const routeCode = payload.district ? getRouteByDistrict(payload.district) : ('route_5' as RouteCode);
     const createdBy = payload.created_by || actor?.name || 'ฝ่ายขาย';
 
@@ -3996,8 +3998,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       activity_logs: [initLog]
     };
 
-    setProjects(prev => [newProject, ...prev]);
-    syncProjectRow(newProject);
+    if (usesSupabaseAuth) {
+      if (!isSupabaseLive || !supabaseClient) {
+        throw new Error('ยังเชื่อมต่อฐานข้อมูลไม่ได้ กรุณาลองอีกครั้ง');
+      }
+      for (let attempt = 0; ; attempt++) {
+        const { error } = await supabaseClient.from('projects').insert(toProjectRow(newProject));
+        if (!error) break;
+        if (error.code !== '23505' || requestedId || attempt >= 4) {
+          throw new Error('บันทึกโครงการไม่สำเร็จ กรุณาลองอีกครั้ง');
+        }
+        newProject.id = formatProjectId(firstSequence + attempt + 1);
+        newProject.activity_logs = [{ ...initLog, note: initLog.note?.replace(projectId, newProject.id) }];
+      }
+    }
+    setProjects(prev => [newProject, ...prev.filter(project => project.id !== newProject.id)]);
     return newProject;
   };
 

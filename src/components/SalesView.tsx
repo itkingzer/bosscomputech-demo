@@ -3,7 +3,7 @@ import { ModalBackdrop } from './ui/ModalBackdrop';
 import { ProductEditorModal } from './ProductEditorModal';
 import { ProductCatalogModal } from './ProductCatalogModal';
 import { PhoneInput, NumberInput, normalizePhone } from './ui/FormInputs';
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from '../context/AppContext';
 import { ToastBanner } from './ui/ToastBanner';
@@ -24,7 +24,7 @@ import {
   BILLING_BADGE_META, getOrderBillingBadgeKey, getProjectDeadlineRisk, formatDateDMY
 } from '../types';
 import { ListControls, useListControls } from './ListControls';
-import { canChangeDraftOrder, isNonPrepCableOrConsumable, worksInPosition } from '../utils/domainHelpers';
+import { canChangeDraftOrder, fmtCurrency, isServiceItem, isNonPrepCableOrConsumable, worksInPosition } from '../utils/domainHelpers';
 import { ActivityTimeline } from './ActivityTimeline';
 import { OrderFormPrintModal } from './OrderFormPrintModal';
 
@@ -209,7 +209,9 @@ export const SalesView: React.FC = () => {
   const [addonProjectId, setAddonProjectId] = useState<string | null>(null);
 
   // Create Project Form State
-  const [prjCode, setPrjCode] = useState(() => `PRJ-${new Date().getFullYear()}-${String(Math.floor(100 + Math.random() * 900))}`);
+  const [projectError, setProjectError] = useState('');
+  const [isSavingProject, setIsSavingProject] = useState(false);
+  const savingProject = useRef(false);
   const [prjSiteName, setPrjSiteName] = useState('');
   const [prjCustomerName, setPrjCustomerName] = useState('');
   const [prjPhone, setPrjPhone] = useState('');
@@ -221,7 +223,6 @@ export const SalesView: React.FC = () => {
     d.setDate(d.getDate() + 7);
     return d.toISOString().split('T')[0];
   });
-  const [prjAssignedTechs, setPrjAssignedTechs] = useState<string[]>(['ช่างซี']);
   const [prjItems, setPrjItems] = useState<{
     product_id?: string;
     model_name: string;
@@ -257,10 +258,6 @@ export const SalesView: React.FC = () => {
   );
   const salesUsersList = useMemo(
     () => users.filter(u => (worksInPosition(u, 'sales') || u.role === 'admin') && u.is_active !== false),
-    [users]
-  );
-  const onsiteUsersList = useMemo(
-    () => users.filter(u => worksInPosition(u, 'onsite') && u.is_active !== false),
     [users]
   );
   const [showCustomerSuggestions, setShowCustomerSuggestions] = useState(false);
@@ -378,7 +375,7 @@ export const SalesView: React.FC = () => {
       case 'contract_order': return isContractBillingOpen;
       case 'contract_template': return isContractManagerOpen && showAddContractForm;
       case 'project_equipment':
-      case 'project_consumable': return isCreateProjectOpen;
+      case 'project_consumable': return isCreateProjectOpen && !isSavingProject;
       case 'addon': return !!addonProject;
       case 'browse': return false;
     }
@@ -826,7 +823,8 @@ export const SalesView: React.FC = () => {
         .map(id => {
           const catItem = products.find(c => c.id === id);
           if (!catItem) return null;
-          const resolvedType: ProjectItemType = isNonPrepCableOrConsumable(catItem.name) ? 'consumable' : targetType;
+          const resolvedType: ProjectItemType = isServiceItem(catItem.name, catItem.item_type) || isNonPrepCableOrConsumable(catItem.name)
+            ? 'consumable' : targetType;
           return {
             product_id: catItem.id,
             model_name: catItem.name,
@@ -1119,50 +1117,63 @@ export const SalesView: React.FC = () => {
   }, [orders, projects]);
 
   const handleOpenCreateProjectModal = () => {
-    const currentYear = new Date().getFullYear();
-    const existingMax = projects.reduce((max, p) => {
-      const m = p.id.match(/^PRJ-\d{4}-(\d+)$/);
-      return m ? Math.max(max, parseInt(m[1], 10)) : max;
-    }, 0);
-    const nextNum = String(Math.max(projects.length, existingMax) + 1).padStart(3, '0');
-    setPrjCode(`PRJ-${currentYear}-${nextNum}`);
+    if (readOnly || savingProject.current) return;
+    setIsBillingTypeModalOpen(false);
+    setProjectError('');
     setPrjSiteName('');
     setPrjCustomerName('');
     setPrjPhone('');
     setPrjDistrict('เมืองสุราษฎร์ธานี');
     setPrjLocation('');
-    const todayIso = new Date().toISOString().split('T')[0];
-    const nextWeek = new Date();
-    nextWeek.setDate(nextWeek.getDate() + 7);
-    setPrjStartDate(todayIso);
-    setPrjDueDate(nextWeek.toISOString().split('T')[0]);
-    setPrjAssignedTechs(onsiteUsersList.length > 0 ? [onsiteUsersList[0].name] : []);
+    const today = new Date();
+    const nextWeek = new Date(today);
+    nextWeek.setDate(today.getDate() + 7);
+    const projectDate = (date: Date) => new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Bangkok' }).format(date);
+    setPrjStartDate(projectDate(today));
+    setPrjDueDate(projectDate(nextWeek));
     setPrjItems([]);
     setIsCreateProjectOpen(true);
   };
 
-  const handleSubmitCreateProject = (e: React.FormEvent) => {
+  const handleSubmitCreateProject = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!prjSiteName.trim() || !prjCustomerName.trim() || prjItems.length === 0) {
-      alert('กรุณากรอกชื่อโครงการ ชื่อลูกค้า และเพิ่มรายการในโปรเจกต์อย่างน้อย 1 รายการ');
+    if (readOnly || savingProject.current) return;
+    setProjectError('');
+    if (!prjSiteName.trim() || !prjCustomerName.trim() || !prjLocation.trim() || !normalizePhone(prjPhone)) {
+      setProjectError('กรุณากรอกชื่อโครงการ ชื่อลูกค้า เบอร์โทร และสถานที่ติดตั้ง');
       return;
     }
-    const created = createProject({
-      id: prjCode,
-      site_name: prjSiteName,
-      customer_name: prjCustomerName,
-      phone: prjPhone,
-      location: prjLocation || `อ.${prjDistrict}`,
-      district: prjDistrict,
-      created_by: salespersonName,
-      start_date: prjStartDate,
-      due_date: prjDueDate,
-      assigned_techs: [],
-      items: prjItems
-    });
-    setIsCreateProjectOpen(false);
-    setToast(`เปิดโปรเจกต์ ${created.id} (${created.site_name}) เรียบร้อยแล้ว ส่งต่อจัดซื้อ & ทีมหน้างาน`);
-    setTimeout(() => setToast(''), 4500);
+    if (!prjStartDate || !prjDueDate || prjDueDate < prjStartDate) {
+      setProjectError('วันกำหนดส่งมอบต้องตรงกับหรืออยู่หลังวันเริ่มงาน');
+      return;
+    }
+    if (!prjItems.length) {
+      setProjectError('กรุณาเพิ่มอุปกรณ์ วัสดุ หรือค่าบริการอย่างน้อย 1 รายการ');
+      return;
+    }
+    savingProject.current = true;
+    setIsSavingProject(true);
+    try {
+      const created = await createProject({
+        site_name: prjSiteName,
+        customer_name: prjCustomerName,
+        phone: normalizePhone(prjPhone),
+        location: prjLocation,
+        district: prjDistrict,
+        created_by: salespersonName,
+        start_date: prjStartDate,
+        due_date: prjDueDate,
+        items: prjItems
+      });
+      setIsCreateProjectOpen(false);
+      setToast(`เปิดโครงการ ${created.id} (${created.site_name}) เรียบร้อยแล้ว`);
+      setTimeout(() => setToast(''), 4500);
+    } catch (error) {
+      setProjectError(error instanceof Error ? error.message : 'บันทึกโครงการไม่สำเร็จ กรุณาลองอีกครั้ง');
+    } finally {
+      savingProject.current = false;
+      setIsSavingProject(false);
+    }
   };
 
   const handleOpenAddonModal = (prj: Project, e?: React.MouseEvent) => {
@@ -2468,15 +2479,16 @@ export const SalesView: React.FC = () => {
                 </div>
                 <div className="min-w-0">
                   <h3 className="text-sm sm:text-base font-extrabold text-slate-900 dark:text-white leading-tight">
-                    เปิดงานรับเหมา / ติดตั้งระบบหน้างาน (Create Project Site)
+                    เปิดโครงการ / งานรับเหมา
                   </h3>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400 font-mono">
-                    รหัสโปรเจกต์: <strong className="text-purple-700 dark:text-purple-300">{prjCode}</strong> • เซลล์ผู้เปิด: <strong>{salespersonName}</strong>
+                    ผู้เปิดโครงการ: <strong>{salespersonName}</strong>
                   </p>
                 </div>
               </div>
               <button
                 type="button"
+                disabled={isSavingProject}
                 onClick={() => setIsCreateProjectOpen(false)}
                 className="p-2.5 rounded-xl text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-white/[0.04] hover:bg-slate-200 dark:hover:bg-white/[0.08] transition cursor-pointer"
               >
@@ -2487,8 +2499,8 @@ export const SalesView: React.FC = () => {
             <form onSubmit={handleSubmitCreateProject} className="flex-1 overflow-y-auto overscroll-contain p-4 sm:p-6 space-y-5 text-xs">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">ชื่อโครงการ / ไซต์งานติดตั้ง *</label>
-                  <input
+                  <label htmlFor="sales-project-name" className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">ชื่อโครงการ / ไซต์งานติดตั้ง *</label>
+                  <input id="sales-project-name"
                     type="text"
                     required
                     value={prjSiteName}
@@ -2498,8 +2510,8 @@ export const SalesView: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">ชื่อลูกค้า / บริษัทผู้ว่าจ้าง *</label>
-                  <input
+                  <label htmlFor="sales-project-customer" className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">ชื่อลูกค้า / บริษัทผู้ว่าจ้าง *</label>
+                  <input id="sales-project-customer"
                     type="text"
                     required
                     value={prjCustomerName}
@@ -2519,8 +2531,8 @@ export const SalesView: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">อำเภอ / โซนสายรถ *</label>
-                  <select
+                  <label htmlFor="sales-project-district" className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">อำเภอ / โซนสายรถ *</label>
+                  <select id="sales-project-district"
                     value={prjDistrict}
                     onChange={(e) => setPrjDistrict(e.target.value)}
                     className="w-full rounded-xl px-3 py-2 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 focus:outline-none focus:border-purple-500"
@@ -2533,8 +2545,8 @@ export const SalesView: React.FC = () => {
                   </select>
                 </div>
                 <div className="md:col-span-2">
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">สถานที่ติดตั้ง / พิกัดไซต์งาน *</label>
-                  <input
+                  <label htmlFor="sales-project-location" className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">สถานที่ติดตั้ง / พิกัดไซต์งาน *</label>
+                  <input id="sales-project-location"
                     type="text"
                     required
                     value={prjLocation}
@@ -2544,8 +2556,8 @@ export const SalesView: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">วันเริ่มเข้าหน้างาน (Start Date) *</label>
-                  <input
+                  <label htmlFor="sales-project-start" className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">วันเริ่มเข้าหน้างาน (Start Date) *</label>
+                  <input id="sales-project-start"
                     type="date"
                     required
                     value={prjStartDate}
@@ -2554,10 +2566,11 @@ export const SalesView: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-rose-700 dark:text-rose-300 mb-1">วันกำหนดส่งมอบห้ามช้า (Contract Deadline) *</label>
-                  <input
+                  <label htmlFor="sales-project-due" className="block text-xs font-bold text-rose-700 dark:text-rose-300 mb-1">วันกำหนดส่งมอบ *</label>
+                  <input id="sales-project-due"
                     type="date"
                     required
+                    min={prjStartDate || undefined}
                     value={prjDueDate}
                     onChange={(e) => setPrjDueDate(e.target.value)}
                     className="w-full rounded-xl px-3 py-2 text-xs bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-rose-300 dark:border-rose-500/40 font-mono focus:outline-none focus:border-purple-500"
@@ -2742,9 +2755,17 @@ export const SalesView: React.FC = () => {
                 </div>
               </div>
 
+              <div className="flex flex-wrap gap-x-5 gap-y-1 rounded-xl bg-slate-100 p-3 text-xs font-semibold dark:bg-slate-800">
+                <span>รายการ {prjItems.length}</span>
+                <span>ต้นทุนรวม ฿{fmt(prjItems.reduce((sum, item) => sum + item.qty_required * item.unit_cost, 0))}</span>
+                <span>ยอดขายรวม ฿{fmt(prjItems.reduce((sum, item) => sum + item.qty_required * item.unit_price, 0))}</span>
+              </div>
+              {projectError && <p role="alert" className="font-semibold text-rose-700 dark:text-rose-300">{projectError}</p>}
+
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
                 <button
                   type="button"
+                  disabled={isSavingProject}
                   onClick={() => setIsCreateProjectOpen(false)}
                   className="px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-white/[0.04] text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700 font-bold text-xs cursor-pointer"
                 >
@@ -2752,11 +2773,11 @@ export const SalesView: React.FC = () => {
                 </button>
                 <button
                   type="submit"
-                  disabled={readOnly || (prjItems.length === 0)}
+                  disabled={readOnly || isSavingProject}
                   className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 disabled:opacity-40 text-white font-extrabold text-xs shadow-lg shadow-purple-500/30 cursor-pointer flex items-center gap-2"
                 >
                   <Send className="w-4 h-4" />
-                  <span>ยืนยันเปิดโปรเจกต์ ({prjCode})</span>
+                  <span>{isSavingProject ? 'กำลังบันทึก…' : 'เปิดโครงการ'}</span>
                 </button>
               </div>
             </form>
@@ -3311,6 +3332,18 @@ export const SalesView: React.FC = () => {
                 <div className="text-sm font-extrabold text-slate-900 dark:text-white">บิลดูแลระบบ (MA)</div>
                 <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-1">
                   วางบิลสัญญาดูแลรักษาระบบรายเดือน รายไตรมาส หรือรายปี (PM & Support)
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleOpenCreateProjectModal}
+                className="rounded-2xl border border-purple-200 bg-purple-50 p-4 text-left transition hover:bg-purple-100 dark:border-purple-500/30 dark:bg-purple-500/10 dark:hover:bg-purple-500/20"
+              >
+                <Sparkles className="mb-2 size-5 text-purple-700 dark:text-purple-300" aria-hidden="true" />
+                <div className="text-sm font-extrabold text-slate-900 dark:text-white">งานโครงการ / รับเหมา</div>
+                <p className="mt-1 text-[11px] text-slate-600 dark:text-slate-400">
+                  เปิดรหัสโครงการ PRJ เพื่อส่งงานให้จัดซื้อและทีมหน้างาน
                 </p>
               </button>
 

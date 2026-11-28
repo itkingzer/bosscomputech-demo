@@ -30,7 +30,7 @@ import {
   Eraser, AlertTriangle, Receipt, Users
 } from 'lucide-react';
 import { ToastBanner } from './components/ui/ToastBanner';
-import { getRoleDisplayName } from './utils/domainHelpers';
+import { canConfigureSupabase, getRoleDisplayName } from './utils/domainHelpers';
 import companyLogo from './assets/BossCom.jpg';
 
 export const App: React.FC = () => {
@@ -41,9 +41,9 @@ export const App: React.FC = () => {
     theme, toggleTheme, printingRepairTicket
   } = useApp();
   const canResetDemo = !isSupabaseLive && !(supabaseUrl && supabaseKey);
-  const canConfigureSupabase = currentUser?.role === 'admin' && currentUser.is_superadmin === true;
-  const connectionStatus = canConfigureSupabase ? databaseStatusLabel : isSyncing ? 'กำลังตรวจสอบ' : isSupabaseLive ? 'ออนไลน์' : 'ออฟไลน์';
-  const ConnectionBadge = canConfigureSupabase ? 'button' : 'div';
+  const hasSupabaseAccess = canConfigureSupabase(currentUser);
+  const connectionStatus = hasSupabaseAccess ? databaseStatusLabel : isSyncing ? 'กำลังตรวจสอบ' : isSupabaseLive ? 'ออนไลน์' : 'ออฟไลน์';
+  const ConnectionBadge = hasSupabaseAccess ? 'button' : 'div';
 
   // Sync theme class & data-theme on <html> so all document.body Portal modals respond immediately
   useEffect(() => {
@@ -87,7 +87,7 @@ export const App: React.FC = () => {
   }, [toastMessage]);
 
   useEffect(() => {
-    if (!isClearDemoModalOpen) return;
+    if (!hasSupabaseAccess || !isClearDemoModalOpen) return;
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     const onKeyDown = (e: KeyboardEvent) => {
@@ -98,7 +98,7 @@ export const App: React.FC = () => {
       document.body.style.overflow = prevOverflow;
       window.removeEventListener('keydown', onKeyDown);
     };
-  }, [isClearDemoModalOpen]);
+  }, [hasSupabaseAccess, isClearDemoModalOpen]);
   // Desktop drawer: allow collapsing the persistent sidebar (default open)
   const [isDesktopSidebarOpen, setIsDesktopSidebarOpen] = useState(true);
 
@@ -386,8 +386,8 @@ export const App: React.FC = () => {
 
             {/* Live connection badge */}
             <ConnectionBadge
-              onClick={canConfigureSupabase ? () => setIsSettingsOpen(true) : undefined}
-              className={`w-full flex items-center justify-between px-3 py-2 rounded-xl bg-white/[0.03] border border-white/[0.06] text-xs ${canConfigureSupabase ? 'cursor-pointer hover:bg-white/[0.06]' : ''}`}
+              onClick={hasSupabaseAccess ? () => setIsSettingsOpen(true) : undefined}
+              className={`w-full flex items-center justify-between px-3 py-2 rounded-xl bg-white/[0.03] border border-white/[0.06] text-xs ${hasSupabaseAccess ? 'cursor-pointer hover:bg-white/[0.06]' : ''}`}
             >
               <div className="flex items-center gap-2">
                 <span className={`w-2 h-2 rounded-full ${isSupabaseLive ? 'bg-emerald-400' : 'bg-amber-400'} animate-pulse`}></span>
@@ -395,20 +395,22 @@ export const App: React.FC = () => {
                   {connectionStatus}
                 </span>
               </div>
-              {canConfigureSupabase && <Settings className={`w-3.5 h-3.5 text-slate-400 ${isSyncing ? 'animate-spin' : ''}`} />}
+              {hasSupabaseAccess && <Settings className={`w-3.5 h-3.5 text-slate-400 ${isSyncing ? 'animate-spin' : ''}`} />}
             </ConnectionBadge>
 
             {/* Clear Demo Keep Stock (mobile drawer action) */}
-            <button
-              onClick={() => {
-                setIsMobileSidebarOpen(false);
-                setIsClearDemoModalOpen(true);
-              }}
-              className="sm:hidden w-full flex items-center justify-center gap-2 px-3 py-2.5 min-h-[44px] rounded-xl border bg-emerald-700 hover:bg-emerald-800 text-white border-emerald-700 text-xs font-semibold transition-all duration-150 active:scale-[0.97] cursor-pointer"
-            >
-              <Eraser className="w-3.5 h-3.5 flex-shrink-0" />
-              <span className="truncate">เริ่มใช้งานจริง (ล้างบิลทดสอบ / เหลือสต๊อก)</span>
-            </button>
+            {hasSupabaseAccess && (
+              <button
+                onClick={() => {
+                  setIsMobileSidebarOpen(false);
+                  setIsClearDemoModalOpen(true);
+                }}
+                className="sm:hidden w-full flex items-center justify-center gap-2 px-3 py-2.5 min-h-[44px] rounded-xl border bg-emerald-700 hover:bg-emerald-800 text-white border-emerald-700 text-xs font-semibold transition-all duration-150 active:scale-[0.97] cursor-pointer"
+              >
+                <Eraser className="w-3.5 h-3.5 flex-shrink-0" />
+                <span className="truncate">เริ่มใช้งานจริง (ล้างบิลทดสอบ / เหลือสต๊อก)</span>
+              </button>
+            )}
 
             {canResetDemo && (
               <button
@@ -490,9 +492,9 @@ export const App: React.FC = () => {
           <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
             {/* Demo / Live status badge (mobile / tablet only) */}
             <ConnectionBadge
-              onClick={canConfigureSupabase ? () => setIsSettingsOpen(true) : undefined}
-              aria-label={canConfigureSupabase ? 'ตั้งค่าการเชื่อมต่อ Supabase' : undefined}
-              className={`lg:hidden flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-[10px] font-bold min-h-[36px] ${canConfigureSupabase ? 'cursor-pointer' : ''} ${isSupabaseLive
+              onClick={hasSupabaseAccess ? () => setIsSettingsOpen(true) : undefined}
+              aria-label={hasSupabaseAccess ? 'ตั้งค่าการเชื่อมต่อ Supabase' : undefined}
+              className={`lg:hidden flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-[10px] font-bold min-h-[36px] ${hasSupabaseAccess ? 'cursor-pointer' : ''} ${isSupabaseLive
                 ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
                 : 'bg-amber-500/15 text-amber-400 border-amber-500/30'
                 }`}
@@ -516,16 +518,18 @@ export const App: React.FC = () => {
               </div>
             </button>
 
-            <button
-              onClick={() => setIsClearDemoModalOpen(true)}
-              title="เคลียร์ข้อมูล Demo (เหลือไว้เฉพาะคลังสินค้า)"
-              aria-label="เริ่มใช้งานจริง (ล้างบิลทดสอบ / เหลือสต๊อก)"
-              className="hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-xl border bg-emerald-700 hover:bg-emerald-800 text-white border-emerald-700 text-[11px] font-semibold transition-all duration-150 active:scale-[0.97] cursor-pointer min-h-[40px] whitespace-nowrap"
-            >
-              <Eraser className="w-3.5 h-3.5 flex-shrink-0" />
-              <span className="hidden xl:inline">เริ่มใช้งานจริง (ล้างบิลทดสอบ / เหลือสต๊อก)</span>
-              <span className="xl:hidden">ล้างบิลทดสอบ</span>
-            </button>
+            {hasSupabaseAccess && (
+              <button
+                onClick={() => setIsClearDemoModalOpen(true)}
+                title="เคลียร์ข้อมูล Demo (เหลือไว้เฉพาะคลังสินค้า)"
+                aria-label="เริ่มใช้งานจริง (ล้างบิลทดสอบ / เหลือสต๊อก)"
+                className="hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-xl border bg-emerald-700 hover:bg-emerald-800 text-white border-emerald-700 text-[11px] font-semibold transition-all duration-150 active:scale-[0.97] cursor-pointer min-h-[40px] whitespace-nowrap"
+              >
+                <Eraser className="w-3.5 h-3.5 flex-shrink-0" />
+                <span className="hidden xl:inline">เริ่มใช้งานจริง (ล้างบิลทดสอบ / เหลือสต๊อก)</span>
+                <span className="xl:hidden">ล้างบิลทดสอบ</span>
+              </button>
+            )}
 
             {canResetDemo && (
               <button
@@ -538,7 +542,7 @@ export const App: React.FC = () => {
               </button>
             )}
 
-            {canConfigureSupabase && <button
+            {hasSupabaseAccess && <button
               onClick={() => setIsSettingsOpen(true)}
               title="ตั้งค่าระบบ"
               aria-label="ตั้งค่าระบบ"
@@ -597,14 +601,14 @@ export const App: React.FC = () => {
 
       {/* Settings Modal */}
       {isProfileOpen && <MyStaffProfile key={currentUser.id} user={currentUser} onClose={() => setIsProfileOpen(false)} />}
-      {canConfigureSupabase && isSettingsOpen && (
+      {hasSupabaseAccess && isSettingsOpen && (
         <Suspense fallback={null}>
           <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
         </Suspense>
       )}
 
       {/* Confirm Clear Demo Keep Stock Modal */}
-      {isClearDemoModalOpen &&
+      {hasSupabaseAccess && isClearDemoModalOpen &&
         createPortal(
           <ModalBackdrop
             className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 animate-fade-in"

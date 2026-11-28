@@ -100,6 +100,9 @@ export const getRoleDisplayName = (role: string): string => {
   return role.toUpperCase();
 };
 
+export const canConfigureSupabase = (user: UserAccount | null): boolean =>
+  user?.role === 'admin' && user.is_superadmin === true;
+
 export const getWorkPositions = (user: UserAccount): UserRole[] =>
   user.work_positions ?? [user.role];
 
