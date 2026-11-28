@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import { ActivityLog, UserAccount, UserRole, formatThaiDateTime } from '../types';
 import { ListControls, useListControls } from './ListControls';
-import { formatEmploymentDate, getWorkPositions, toTelHref, worksInPosition } from '../utils/domainHelpers';
+import { canConfigureSupabase, formatEmploymentDate, getWorkPositions, toTelHref, worksInPosition } from '../utils/domainHelpers';
 import { StaffAvatar, StaffProfileFields } from './StaffProfile';
 import { Modal, modalInputClass, modalLabelClass } from './ui/Modal';
 
@@ -31,6 +31,13 @@ export const HrDirectoryView: React.FC = () => {
   const { users, addUser, updateUser, manageStaff, orders, projects, stockPOs, repairTickets, usesSupabaseAuth, currentUser } = useApp();
   const readOnly = useDepartmentReadOnly();
   const canManageProfiles = !usesSupabaseAuth;
+  const canEditProfile = (user: UserAccount) => {
+    if (readOnly) return false;
+    if (!usesSupabaseAuth) return user.id !== currentUser?.id;
+    if (user.role !== 'admin') return true;
+    return canConfigureSupabase(currentUser) && user.id !== currentUser?.id
+      && (!user.auth_user_id || user.auth_user_id !== currentUser?.auth_user_id);
+  };
 
   const [searchQuery, setSearchQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState<string>('all');
@@ -77,6 +84,7 @@ export const HrDirectoryView: React.FC = () => {
   };
 
   const openEditModal = (u: UserAccount) => {
+    if (!canEditProfile(u)) return;
     setEditingUser(u);
     setName(u.name);
     setNickname(u.nickname || '');
@@ -96,7 +104,7 @@ export const HrDirectoryView: React.FC = () => {
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (busy) return;
+    if (busy || readOnly || (editingUser && !canEditProfile(editingUser))) return;
     const normalizedUsername = username.trim().toLowerCase();
     if (!name.trim() || !normalizedUsername) {
       setSaveError('กรุณากรอกชื่อและ Username');
@@ -387,7 +395,7 @@ export const HrDirectoryView: React.FC = () => {
                   <Activity className="w-3.5 h-3.5" />
                   <span>ดูประวัติการปฏิบัติงาน</span>
                 </button>
-                {(usesSupabaseAuth ? u.role !== 'admin' : u.id !== currentUser?.id) && <button disabled={readOnly}
+                {canEditProfile(u) && <button
                   type="button"
                   onClick={() => openEditModal(u)}
                   className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs font-bold cursor-pointer flex items-center gap-1"
